@@ -1648,7 +1648,15 @@ static void _ota_check_task(void *param) {
     vTaskDelete(NULL);
 }
 
-// Update button callback
+/* Orphaned by the same card-grid redesign as _wire_input_mode_btn_cb: the
+ * manual "Check Updates" button used to live in the now-deleted
+ * _build_section_network, and nothing in the card grid replaced it. Lower
+ * severity than the wire-input gap, though — OTA checking is still
+ * reachable via the web editor (POST /api/ota/check, GET /api/ota/status
+ * in web_server_ota.c), just not from the on-device touchscreen directly.
+ * Kept compiled (not deleted) as a working reference if a "Check Updates"
+ * card gets added back to the Device grid. */
+__attribute__((unused))
 static void update_btn_event_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
 
@@ -2095,21 +2103,6 @@ static void _share_modal_open(void) {
 
 /* Wipe peak/min for every signal in the registry. Affects all panels with
  * show_peak set (they pull current peak/min on the next signal update). */
-static void _sim_toggle_btn_cb(lv_event_t *e) {
-    (void)e;
-    if (signal_sim_is_active()) {
-        signal_sim_stop();
-    } else {
-        signal_sim_start();
-    }
-    if (s_sim_btn_label && lv_obj_is_valid(s_sim_btn_label)) {
-        bool on = signal_sim_is_active();
-        lv_label_set_text(s_sim_btn_label, on ? "Sim: ON" : "Sim: OFF");
-        lv_obj_set_style_text_color(s_sim_btn_label,
-            on ? THEME_COLOR_STATUS_CONNECTED : THEME_COLOR_TEXT_MUTED, 0);
-    }
-}
-
 /* DEVICE-grid "Simulator" card tap handler. Tapping the card toggles the
  * signal simulator and repaints the card's stat label (ON green / OFF blue).
  * Standalone card so the demo sweep is a top-level action, not buried in the
@@ -2439,6 +2432,19 @@ static void _wire_input_reboot_confirm_cb(lv_event_t *e) {
     lv_msgbox_close(mbox);
 }
 
+/* Orphaned by the card-grid UI redesign: the two row-based sections that
+ * used to expose this toggle (_build_section_testing / _build_section_
+ * developer) were dead code (superseded by the Setup-mode card grid) and
+ * have been removed, but nothing in the card grid replaced them — there is
+ * currently NO way to toggle wire-input mode from the on-device UI, the
+ * web editor, or serial (confirmed: grepped all three for "wire_input",
+ * zero hits outside this file/config_store.c/wire_inputs.c). The toggle
+ * logic itself still works; it just needs a "Wire Inputs" card wired to
+ * it (mirroring the existing Dimmer/Testing popup pattern) to be reachable
+ * again. Kept compiled — see WIDGET_SETTINGS_AUDIT-style attribute below —
+ * rather than deleted, since deleting it would erase a working
+ * reference implementation for whoever restores the card. */
+__attribute__((unused))
 static void _wire_input_mode_btn_cb(lv_event_t *e) {
     (void)e;
     bool enabled = false;
@@ -2513,19 +2519,6 @@ void load_dimmer_config_from_nvs(void) {
  * Each accepts a parent LVGL object and appends its children to it.
  * Module-level static pointers are set as a side-effect where needed.
  * ─────────────────────────────────────────────────────────────────────────── */
-
-__attribute__((unused))
-static lv_obj_t *_build_row(lv_obj_t *parent, int32_t h) {
-    lv_obj_t *row = lv_obj_create(parent);
-    lv_obj_set_size(row, lv_pct(100), h);
-    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(row, 0, 0);
-    lv_obj_set_style_pad_all(row, 0, 0);
-    lv_obj_set_style_pad_gap(row, 8, 0);
-    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    return row;
-}
 
 static lv_obj_t *_make_flex_section(lv_obj_t *row) {
     lv_obj_t *s = lv_obj_create(row);
@@ -2714,92 +2707,6 @@ static void _build_header(lv_obj_t *parent) {
     lv_obj_set_style_text_color(close_label, THEME_COLOR_TEXT_MUTED, 0);
     lv_obj_add_event_cb(close_btn, close_menu_event_cb, LV_EVENT_CLICKED,
                         device_settings_return_screen);
-}
-
-__attribute__((unused))
-static void _build_section_can_config(lv_obj_t *row) {
-    lv_obj_t *s = _make_flex_section(row);
-    _make_section_title(s, "CAN BUS");
-
-    lv_obj_t *bitrate_label = lv_label_create(s);
-    lv_label_set_text(bitrate_label, "Bitrate");
-    lv_obj_align(bitrate_label, LV_ALIGN_TOP_LEFT, 0, 22);
-    lv_obj_set_style_text_font(bitrate_label, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(bitrate_label, THEME_COLOR_TEXT_MUTED, 0);
-
-    lv_obj_t *bitrate_dd = lv_dropdown_create(s);
-    lv_dropdown_set_options(bitrate_dd, "125 kbps\n250 kbps\n500 kbps\n1 Mbps");
-    lv_obj_set_size(bitrate_dd, 140, 32);
-    lv_obj_align(bitrate_dd, LV_ALIGN_TOP_LEFT, 0, 42);
-    lv_obj_set_style_bg_color(bitrate_dd, THEME_COLOR_INPUT_BG, 0);
-    lv_obj_set_style_bg_opa(bitrate_dd, LV_OPA_COVER, 0);
-    lv_obj_set_style_text_color(bitrate_dd, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_set_style_text_font(bitrate_dd, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_border_color(bitrate_dd, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_border_width(bitrate_dd, 1, 0);
-    lv_obj_set_style_radius(bitrate_dd, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_pad_all(bitrate_dd, 4, 0);
-    lv_obj_set_style_text_color(bitrate_dd, THEME_COLOR_TEXT_MUTED, LV_PART_INDICATOR);
-    lv_obj_add_event_cb(bitrate_dd, bitrate_dropdown_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
-    s_bitrate_dropdown = bitrate_dd;
-
-    /* (ECU Type picker removed — see "ECU selection — REMOVED" note above.
-     * This whole _build_section_can_config builder is legacy/dead and is
-     * slated for deletion in the _build_section_* cleanup.) */
-
-    /* OBD2 Signals + Read Trouble Codes — rendered side-by-side at the
-     * same y to save vertical space in the CAN section. Each ~47% wide
-     * with a small gap between. The OBD2 Signals label adapts to current
-     * state ("Add OBD2 Signals..." vs "OBD2 Signals... (N)") so its
-     * width is the variable one. */
-    {
-        lv_obj_t *obd2_btn = lv_btn_create(s);
-        lv_obj_set_size(obd2_btn, lv_pct(47), 28);
-        lv_obj_align(obd2_btn, LV_ALIGN_TOP_LEFT, 0, 126);
-        lv_obj_set_style_bg_color(obd2_btn, THEME_COLOR_INPUT_BG, 0);
-        lv_obj_set_style_bg_opa(obd2_btn, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_color(obd2_btn, THEME_COLOR_BORDER, 0);
-        lv_obj_set_style_border_width(obd2_btn, 1, 0);
-        lv_obj_set_style_radius(obd2_btn, THEME_RADIUS_NORMAL, 0);
-        lv_obj_set_style_shadow_width(obd2_btn, 0, 0);
-        s_obd2_btn_label = lv_label_create(obd2_btn);
-        {
-            char txt[48];
-            _obd2_label_compose(txt, sizeof(txt));
-            lv_label_set_text(s_obd2_btn_label, txt);
-        }
-        /* Constrain + truncate so the label doesn't bleed out of a 47%
-         * button on narrower content panes. */
-        lv_label_set_long_mode(s_obd2_btn_label, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(s_obd2_btn_label, lv_pct(90));
-        lv_obj_set_style_text_font(s_obd2_btn_label, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(s_obd2_btn_label, THEME_COLOR_TEXT_PRIMARY, 0);
-        lv_obj_set_style_text_align(s_obd2_btn_label, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_center(s_obd2_btn_label);
-        lv_obj_add_event_cb(obd2_btn, _obd2_btn_cb, LV_EVENT_CLICKED, NULL);
-
-        lv_obj_t *dtc_btn = lv_btn_create(s);
-        lv_obj_set_size(dtc_btn, lv_pct(47), 28);
-        /* Anchor to the right edge of the section so the gap between
-         * the two buttons stays balanced regardless of section width
-         * (it varies per row across the Device Settings flex layout). */
-        lv_obj_align(dtc_btn, LV_ALIGN_TOP_RIGHT, 0, 126);
-        lv_obj_set_style_bg_color(dtc_btn, THEME_COLOR_INPUT_BG, 0);
-        lv_obj_set_style_bg_opa(dtc_btn, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_color(dtc_btn, THEME_COLOR_BORDER, 0);
-        lv_obj_set_style_border_width(dtc_btn, 1, 0);
-        lv_obj_set_style_radius(dtc_btn, THEME_RADIUS_NORMAL, 0);
-        lv_obj_set_style_shadow_width(dtc_btn, 0, 0);
-        lv_obj_t *dtc_lbl = lv_label_create(dtc_btn);
-        lv_label_set_text(dtc_lbl, "Trouble Codes...");
-        lv_label_set_long_mode(dtc_lbl, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(dtc_lbl, lv_pct(90));
-        lv_obj_set_style_text_font(dtc_lbl, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(dtc_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
-        lv_obj_set_style_text_align(dtc_lbl, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_center(dtc_lbl);
-        lv_obj_add_event_cb(dtc_btn, _dtc_btn_cb, LV_EVENT_CLICKED, NULL);
-    }
 }
 
 /* Build a centered popup shell: w x h surface on lv_layer_top(), title in
@@ -3420,72 +3327,6 @@ static void _build_device_grid(lv_obj_t *content) {
 }
 
 __attribute__((unused))
-static void _build_section_network(lv_obj_t *row) {
-    lv_obj_t *s = _make_flex_section(row);
-    _make_section_title(s, "NETWORK & UPDATES");
-
-    lv_obj_t *wifi_btn = lv_btn_create(s);
-    lv_obj_set_size(wifi_btn, 180, 30);
-    lv_obj_align(wifi_btn, LV_ALIGN_TOP_LEFT, 0, 22);
-    lv_obj_set_style_bg_color(wifi_btn, THEME_COLOR_BTN_SAVE, 0);
-    lv_obj_set_style_bg_opa(wifi_btn, LV_OPA_80, LV_STATE_PRESSED);
-    lv_obj_set_style_radius(wifi_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_border_width(wifi_btn, 0, 0);
-    lv_obj_set_style_shadow_width(wifi_btn, 0, 0);
-    lv_obj_t *wifi_label = lv_label_create(wifi_btn);
-    lv_label_set_text(wifi_label, "Wi-Fi Settings");
-    lv_obj_center(wifi_label);
-    lv_obj_set_style_text_font(wifi_label, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(wifi_label, THEME_COLOR_TEXT_ON_ACCENT, 0);
-    lv_obj_add_event_cb(wifi_btn, wifi_btn_event_cb, LV_EVENT_CLICKED, NULL);
-
-    wifi_status_label = lv_label_create(s);
-    lv_obj_align(wifi_status_label, LV_ALIGN_TOP_LEFT, 0, 60);
-    lv_obj_set_style_text_font(wifi_status_label, THEME_FONT_TINY, 0);
-
-    web_status_label = lv_label_create(s);
-    lv_obj_align(web_status_label, LV_ALIGN_TOP_LEFT, 0, 75);
-    lv_obj_set_style_text_font(web_status_label, THEME_FONT_TINY, 0);
-
-    ap_status_label = lv_label_create(s);
-    lv_obj_align(ap_status_label, LV_ALIGN_TOP_LEFT, 0, 90);
-    lv_obj_set_style_text_font(ap_status_label, THEME_FONT_TINY, 0);
-
-    refresh_wifi_status();
-
-    lv_obj_t *qr_btn = lv_btn_create(s);
-    lv_obj_set_size(qr_btn, 110, 30);
-    lv_obj_align(qr_btn, LV_ALIGN_TOP_LEFT, 0, 115);
-    lv_obj_set_style_bg_color(qr_btn, THEME_COLOR_ACCENT_BLUE, 0);
-    lv_obj_set_style_bg_opa(qr_btn, LV_OPA_80, LV_STATE_PRESSED);
-    lv_obj_set_style_radius(qr_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_border_width(qr_btn, 0, 0);
-    lv_obj_set_style_shadow_width(qr_btn, 0, 0);
-    lv_obj_t *qr_label = lv_label_create(qr_btn);
-    lv_label_set_text(qr_label, "Show QR");
-    lv_obj_center(qr_label);
-    lv_obj_set_style_text_font(qr_label, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(qr_label, THEME_COLOR_TEXT_ON_ACCENT, 0);
-    lv_obj_add_event_cb(qr_btn, _qr_btn_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t *update_btn = lv_btn_create(s);
-    lv_obj_set_size(update_btn, 140, 30);
-    lv_obj_align(update_btn, LV_ALIGN_TOP_LEFT, 120, 115);
-    lv_obj_set_style_bg_color(update_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(update_btn, LV_OPA_80, LV_STATE_PRESSED);
-    lv_obj_set_style_radius(update_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_border_width(update_btn, 1, 0);
-    lv_obj_set_style_border_color(update_btn, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_shadow_width(update_btn, 0, 0);
-    lv_obj_t *update_label = lv_label_create(update_btn);
-    lv_label_set_text(update_label, "Check Updates");
-    lv_obj_center(update_label);
-    lv_obj_set_style_text_font(update_label, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(update_label, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_add_event_cb(update_btn, update_btn_event_cb, LV_EVENT_CLICKED, NULL);
-}
-
-__attribute__((unused))
 static void _build_section_display(lv_obj_t *row) {
     lv_obj_t *s = _make_flex_section(row);
     _make_section_title(s, "DISPLAY");
@@ -3544,95 +3385,6 @@ static void _build_section_display(lv_obj_t *row) {
 
     (void) _night_btn_cb;
     (void) s_night_btn_label;
-}
-
-__attribute__((unused))
-static void _build_section_data_logging(lv_obj_t *row) {
-    lv_obj_t *s = _make_flex_section(row);
-    _make_section_title(s, "DATA LOGGING");
-
-    s_log_btn = lv_btn_create(s);
-    lv_obj_set_size(s_log_btn, 130, 30);
-    lv_obj_align(s_log_btn, LV_ALIGN_TOP_LEFT, 0, 22);
-    lv_obj_set_style_bg_color(s_log_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(s_log_btn, LV_OPA_80, LV_STATE_PRESSED);
-    lv_obj_set_style_radius(s_log_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_border_width(s_log_btn, 1, 0);
-    lv_obj_set_style_border_color(s_log_btn, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_shadow_width(s_log_btn, 0, 0);
-    s_log_btn_label = lv_label_create(s_log_btn);
-    lv_label_set_text(s_log_btn_label, "Start Signal Log");
-    lv_obj_center(s_log_btn_label);
-    lv_obj_set_style_text_font(s_log_btn_label, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(s_log_btn_label, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_add_event_cb(s_log_btn, _log_toggle_btn_cb, LV_EVENT_CLICKED, NULL);
-
-    s_log_rate_dd = lv_dropdown_create(s);
-    lv_dropdown_set_options_static(s_log_rate_dd,
-        "1 Hz\n2 Hz\n5 Hz\n10 Hz\n20 Hz\n50 Hz\n100 Hz\n200 Hz\nMax");
-    lv_obj_set_size(s_log_rate_dd, 90, 30);
-    lv_obj_align(s_log_rate_dd, LV_ALIGN_TOP_LEFT, 138, 22);
-    lv_obj_set_style_bg_color(s_log_rate_dd, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_border_color(s_log_rate_dd, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_border_width(s_log_rate_dd, 1, 0);
-    lv_obj_set_style_radius(s_log_rate_dd, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_text_color(s_log_rate_dd, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_set_style_text_font(s_log_rate_dd, THEME_FONT_SMALL, 0);
-    lv_dropdown_set_selected(s_log_rate_dd,
-                             _log_rate_hz_to_idx(data_logger_get_rate_hz()));
-    lv_obj_add_event_cb(s_log_rate_dd, _log_rate_dd_cb, LV_EVENT_VALUE_CHANGED, NULL);
-
-    s_log_status_label = lv_label_create(s);
-    lv_label_set_text(s_log_status_label, "Stopped");
-    lv_obj_align(s_log_status_label, LV_ALIGN_TOP_LEFT, 0, 56);
-    lv_obj_set_style_text_font(s_log_status_label, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(s_log_status_label, THEME_COLOR_TEXT_MUTED, 0);
-
-    /* Raw CAN Capture — records every CAN frame (no decoding) to its own
-     * CSV. Useful for users sending unknown-protocol traces off-device for
-     * decoding. Uses the same SD/LFS fallback + 1 MB cap as the signal log. */
-    s_canraw_btn = lv_btn_create(s);
-    lv_obj_set_size(s_canraw_btn, 150, 30);
-    lv_obj_align(s_canraw_btn, LV_ALIGN_TOP_LEFT, 240, 22);
-    lv_obj_set_style_bg_color(s_canraw_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(s_canraw_btn, LV_OPA_80, LV_STATE_PRESSED);
-    lv_obj_set_style_radius(s_canraw_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_border_width(s_canraw_btn, 1, 0);
-    lv_obj_set_style_border_color(s_canraw_btn, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_shadow_width(s_canraw_btn, 0, 0);
-    s_canraw_btn_label = lv_label_create(s_canraw_btn);
-    lv_label_set_text(s_canraw_btn_label, "Start Raw CAN");
-    lv_obj_center(s_canraw_btn_label);
-    lv_obj_set_style_text_font(s_canraw_btn_label, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(s_canraw_btn_label, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_add_event_cb(s_canraw_btn, _canraw_toggle_btn_cb, LV_EVENT_CLICKED, NULL);
-
-    s_canraw_status_label = lv_label_create(s);
-    lv_label_set_text(s_canraw_status_label, "Raw: idle");
-    lv_obj_align(s_canraw_status_label, LV_ALIGN_TOP_LEFT, 280, 56);
-    lv_obj_set_style_text_font(s_canraw_status_label, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(s_canraw_status_label, THEME_COLOR_TEXT_MUTED, 0);
-
-    /* Share Raw CAN — opens a modal that uploads the latest canraw_*.csv
-     * to the project's cloud bucket tagged with the user-entered car
-     * make/model. Uses can_upload_start() under the hood (same path as
-     * the web editor's Share button). Sits to the right of Start Raw CAN
-     * (240+150+10 = 400 px from the section's left edge). */
-    lv_obj_t *share_btn = lv_btn_create(s);
-    lv_obj_set_size(share_btn, 150, 30);
-    lv_obj_align(share_btn, LV_ALIGN_TOP_LEFT, 400, 22);
-    lv_obj_set_style_bg_color(share_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(share_btn, LV_OPA_80, LV_STATE_PRESSED);
-    lv_obj_set_style_radius(share_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_border_width(share_btn, 1, 0);
-    lv_obj_set_style_border_color(share_btn, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_shadow_width(share_btn, 0, 0);
-    lv_obj_t *share_lbl = lv_label_create(share_btn);
-    lv_label_set_text(share_lbl, "Share Raw CAN");
-    lv_obj_center(share_lbl);
-    lv_obj_set_style_text_font(share_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(share_lbl, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_add_event_cb(share_btn, _share_btn_cb, LV_EVENT_CLICKED, NULL);
 }
 
 static void _share_btn_cb(lv_event_t *e) {
@@ -3781,202 +3533,6 @@ static void _odo_edit_btn_cb(lv_event_t *e) {
 static void _veh_gear_btn_cb(lv_event_t *e) {
     (void)e;
     ui_gear_setup_open(NULL, NULL);
-}
-
-__attribute__((unused))
-static void _build_section_vehicle(lv_obj_t *row) {
-    lv_obj_t *s = _make_flex_section(row);
-    _make_section_title(s, "VEHICLE");
-
-    /* Left button: opens the existing Gear Setup overlay. */
-    lv_obj_t *gear_btn = lv_btn_create(s);
-    lv_obj_set_size(gear_btn, 200, 30);
-    lv_obj_align(gear_btn, LV_ALIGN_TOP_LEFT, 0, 22);
-    lv_obj_set_style_bg_color(gear_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(gear_btn, LV_OPA_80, LV_STATE_PRESSED);
-    lv_obj_set_style_radius(gear_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_border_width(gear_btn, 1, 0);
-    lv_obj_set_style_border_color(gear_btn, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_shadow_width(gear_btn, 0, 0);
-    lv_obj_t *gear_lbl = lv_label_create(gear_btn);
-    lv_label_set_text(gear_lbl, "Calculated Gear Setup...");
-    lv_obj_center(gear_lbl);
-    lv_obj_set_style_text_font(gear_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(gear_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_add_event_cb(gear_btn, _veh_gear_btn_cb, LV_EVENT_CLICKED, NULL);
-
-    /* Middle: live odometer reading. Updated every second by
-     * _veh_odo_refresh_timer_cb. */
-    s_veh_odo_value_lbl = lv_label_create(s);
-    lv_label_set_text(s_veh_odo_value_lbl, "Odometer: ---");
-    lv_obj_align(s_veh_odo_value_lbl, LV_ALIGN_TOP_LEFT, 220, 28);
-    lv_obj_set_style_text_font(s_veh_odo_value_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(s_veh_odo_value_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
-
-    /* Right button: opens the numeric-keyboard editor. */
-    lv_obj_t *edit_btn = lv_btn_create(s);
-    lv_obj_set_size(edit_btn, 150, 30);
-    lv_obj_align(edit_btn, LV_ALIGN_TOP_RIGHT, 0, 22);
-    lv_obj_set_style_bg_color(edit_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(edit_btn, LV_OPA_80, LV_STATE_PRESSED);
-    lv_obj_set_style_radius(edit_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_border_width(edit_btn, 1, 0);
-    lv_obj_set_style_border_color(edit_btn, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_shadow_width(edit_btn, 0, 0);
-    lv_obj_t *edit_lbl = lv_label_create(edit_btn);
-    lv_label_set_text(edit_lbl, "Edit Odometer...");
-    lv_obj_center(edit_lbl);
-    lv_obj_set_style_text_font(edit_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(edit_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_add_event_cb(edit_btn, _odo_edit_btn_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t *note = lv_label_create(s);
-    lv_label_set_text(note,
-        "Auto-accumulates from VEHICLE_SPEED. Persists every 1 km or 5 min.");
-    lv_obj_align(note, LV_ALIGN_TOP_LEFT, 0, 58);
-    lv_obj_set_style_text_font(note, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(note, THEME_COLOR_TEXT_MUTED, 0);
-
-    /* Kick off the periodic refresh — single shared timer for the open
-     * Settings screen. Cleaned up at screen-destroy time. */
-    if (s_veh_odo_timer) lv_timer_del(s_veh_odo_timer);
-    s_veh_odo_timer = lv_timer_create(_veh_odo_refresh_timer_cb, 1000, NULL);
-    /* Render immediately so the user doesn't see "---" for a second. */
-    _veh_odo_refresh_timer_cb(NULL);
-}
-
-__attribute__((unused))
-static void _build_section_peak_hold(lv_obj_t *row) {
-    lv_obj_t *s = _make_flex_section(row);
-    _make_section_title(s, "PEAK HOLD");
-
-    lv_obj_t *view_btn = lv_btn_create(s);
-    lv_obj_set_size(view_btn, 110, 30);
-    lv_obj_align(view_btn, LV_ALIGN_TOP_LEFT, 0, 22);
-    lv_obj_set_style_bg_color(view_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(view_btn, LV_OPA_80, LV_STATE_PRESSED);
-    lv_obj_set_style_radius(view_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_border_width(view_btn, 1, 0);
-    lv_obj_set_style_border_color(view_btn, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_shadow_width(view_btn, 0, 0);
-    lv_obj_t *view_lbl = lv_label_create(view_btn);
-    lv_label_set_text(view_lbl, "View Peaks");
-    lv_obj_center(view_lbl);
-    lv_obj_set_style_text_font(view_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(view_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_add_event_cb(view_btn, _view_peaks_btn_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t *reset_peaks_btn = lv_btn_create(s);
-    lv_obj_set_size(reset_peaks_btn, 110, 30);
-    lv_obj_align(reset_peaks_btn, LV_ALIGN_TOP_LEFT, 118, 22);
-    lv_obj_set_style_bg_color(reset_peaks_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(reset_peaks_btn, LV_OPA_80, LV_STATE_PRESSED);
-    lv_obj_set_style_radius(reset_peaks_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_border_width(reset_peaks_btn, 1, 0);
-    lv_obj_set_style_border_color(reset_peaks_btn, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_shadow_width(reset_peaks_btn, 0, 0);
-    lv_obj_t *reset_peaks_lbl = lv_label_create(reset_peaks_btn);
-    lv_label_set_text(reset_peaks_lbl, "Reset Peaks");
-    lv_obj_center(reset_peaks_lbl);
-    lv_obj_set_style_text_font(reset_peaks_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(reset_peaks_lbl, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_add_event_cb(reset_peaks_btn, _reset_peaks_btn_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t *peak_note = lv_label_create(s);
-    lv_label_set_text(peak_note, "All-time - persists until reset");
-    lv_obj_align(peak_note, LV_ALIGN_TOP_LEFT, 0, 58);
-    lv_obj_set_style_text_font(peak_note, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(peak_note, THEME_COLOR_TEXT_MUTED, 0);
-}
-
-__attribute__((unused))
-static void _build_section_testing(lv_obj_t *row) {
-    lv_obj_t *s = _make_flex_section(row);
-    _make_section_title(s, "TESTING");
-
-    lv_obj_t *sim_btn = lv_btn_create(s);
-    lv_obj_set_size(sim_btn, 130, 30);
-    lv_obj_align(sim_btn, LV_ALIGN_TOP_LEFT, 0, 22);
-    lv_obj_set_style_bg_color(sim_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(sim_btn, LV_OPA_80, LV_STATE_PRESSED);
-    lv_obj_set_style_radius(sim_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_border_width(sim_btn, 1, 0);
-    lv_obj_set_style_border_color(sim_btn, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_shadow_width(sim_btn, 0, 0);
-    s_sim_btn_label = lv_label_create(sim_btn);
-    {
-        bool on = signal_sim_is_active();
-        lv_label_set_text(s_sim_btn_label, on ? "Sim: ON" : "Sim: OFF");
-        lv_obj_set_style_text_color(s_sim_btn_label,
-            on ? THEME_COLOR_STATUS_CONNECTED : THEME_COLOR_TEXT_MUTED, 0);
-    }
-    lv_obj_center(s_sim_btn_label);
-    lv_obj_set_style_text_font(s_sim_btn_label, THEME_FONT_SMALL, 0);
-    lv_obj_add_event_cb(sim_btn, _sim_toggle_btn_cb, LV_EVENT_CLICKED, NULL);
-
-    /* Wire Inputs toggle — moved here from the (hidden) Developer section
-     * so users can flip GPIO 43/44 between UART1 mode and indicator-wire
-     * input mode without needing a serial console. Affects pull
-     * configuration on those pins (see wire_inputs_init / uart_protocol). */
-    lv_obj_t *wire_btn = lv_btn_create(s);
-    lv_obj_set_size(wire_btn, 150, 30);
-    lv_obj_align(wire_btn, LV_ALIGN_TOP_LEFT, 140, 22);
-    lv_obj_set_style_bg_color(wire_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(wire_btn, LV_OPA_80, LV_STATE_PRESSED);
-    lv_obj_set_style_radius(wire_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_border_width(wire_btn, 1, 0);
-    lv_obj_set_style_border_color(wire_btn, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_shadow_width(wire_btn, 0, 0);
-    s_wire_input_btn_label = lv_label_create(wire_btn);
-    {
-        bool on = false;
-        config_store_load_wire_input_mode(&on);
-        lv_label_set_text(s_wire_input_btn_label, on ? "Wire Inputs: ON" : "Wire Inputs: OFF");
-        lv_obj_set_style_text_color(s_wire_input_btn_label,
-            on ? THEME_COLOR_STATUS_CONNECTED : THEME_COLOR_TEXT_MUTED, 0);
-    }
-    lv_obj_center(s_wire_input_btn_label);
-    lv_obj_set_style_text_font(s_wire_input_btn_label, THEME_FONT_SMALL, 0);
-    lv_obj_add_event_cb(wire_btn, _wire_input_mode_btn_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t *test_note = lv_label_create(s);
-    lv_label_set_text(test_note, "Sim sweeps all signals  |  Wire Inputs: GPIO 43/44 as turn signals");
-    lv_obj_align(test_note, LV_ALIGN_TOP_LEFT, 0, 58);
-    lv_obj_set_style_text_font(test_note, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(test_note, THEME_COLOR_TEXT_MUTED, 0);
-}
-
-__attribute__((unused))
-static void _build_section_developer(lv_obj_t *row) {
-    lv_obj_t *s = _make_flex_section(row);
-    _make_section_title(s, "DEVELOPER");
-
-    lv_obj_t *wire_btn = lv_btn_create(s);
-    lv_obj_set_size(wire_btn, 150, 30);
-    lv_obj_align(wire_btn, LV_ALIGN_TOP_LEFT, 0, 22);
-    lv_obj_set_style_bg_color(wire_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(wire_btn, LV_OPA_80, LV_STATE_PRESSED);
-    lv_obj_set_style_radius(wire_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_border_width(wire_btn, 1, 0);
-    lv_obj_set_style_border_color(wire_btn, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_shadow_width(wire_btn, 0, 0);
-    s_wire_input_btn_label = lv_label_create(wire_btn);
-    {
-        bool on = false;
-        config_store_load_wire_input_mode(&on);
-        lv_label_set_text(s_wire_input_btn_label, on ? "Wire Inputs: ON" : "Wire Inputs: OFF");
-        lv_obj_set_style_text_color(s_wire_input_btn_label,
-            on ? THEME_COLOR_STATUS_CONNECTED : THEME_COLOR_TEXT_MUTED, 0);
-    }
-    lv_obj_center(s_wire_input_btn_label);
-    lv_obj_set_style_text_font(s_wire_input_btn_label, THEME_FONT_SMALL, 0);
-    lv_obj_add_event_cb(wire_btn, _wire_input_mode_btn_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t *wire_note = lv_label_create(s);
-    lv_label_set_text(wire_note, "GPIO 43/44 as turn signal inputs");
-    lv_obj_align(wire_note, LV_ALIGN_TOP_LEFT, 0, 58);
-    lv_obj_set_style_text_font(wire_note, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(wire_note, THEME_COLOR_TEXT_MUTED, 0);
 }
 
 /* Legacy CAN health panel (dot + summary + Show Details). Superseded by the

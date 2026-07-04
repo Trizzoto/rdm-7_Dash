@@ -8,6 +8,7 @@
 #include "widget_meter.h"
 #include "widget_image.h"
 #include "widget_rules.h"
+#include "gauge_tick.h"
 #include "system/night_mode.h"
 #include "screen_config.h"
 #include "cJSON.h"
@@ -797,12 +798,10 @@ static void _meter_stamp_tick_image(lv_draw_ctx_t *ctx, lv_img_dsc_t *img,
 	if (!ctx || !img) return;
 	lv_coord_t iw = img->header.w, ih = img->header.h;
 	if (iw <= 0 || ih <= 0) return;
-	float deg = atan2f((float)(my - cy), (float)(mx - cx)) * 57.2957795f; /* outward */
-	int a = (int)lroundf(deg + 90.0f) * 10;                /* up→outward, 0.1° units */
-	a %= 3600; if (a < 0) a += 3600;
+	int16_t a = gauge_tick_outward_angle((float)(mx - cx), (float)(my - cy));
 	lv_draw_img_dsc_t idsc;
 	lv_draw_img_dsc_init(&idsc);
-	idsc.angle   = (int16_t)a;
+	idsc.angle   = a;
 	idsc.zoom    = zoom ? zoom : 256;
 	idsc.pivot.x = iw / 2;
 	idsc.pivot.y = ih / 2;
@@ -811,40 +810,6 @@ static void _meter_stamp_tick_image(lv_draw_ctx_t *ctx, lv_img_dsc_t *img,
 	                     (lv_coord_t)(mx - iw / 2 + iw - 1),
 	                     (lv_coord_t)(my - ih / 2 + ih - 1) };
 	lv_draw_img(ctx, &idsc, &coords, img);
-}
-
-/* Outline/glow behind a drawn tick line (p1..p2): a tight border at `strength`,
- * plus `fade` softer wider rings for a glow. Baked into the static-tick snapshot
- * so it's free at runtime. */
-static void _meter_draw_tick_outline(lv_draw_ctx_t *ctx, const lv_point_t *p1,
-                                     const lv_point_t *p2, lv_coord_t cx, lv_coord_t cy,
-                                     lv_coord_t tlen, lv_coord_t base_w,
-                                     lv_color_t color, uint8_t strength, uint8_t fade) {
-	if (!ctx || strength == 0 || !p1 || !p2) return;
-	float d1 = (float)((p1->x-cx)*(p1->x-cx) + (p1->y-cy)*(p1->y-cy));
-	float d2 = (float)((p2->x-cx)*(p2->x-cx) + (p2->y-cy)*(p2->y-cy));
-	lv_point_t outer = d1 >= d2 ? *p1 : *p2;            /* rim end */
-	float dx = (float)(cx - outer.x), dy = (float)(cy - outer.y);
-	float dist = sqrtf(dx*dx + dy*dy);
-	lv_point_t inner = outer;
-	if (dist > 1.0f) {
-		inner.x = (lv_coord_t)(outer.x + dx/dist * tlen);
-		inner.y = (lv_coord_t)(outer.y + dy/dist * tlen);
-	}
-	lv_draw_line_dsc_t ld;
-	lv_draw_line_dsc_init(&ld);
-	ld.color = color;
-	ld.round_start = 1;
-	ld.round_end = 1;
-	int f = fade > 20 ? 20 : fade;
-	for (int j = f; j >= 1; j--) {
-		ld.width = (lv_coord_t)(base_w + 2 + 2 * j);
-		ld.opa   = (lv_opa_t)(((uint16_t)strength * (f - j + 1)) / (f + 1) / 2);
-		lv_draw_line(ctx, &ld, &outer, &inner);
-	}
-	ld.width = (lv_coord_t)(base_w + 2);
-	ld.opa   = strength;
-	lv_draw_line(ctx, &ld, &outer, &inner);
 }
 
 /* Custom needle tip renderer. Hooks LV_EVENT_DRAW_PART_BEGIN / _END on the
@@ -1007,7 +972,7 @@ static void _meter_needle_draw_cb(lv_event_t *e) {
 			uint8_t mte = md->major_tick_every < 1 ? 1 : md->major_tick_every;
 			lv_coord_t tlen = is_mid ? md->mid_tick_length
 			                : ((dsc->id % mte) == 0 ? md->major_tick_length : md->minor_tick_length);
-			_meter_draw_tick_outline(dsc->draw_ctx, dsc->p1, dsc->p2, cx, cy, tlen,
+			gauge_tick_draw_outline(dsc->draw_ctx, dsc->p1, dsc->p2, cx, cy, tlen,
 			                         dsc->line_dsc->width, md->tick_outline_color,
 			                         md->tick_outline_strength, md->tick_outline_fade);
 		}

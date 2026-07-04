@@ -12,6 +12,80 @@
 
 static const char *TAG = "config_store";
 
+/* ── Small NVS ceremony helpers ───────────────────────────────────────────
+ * Many domains below are a single scalar value: open rw -> set -> commit ->
+ * close (save), or open ro -> get -> close (load), differing only in the
+ * NVS width used. These collapse just that ceremony. Return codes pass
+ * through verbatim (raw nvs_open/nvs_set/nvs_get results) so each call
+ * site can keep its own contract for what to do with them — some callers
+ * propagate the open failure, others always report ESP_OK and fall back to
+ * a pre-set default regardless. That difference in *intent* stays in the
+ * wrapper; only the ceremony is shared. Domains with per-field custom error
+ * messages, multiple fields, blob storage, or a non-raw return convention
+ * (e.g. normalizing NVS's specific NOT_FOUND to a generic one) are NOT
+ * forced through these — they have real reasons to differ, not just
+ * copy-paste drift, and are left as their own hand-written ceremony. */
+static esp_err_t chs_save_u8(const char *ns, const char *key, uint8_t val) {
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(ns, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u8(h, key, val);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
+static esp_err_t chs_save_u16(const char *ns, const char *key, uint16_t val) {
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(ns, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u16(h, key, val);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
+static esp_err_t chs_save_i8(const char *ns, const char *key, int8_t val) {
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(ns, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_i8(h, key, val);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
+/* Load helpers don't touch *out on failure (nvs_get_uN's own contract),
+ * so callers that pre-set a default before calling get that default back
+ * on any failure — open or get — exactly as if they'd checked each step
+ * themselves. */
+static esp_err_t chs_load_u8(const char *ns, const char *key, uint8_t *out) {
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(ns, NVS_READONLY, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_get_u8(h, key, out);
+    nvs_close(h);
+    return err;
+}
+
+static esp_err_t chs_load_u16(const char *ns, const char *key, uint16_t *out) {
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(ns, NVS_READONLY, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_get_u16(h, key, out);
+    nvs_close(h);
+    return err;
+}
+
+static esp_err_t chs_load_i8(const char *ns, const char *key, int8_t *out) {
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(ns, NVS_READONLY, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_get_i8(h, key, out);
+    nvs_close(h);
+    return err;
+}
+
 /* ── NVS namespace strings ────────────────────────────────────────────── */
 #define NS_CAN      "can_config"
 #define NS_DIMMER   "dimmer_cfg"
@@ -424,99 +498,59 @@ esp_err_t config_store_load_wifi_boot(wifi_boot_config_t *cfg)
 
 esp_err_t config_store_save_splash_fade(bool enabled)
 {
-    nvs_handle_t handle;
-    esp_err_t err = nvs_open(NS_SPLASH, NVS_READWRITE, &handle);
-    if (err != ESP_OK) return err;
-    err = nvs_set_u8(handle, "fade", enabled ? 1 : 0);
-    if (err != ESP_OK) { nvs_close(handle); return err; }
-    err = nvs_commit(handle);
-    nvs_close(handle);
-    return err;
+    return chs_save_u8(NS_SPLASH, "fade", enabled ? 1 : 0);
 }
 
 esp_err_t config_store_load_splash_fade(bool *enabled)
 {
     if (!enabled) return ESP_ERR_INVALID_ARG;
     *enabled = true; /* default: fade enabled */
-    nvs_handle_t handle;
-    if (nvs_open(NS_SPLASH, NVS_READONLY, &handle) != ESP_OK) return ESP_OK;
     uint8_t u8;
-    if (nvs_get_u8(handle, "fade", &u8) == ESP_OK) *enabled = (u8 != 0);
-    nvs_close(handle);
+    if (chs_load_u8(NS_SPLASH, "fade", &u8) == ESP_OK) *enabled = (u8 != 0);
     return ESP_OK;
 }
 
 esp_err_t config_store_save_splash_enabled(bool enabled)
 {
-    nvs_handle_t handle;
-    esp_err_t err = nvs_open(NS_SPLASH, NVS_READWRITE, &handle);
-    if (err != ESP_OK) return err;
-    err = nvs_set_u8(handle, "enabled", enabled ? 1 : 0);
-    if (err != ESP_OK) { nvs_close(handle); return err; }
-    err = nvs_commit(handle);
-    nvs_close(handle);
-    return err;
+    return chs_save_u8(NS_SPLASH, "enabled", enabled ? 1 : 0);
 }
 
 esp_err_t config_store_load_splash_enabled(bool *enabled)
 {
     if (!enabled) return ESP_ERR_INVALID_ARG;
     *enabled = true; /* default: splash enabled */
-    nvs_handle_t handle;
-    if (nvs_open(NS_SPLASH, NVS_READONLY, &handle) != ESP_OK) return ESP_OK;
     uint8_t u8;
-    if (nvs_get_u8(handle, "enabled", &u8) == ESP_OK) *enabled = (u8 != 0);
-    nvs_close(handle);
+    if (chs_load_u8(NS_SPLASH, "enabled", &u8) == ESP_OK) *enabled = (u8 != 0);
     return ESP_OK;
 }
 
 esp_err_t config_store_save_boot_anim(bool enabled)
 {
-    nvs_handle_t handle;
-    esp_err_t err = nvs_open(NS_SPLASH, NVS_READWRITE, &handle);
-    if (err != ESP_OK) return err;
-    err = nvs_set_u8(handle, "bootanim", enabled ? 1 : 0);
-    if (err != ESP_OK) { nvs_close(handle); return err; }
-    err = nvs_commit(handle);
-    nvs_close(handle);
-    return err;
+    return chs_save_u8(NS_SPLASH, "bootanim", enabled ? 1 : 0);
 }
 
 esp_err_t config_store_load_boot_anim(bool *enabled)
 {
     if (!enabled) return ESP_ERR_INVALID_ARG;
     *enabled = true; /* default: animation on */
-    nvs_handle_t handle;
-    if (nvs_open(NS_SPLASH, NVS_READONLY, &handle) != ESP_OK) return ESP_OK;
     uint8_t u8;
-    if (nvs_get_u8(handle, "bootanim", &u8) == ESP_OK) *enabled = (u8 != 0);
-    nvs_close(handle);
+    if (chs_load_u8(NS_SPLASH, "bootanim", &u8) == ESP_OK) *enabled = (u8 != 0);
     return ESP_OK;
 }
 
 esp_err_t config_store_save_boot_anim_style(uint8_t style)
 {
-    nvs_handle_t handle;
-    esp_err_t err = nvs_open(NS_SPLASH, NVS_READWRITE, &handle);
-    if (err != ESP_OK) return err;
-    err = nvs_set_u8(handle, "bootanimstyle", style);
-    if (err != ESP_OK) { nvs_close(handle); return err; }
-    err = nvs_commit(handle);
-    nvs_close(handle);
-    return err;
+    return chs_save_u8(NS_SPLASH, "bootanimstyle", style);
 }
 
 esp_err_t config_store_load_boot_anim_style(uint8_t *style)
 {
     if (!style) return ESP_ERR_INVALID_ARG;
     *style = BOOT_ANIM_STYLE_FADE; /* default: individual top-to-bottom fade */
-    nvs_handle_t handle;
-    if (nvs_open(NS_SPLASH, NVS_READONLY, &handle) != ESP_OK) return ESP_OK;
     uint8_t u8;
-    if (nvs_get_u8(handle, "bootanimstyle", &u8) == ESP_OK &&
+    if (chs_load_u8(NS_SPLASH, "bootanimstyle", &u8) == ESP_OK &&
         u8 <= BOOT_ANIM_STYLE_CURTAIN)
         *style = u8;
-    nvs_close(handle);
     return ESP_OK;
 }
 
@@ -528,28 +562,18 @@ esp_err_t config_store_load_boot_anim_style(uint8_t *style)
 esp_err_t config_store_save_log_rate_hz(uint16_t hz)
 {
     if (hz > 1000) hz = 1000;
-    nvs_handle_t handle;
-    esp_err_t err = nvs_open(NS_DATALOG, NVS_READWRITE, &handle);
-    if (err != ESP_OK) return err;
-    err = nvs_set_u16(handle, "rate_hz", hz);
-    if (err != ESP_OK) { nvs_close(handle); return err; }
-    err = nvs_commit(handle);
-    nvs_close(handle);
-    return err;
+    return chs_save_u16(NS_DATALOG, "rate_hz", hz);
 }
 
 esp_err_t config_store_load_log_rate_hz(uint16_t *hz)
 {
     if (!hz) return ESP_ERR_INVALID_ARG;
     *hz = 10; /* default: 10 Hz */
-    nvs_handle_t handle;
-    if (nvs_open(NS_DATALOG, NVS_READONLY, &handle) != ESP_OK) return ESP_OK;
     uint16_t v;
-    if (nvs_get_u16(handle, "rate_hz", &v) == ESP_OK) {
+    if (chs_load_u16(NS_DATALOG, "rate_hz", &v) == ESP_OK) {
         if (v > 1000) v = 1000;
         *hz = v;
     }
-    nvs_close(handle);
     return ESP_OK;
 }
 
@@ -561,27 +585,17 @@ esp_err_t config_store_load_log_rate_hz(uint16_t *hz)
 esp_err_t config_store_save_edit_step_px(int8_t step)
 {
     if (step != 1 && step != 5 && step != 10) step = 5;
-    nvs_handle_t handle;
-    esp_err_t err = nvs_open(NS_EDITOR, NVS_READWRITE, &handle);
-    if (err != ESP_OK) return err;
-    err = nvs_set_i8(handle, "step_px", step);
-    if (err != ESP_OK) { nvs_close(handle); return err; }
-    err = nvs_commit(handle);
-    nvs_close(handle);
-    return err;
+    return chs_save_i8(NS_EDITOR, "step_px", step);
 }
 
 esp_err_t config_store_load_edit_step_px(int8_t *step)
 {
     if (!step) return ESP_ERR_INVALID_ARG;
     *step = 5; /* default: 5 px */
-    nvs_handle_t handle;
-    if (nvs_open(NS_EDITOR, NVS_READONLY, &handle) != ESP_OK) return ESP_OK;
     int8_t v;
-    if (nvs_get_i8(handle, "step_px", &v) == ESP_OK) {
+    if (chs_load_i8(NS_EDITOR, "step_px", &v) == ESP_OK) {
         if (v == 1 || v == 5 || v == 10) *step = v;
     }
-    nvs_close(handle);
     return ESP_OK;
 }
 
@@ -727,12 +741,7 @@ esp_err_t config_store_load_gear_cal(gear_cal_config_t *cfg)
 
 esp_err_t config_store_save_first_run_done(bool done)
 {
-    nvs_handle_t handle;
-    esp_err_t err = nvs_open(NS_FIRST_RUN, NVS_READWRITE, &handle);
-    if (err != ESP_OK) return err;
-    err = nvs_set_u8(handle, "done", done ? 1 : 0);
-    if (err == ESP_OK) err = nvs_commit(handle);
-    nvs_close(handle);
+    esp_err_t err = chs_save_u8(NS_FIRST_RUN, "done", done ? 1 : 0);
     if (err == ESP_OK) ESP_LOGI(TAG, "first_run_done = %d", done);
     return err;
 }
@@ -741,11 +750,8 @@ esp_err_t config_store_load_first_run_done(bool *done)
 {
     if (!done) return ESP_ERR_INVALID_ARG;
     *done = false;
-    nvs_handle_t handle;
-    if (nvs_open(NS_FIRST_RUN, NVS_READONLY, &handle) != ESP_OK) return ESP_OK;
     uint8_t u8 = 0;
-    if (nvs_get_u8(handle, "done", &u8) == ESP_OK) *done = (u8 != 0);
-    nvs_close(handle);
+    if (chs_load_u8(NS_FIRST_RUN, "done", &u8) == ESP_OK) *done = (u8 != 0);
     return ESP_OK;
 }
 
@@ -756,24 +762,15 @@ esp_err_t config_store_load_first_run_done(bool *done)
 
 esp_err_t config_store_save_wire_input_mode(bool enabled)
 {
-    nvs_handle_t handle;
-    esp_err_t err = nvs_open(NS_WIRE_INPUT, NVS_READWRITE, &handle);
-    if (err != ESP_OK) return err;
-    err = nvs_set_u8(handle, "enabled", enabled ? 1 : 0);
-    if (err == ESP_OK) err = nvs_commit(handle);
-    nvs_close(handle);
-    return err;
+    return chs_save_u8(NS_WIRE_INPUT, "enabled", enabled ? 1 : 0);
 }
 
 esp_err_t config_store_load_wire_input_mode(bool *enabled)
 {
     if (!enabled) return ESP_ERR_INVALID_ARG;
     *enabled = false; /* default: UART1 active, wire inputs off */
-    nvs_handle_t handle;
-    if (nvs_open(NS_WIRE_INPUT, NVS_READONLY, &handle) != ESP_OK) return ESP_OK;
     uint8_t u8 = 0;
-    if (nvs_get_u8(handle, "enabled", &u8) == ESP_OK) *enabled = (u8 != 0);
-    nvs_close(handle);
+    if (chs_load_u8(NS_WIRE_INPUT, "enabled", &u8) == ESP_OK) *enabled = (u8 != 0);
     return ESP_OK;
 }
 
@@ -785,12 +782,7 @@ esp_err_t config_store_load_wire_input_mode(bool *enabled)
 esp_err_t config_store_save_rotation(uint8_t rot)
 {
     if (rot > 3) return ESP_ERR_INVALID_ARG;
-    nvs_handle_t handle;
-    esp_err_t err = nvs_open(NS_DISPLAY, NVS_READWRITE, &handle);
-    if (err != ESP_OK) return err;
-    err = nvs_set_u8(handle, "rot", rot);
-    if (err == ESP_OK) err = nvs_commit(handle);
-    nvs_close(handle);
+    esp_err_t err = chs_save_u8(NS_DISPLAY, "rot", rot);
     if (err == ESP_OK) ESP_LOGI(TAG, "Display rotation saved: %u", (unsigned)rot);
     return err;
 }
@@ -799,11 +791,8 @@ esp_err_t config_store_load_rotation(uint8_t *rot)
 {
     if (!rot) return ESP_ERR_INVALID_ARG;
     *rot = 0;
-    nvs_handle_t handle;
-    if (nvs_open(NS_DISPLAY, NVS_READONLY, &handle) != ESP_OK) return ESP_OK;
     uint8_t u8 = 0;
-    if (nvs_get_u8(handle, "rot", &u8) == ESP_OK && u8 <= 3) *rot = u8;
-    nvs_close(handle);
+    if (chs_load_u8(NS_DISPLAY, "rot", &u8) == ESP_OK && u8 <= 3) *rot = u8;
     return ESP_OK;
 }
 
@@ -914,12 +903,7 @@ esp_err_t config_store_load_odometer_km(float *out)
 
 esp_err_t config_store_save_ecu_picker_auto(bool auto_mode)
 {
-    nvs_handle_t handle;
-    esp_err_t err = nvs_open(NS_ECU_PICKER, NVS_READWRITE, &handle);
-    if (err != ESP_OK) return err;
-    err = nvs_set_u8(handle, "auto", auto_mode ? 1u : 0u);
-    if (err == ESP_OK) err = nvs_commit(handle);
-    nvs_close(handle);
+    esp_err_t err = chs_save_u8(NS_ECU_PICKER, "auto", auto_mode ? 1u : 0u);
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "ECU picker mode saved: %s", auto_mode ? "Auto" : "Manual");
     }
@@ -928,14 +912,12 @@ esp_err_t config_store_save_ecu_picker_auto(bool auto_mode)
 
 bool config_store_load_ecu_picker_auto(void)
 {
-    nvs_handle_t handle;
     /* Default to Auto on any read failure — the safer choice. Manual hides
      * presets, and a missing/corrupt NVS value should never cause a UI to
-     * silently drop options the user might need. */
-    if (nvs_open(NS_ECU_PICKER, NVS_READONLY, &handle) != ESP_OK) return true;
+     * silently drop options the user might need. chs_load_u8 leaves *out
+     * untouched on failure (open or get), so v stays at its 1 default. */
     uint8_t v = 1;
-    if (nvs_get_u8(handle, "auto", &v) != ESP_OK) v = 1;
-    nvs_close(handle);
+    chs_load_u8(NS_ECU_PICKER, "auto", &v);
     return v != 0;
 }
 
@@ -958,14 +940,7 @@ esp_err_t config_store_save_widget_latch(uint32_t tx_can_id, uint8_t tx_bit, boo
     if (tx_can_id == 0) return ESP_ERR_INVALID_ARG;
     char key[16];
     _widget_latch_key(tx_can_id, tx_bit, key, sizeof key);
-
-    nvs_handle_t handle;
-    esp_err_t err = nvs_open(NS_WDGLATCH, NVS_READWRITE, &handle);
-    if (err != ESP_OK) return err;
-    err = nvs_set_u8(handle, key, on ? 1 : 0);
-    if (err == ESP_OK) err = nvs_commit(handle);
-    nvs_close(handle);
-    return err;
+    return chs_save_u8(NS_WDGLATCH, key, on ? 1 : 0);
 }
 
 esp_err_t config_store_load_widget_latch(uint32_t tx_can_id, uint8_t tx_bit, bool *on)

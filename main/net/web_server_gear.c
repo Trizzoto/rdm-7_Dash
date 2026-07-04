@@ -23,13 +23,8 @@ static esp_err_t api_gear_cfg_get_handler(httpd_req_t *req) {
 	for (uint8_t i = 0; i < cfg.ratio_count && i < GEAR_CAL_MAX_GEARS; i++) {
 		cJSON_AddItemToArray(arr, cJSON_CreateNumber(cfg.ratios[i]));
 	}
-	char *body = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	esp_err_t r = httpd_resp_send(req, body ? body : "{}", HTTPD_RESP_USE_STRLEN);
-	if (body) free(body);
-	return r;
+	return web_server_send_json(req, root);
 }
 
 static esp_err_t api_gear_cfg_post_handler(httpd_req_t *req) {

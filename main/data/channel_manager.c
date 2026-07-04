@@ -192,6 +192,17 @@ static void chm_notify_listeners(channel_t *c) {
 	}
 }
 
+/* Shared tail for the simple field mutators below: notify listeners, mark
+ * the debounced-write dirty flag, and report success. Mutators with a
+ * different persistence need (channel_manager_set_signal's synchronous
+ * flush, channel_manager_set_decode's persist_now branch) don't use this —
+ * they have real reasons to differ, not just copy-paste drift. */
+static bool chm_notify_and_dirty(channel_t *c) {
+	chm_notify_listeners(c);
+	channel_manager_mark_dirty();
+	return true;
+}
+
 /* ── Listener add / remove ───────────────────────────────────────── */
 
 void channel_manager_subscribe(channel_t *c, channel_changed_cb cb, void *user) {
@@ -393,9 +404,7 @@ bool channel_manager_delete(const char *id) {
 bool channel_manager_set_label(channel_t *c, const char *label) {
 	if (!c || !label) return false;
 	safe_strcpy(c->label, label, sizeof(c->label));
-	chm_notify_listeners(c);
-	channel_manager_mark_dirty();
-	return true;
+	return chm_notify_and_dirty(c);
 }
 
 bool channel_manager_set_signal(channel_t *c, const char *signal_name) {
@@ -462,9 +471,7 @@ bool channel_manager_set_signal(channel_t *c, const char *signal_name) {
 bool channel_manager_set_units_display(channel_t *c, const char *units) {
 	if (!c || !units) return false;
 	safe_strcpy(c->units_display, units, sizeof(c->units_display));
-	chm_notify_listeners(c);
-	channel_manager_mark_dirty();
-	return true;
+	return chm_notify_and_dirty(c);
 }
 
 bool channel_manager_set_units_native(channel_t *c, const char *units) {
@@ -488,35 +495,27 @@ bool channel_manager_set_units_native(channel_t *c, const char *units) {
 			c->sanity_max = unit_convert(c->sanity_max, old, units);
 	}
 	safe_strcpy(c->units_native, units, sizeof(c->units_native));
-	chm_notify_listeners(c);
-	channel_manager_mark_dirty();
-	return true;
+	return chm_notify_and_dirty(c);
 }
 
 bool channel_manager_set_decimals(channel_t *c, uint8_t decimals) {
 	if (!c) return false;
 	c->decimals = decimals;
-	chm_notify_listeners(c);
-	channel_manager_mark_dirty();
-	return true;
+	return chm_notify_and_dirty(c);
 }
 
 bool channel_manager_set_range(channel_t *c, float min, float max) {
 	if (!c || max <= min) return false;
 	c->min = min;
 	c->max = max;
-	chm_notify_listeners(c);
-	channel_manager_mark_dirty();
-	return true;
+	return chm_notify_and_dirty(c);
 }
 
 bool channel_manager_set_sanity(channel_t *c, float smin, float smax) {
 	if (!c) return false;
 	c->sanity_min = smin;
 	c->sanity_max = smax;
-	chm_notify_listeners(c);
-	channel_manager_mark_dirty();
-	return true;
+	return chm_notify_and_dirty(c);
 }
 
 bool channel_manager_set_threshold(channel_t *c, channel_zone_t zone, float value) {
@@ -526,9 +525,7 @@ bool channel_manager_set_threshold(channel_t *c, channel_zone_t zone, float valu
 	case CHZONE_HIGH_WARN:     c->high_warn = value;     break;
 	default: return false;
 	}
-	chm_notify_listeners(c);
-	channel_manager_mark_dirty();
-	return true;
+	return chm_notify_and_dirty(c);
 }
 
 bool channel_manager_clear_threshold(channel_t *c, channel_zone_t zone) {
@@ -538,9 +535,7 @@ bool channel_manager_clear_threshold(channel_t *c, channel_zone_t zone) {
 	case CHZONE_HIGH_WARN:     c->high_warn     = CHANNEL_THRESHOLD_UNSET_HIGH; break;
 	default: return false;
 	}
-	chm_notify_listeners(c);
-	channel_manager_mark_dirty();
-	return true;
+	return chm_notify_and_dirty(c);
 }
 
 bool channel_manager_set_zone_color(channel_t *c, channel_zone_t zone, uint32_t color) {
@@ -551,9 +546,7 @@ bool channel_manager_set_zone_color(channel_t *c, channel_zone_t zone, uint32_t 
 	case CHZONE_HIGH_WARN:     c->color_high_warn = color;     break;
 	default: return false;
 	}
-	chm_notify_listeners(c);
-	channel_manager_mark_dirty();
-	return true;
+	return chm_notify_and_dirty(c);
 }
 
 bool channel_manager_reset_to_defaults(channel_t *c) {
@@ -570,9 +563,7 @@ bool channel_manager_reset_to_defaults(channel_t *c) {
 
 	safe_strcpy(c->signal_name, saved_signal, sizeof(c->signal_name));
 	c->signal_index = saved_idx;
-	chm_notify_listeners(c);
-	channel_manager_mark_dirty();
-	return true;
+	return chm_notify_and_dirty(c);
 }
 
 /* ── Backwards-compat migration: legacy widget → channel auto-populate ── */

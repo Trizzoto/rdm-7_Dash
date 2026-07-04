@@ -18,6 +18,7 @@
 #include "widget_arc.h"
 #include "widget_image.h"
 #include "widget_rules.h"
+#include "gauge_tick.h"
 #include "system/night_mode.h"
 #include "data/channel_manager.h"
 #include "signal.h"
@@ -843,7 +844,7 @@ static void _arc_stamp_tick_image(lv_draw_ctx_t *ctx, lv_coord_t cx, lv_coord_t 
 	lv_coord_t iw = img->header.w, ih = img->header.h;
 	if (iw <= 0 || ih <= 0) return;
 	float dx = (float)(mx - cx), dy = (float)(my - cy);
-	float deg = atan2f(dy, dx) * 57.2957795f;               /* outward (pre-offset) */
+	int16_t a = gauge_tick_outward_angle(dx, dy);           /* outward (pre-offset) */
 	if (s->offset) {                                        /* shift along the radial */
 		float dist = sqrtf(dx*dx + dy*dy);
 		if (dist > 1.0f) {
@@ -851,10 +852,9 @@ static void _arc_stamp_tick_image(lv_draw_ctx_t *ctx, lv_coord_t cx, lv_coord_t 
 			my += (lv_coord_t)(s->offset * dy / dist);
 		}
 	}
-	int a = (int)lroundf(deg + 90.0f) * 10; a %= 3600; if (a < 0) a += 3600;
 	lv_draw_img_dsc_t idsc;
 	lv_draw_img_dsc_init(&idsc);
-	idsc.angle = (int16_t)a;
+	idsc.angle = a;
 	idsc.zoom  = s->scale ? (uint16_t)(((uint32_t)s->scale * 256) / 100) : 256;
 	idsc.opa   = s->opa;
 	if (s->recolor_opa) { idsc.recolor = s->recolor; idsc.recolor_opa = s->recolor_opa; }
@@ -864,42 +864,6 @@ static void _arc_stamp_tick_image(lv_draw_ctx_t *ctx, lv_coord_t cx, lv_coord_t 
 	                     (lv_coord_t)(mx - iw / 2 + iw - 1),
 	                     (lv_coord_t)(my - ih / 2 + ih - 1) };
 	lv_draw_img(ctx, &idsc, &coords, img);
-}
-
-/* Draw an outline/glow BEHIND a drawn tick. lv_meter reports p1..p2 as the full
- * rim→centre radial and masks the visible tick to `tlen` px from the rim — so we
- * clip the outline to that same span (else it draws a ray to the centre). A
- * tight border at `strength` + `fade` softer wider rings = a glow. Baked into
- * the static-tick snapshot, so free at runtime. */
-static void _arc_draw_tick_outline(lv_draw_ctx_t *ctx, const lv_point_t *p1,
-                                   const lv_point_t *p2, lv_coord_t cx, lv_coord_t cy,
-                                   lv_coord_t tlen, lv_coord_t base_w,
-                                   lv_color_t color, uint8_t strength, uint8_t fade) {
-	if (!ctx || strength == 0 || !p1 || !p2) return;
-	float d1 = (float)((p1->x-cx)*(p1->x-cx) + (p1->y-cy)*(p1->y-cy));
-	float d2 = (float)((p2->x-cx)*(p2->x-cx) + (p2->y-cy)*(p2->y-cy));
-	lv_point_t outer = d1 >= d2 ? *p1 : *p2;            /* rim end */
-	float dx = (float)(cx - outer.x), dy = (float)(cy - outer.y);
-	float dist = sqrtf(dx*dx + dy*dy);
-	lv_point_t inner = outer;
-	if (dist > 1.0f) {
-		inner.x = (lv_coord_t)(outer.x + dx/dist * tlen);
-		inner.y = (lv_coord_t)(outer.y + dy/dist * tlen);
-	}
-	lv_draw_line_dsc_t ld;
-	lv_draw_line_dsc_init(&ld);
-	ld.color = color;
-	ld.round_start = 1;
-	ld.round_end = 1;
-	int f = fade > 20 ? 20 : fade;
-	for (int j = f; j >= 1; j--) {                       /* wide+faint → narrow glow */
-		ld.width = (lv_coord_t)(base_w + 2 + 2 * j);
-		ld.opa   = (lv_opa_t)(((uint16_t)strength * (f - j + 1)) / (f + 1) / 2);
-		lv_draw_line(ctx, &ld, &outer, &inner);
-	}
-	ld.width = (lv_coord_t)(base_w + 2);                 /* tight hard outline */
-	ld.opa   = strength;
-	lv_draw_line(ctx, &ld, &outer, &inner);
 }
 
 /* DRAW_PART_BEGIN hook on the overlay lv_meter — relabels the major-tick
@@ -965,7 +929,7 @@ static void _arc_tick_draw_cb(lv_event_t *e) {
         if (d->tick_mid_scale && dsc->sub_part_ptr == d->tick_mid_scale) tlen = d->mid_tick_length;
         else if ((dsc->id % nth) == 0) tlen = d->major_tick_length;
         else tlen = d->minor_tick_length;
-        _arc_draw_tick_outline(dsc->draw_ctx, dsc->p1, dsc->p2, cx, cy, tlen,
+        gauge_tick_draw_outline(dsc->draw_ctx, dsc->p1, dsc->p2, cx, cy, tlen,
                                dsc->line_dsc->width, d->tick_outline_color,
                                d->tick_outline_strength, d->tick_outline_fade);
     }
@@ -1110,6 +1074,28 @@ static void _arc_free_tick_snapshot(arc_data_t *d) {
 	}
 }
 
+/* Expand @p bbox to bound every point sampled every 3° around the sweep
+ * [start_angle, start_angle+range] at both @p r_in and @p r_out, centred
+ * on @p c. Used by both the tick-snapshot sizing below and
+ * _arc_apply_sector_crop to size a region tight to what an angled sector
+ * could actually paint — same sampling loop, different callers/units. */
+static void _arc_expand_bbox_for_sweep(lv_point_t c, int16_t start_angle,
+                                       int32_t range, int32_t r_in, int32_t r_out,
+                                       lv_area_t *bbox) {
+	for (int32_t adeg = 0; adeg <= range; adeg += 3) {
+		int32_t ang = (int32_t)start_angle + LV_MIN(adeg, range);
+		int32_t cs = lv_trigo_cos((int16_t)ang);
+		int32_t sn = lv_trigo_sin((int16_t)ang);
+		for (int ri = 0; ri < 2; ri++) {
+			int32_t r = ri ? r_in : r_out;
+			lv_coord_t px = (lv_coord_t)(c.x + (cs * r) / LV_TRIGO_SIN_MAX);
+			lv_coord_t py = (lv_coord_t)(c.y + (sn * r) / LV_TRIGO_SIN_MAX);
+			bbox->x1 = LV_MIN(bbox->x1, px); bbox->y1 = LV_MIN(bbox->y1, py);
+			bbox->x2 = LV_MAX(bbox->x2, px); bbox->y2 = LV_MAX(bbox->y2, py);
+		}
+	}
+}
+
 /* Render the overlay meter (ticks + labels only — call BEFORE the value
  * needle is added) into a sector-bbox image and strip the live tick
  * rendering. Any failure falls back silently to the dynamic path. */
@@ -1155,18 +1141,7 @@ static void _arc_flatten_overlay(arc_data_t *d, lv_obj_t *cont, lv_obj_t *m,
 	int32_t range = (360 + (d->end_angle % 360) - (d->start_angle % 360)) % 360;
 	if (range == 0) range = 360;   /* start==end → full revolution */
 	lv_area_t bbox = { LV_COORD_MAX, LV_COORD_MAX, LV_COORD_MIN, LV_COORD_MIN };
-	for (int32_t adeg = 0; adeg <= range; adeg += 3) {
-		int32_t ang = (int32_t)d->start_angle + LV_MIN(adeg, range);
-		int32_t cs = lv_trigo_cos((int16_t)ang);
-		int32_t sn = lv_trigo_sin((int16_t)ang);
-		for (int ri = 0; ri < 2; ri++) {
-			int32_t r = ri ? r_in : r_out;
-			lv_coord_t px = (lv_coord_t)(c.x + (cs * r) / LV_TRIGO_SIN_MAX);
-			lv_coord_t py = (lv_coord_t)(c.y + (sn * r) / LV_TRIGO_SIN_MAX);
-			bbox.x1 = LV_MIN(bbox.x1, px); bbox.y1 = LV_MIN(bbox.y1, py);
-			bbox.x2 = LV_MAX(bbox.x2, px); bbox.y2 = LV_MAX(bbox.y2, py);
-		}
-	}
+	_arc_expand_bbox_for_sweep(c, d->start_angle, range, r_in, r_out, &bbox);
 	lv_area_increase(&bbox, 8, 8);
 	/* Clamp to what the meter could legally draw. */
 	lv_area_t legal;
@@ -1534,18 +1509,7 @@ static void _arc_apply_sector_crop(widget_t *w) {
         if (r_in < 0) r_in = 0;
         lv_point_t c = {(lv_coord_t)(cw / 2), (lv_coord_t)(ch / 2)};
         lv_area_t sb = {LV_COORD_MAX, LV_COORD_MAX, LV_COORD_MIN, LV_COORD_MIN};
-        for (int32_t adeg = 0; adeg <= range; adeg += 3) {
-            int32_t ang = (int32_t)d->start_angle + LV_MIN(adeg, range);
-            int32_t cs = lv_trigo_cos((int16_t)ang);
-            int32_t sn = lv_trigo_sin((int16_t)ang);
-            for (int ri = 0; ri < 2; ri++) {
-                int32_t rr = ri ? r_in : r_out;
-                lv_coord_t px = (lv_coord_t)(c.x + (cs * rr) / LV_TRIGO_SIN_MAX);
-                lv_coord_t py = (lv_coord_t)(c.y + (sn * rr) / LV_TRIGO_SIN_MAX);
-                sb.x1 = LV_MIN(sb.x1, px); sb.y1 = LV_MIN(sb.y1, py);
-                sb.x2 = LV_MAX(sb.x2, px); sb.y2 = LV_MAX(sb.y2, py);
-            }
-        }
+        _arc_expand_bbox_for_sweep(c, d->start_angle, range, r_in, r_out, &sb);
         /* Rounded end caps overhang tangentially by up to half the stroke
          * width; AA adds a fringe. */
         uint8_t maxw = LV_MAX(d->arc_width, d->bg_arc_width);

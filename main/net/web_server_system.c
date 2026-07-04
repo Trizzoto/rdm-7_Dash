@@ -319,7 +319,6 @@ static const httpd_uri_t system_reboot_uri = {
 /* ── Dimmer Config ───────────────────────────────────────────────────────── */
 
 static esp_err_t _dimmer_config_get_handler(httpd_req_t *req) {
-	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 
 	cJSON *root = cJSON_CreateObject();
@@ -330,15 +329,7 @@ static esp_err_t _dimmer_config_get_handler(httpd_req_t *req) {
 	cJSON_AddNumberToObject(root, "dim_brightness", dimmer_config.dim_brightness);
 	cJSON_AddBoolToObject(root, "enabled", dimmer_config.enabled);
 
-	char *json = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-	if (!json) {
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
-		return ESP_FAIL;
-	}
-	httpd_resp_sendstr(req, json);
-	free(json);
-	return ESP_OK;
+	return web_server_send_json(req, root);
 }
 
 static void _deferred_dimmer_subscribe(void *arg) {

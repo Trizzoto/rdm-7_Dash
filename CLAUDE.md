@@ -24,7 +24,7 @@ main/
 ├── can/          CAN RX task + frame dispatch
 ├── data/         channel registry — canonical_channels, channel_manager, channel_source_apply (the binding layer; see ADR-0005/0006)
 ├── io/           Wire inputs (GPIO/ADC)
-├── layout/       layout_manager, layout_loader, default_layout, ecu_presets
+├── layout/       layout_manager, default_layout, ecu_presets
 ├── net/          wifi_manager, web_server + modular endpoint files, captive portal, ota
 ├── storage/      config_store (NVS), data_logger, sd_manager, signal_replay, boot_assets
 ├── system/       display_capture, night_mode, remote_touch, screen_config, device_id
@@ -99,8 +99,7 @@ layouts portable — decode no longer travels in the layout JSON (ADR-0005/0006)
 
 ## Layout Manager (`main/layout/`)
 
-- `layout_manager.c/h` — load/save layouts, register widget factories, drive `dashboard_init()`
-- `layout_loader.c/h` — JSON parse + widget instantiation
+- `layout_manager.c/h` — load/save layouts, register widget factories, drive `dashboard_init()`, JSON parse + widget instantiation
 - `default_layout.c/h` — built-in fallback layout
 - `ecu_presets.c/h` — OEM CAN signal presets (8 ECUs)
 - Schema version: `LAYOUT_SCHEMA_VERSION` in `layout_manager.h` (currently **v15** — that macro is the authority; don't restate the number)

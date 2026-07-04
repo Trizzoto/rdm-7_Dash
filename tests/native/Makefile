@@ -13,7 +13,7 @@ CFLAGS  ?= -std=c11 -Wall -Wextra -Wno-unused-function -O0 -g
 LDFLAGS ?= -lm
 
 # One test binary per file in the TESTS list. Add new tests here.
-TESTS = test_can_decode test_widget_rules test_layout_migration test_widget_arc_precedence test_obd2_freeze_frame test_ota_skip_version test_calculated_gear test_web_path_safety test_ecu_preset_match
+TESTS = test_can_decode test_widget_rules test_layout_migration test_widget_arc_precedence test_obd2_freeze_frame test_obd2_one_shot_decode test_ota_skip_version test_calculated_gear test_web_path_safety test_ecu_preset_match test_widget_fields
 
 BIN_DIR := build
 BINS    := $(addprefix $(BIN_DIR)/, $(TESTS))
@@ -51,6 +51,14 @@ $(BIN_DIR)/test_widget_rules: test_widget_rules.c unity.c cjson/cJSON.c | $(BIN_
 $(BIN_DIR)/test_layout_migration: test_layout_migration.c unity.c cjson/cJSON.c | $(BIN_DIR)
 	$(CC) $(CFLAGS) -Icjson \
 	    test_layout_migration.c unity.c cjson/cJSON.c \
+	    -o $@ $(LDFLAGS)
+
+# widget_fields.h is header-only (no firmware .c to compile) but pulls
+# widget_types.h via "widgets/widget_types.h" — needs main/ itself on the
+# include path, plus the same LVGL/cJSON mocks widget_types.h requires.
+$(BIN_DIR)/test_widget_fields: test_widget_fields.c unity.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -Imocks -Icjson -I../../main \
+	    test_widget_fields.c unity.c \
 	    -o $@ $(LDFLAGS)
 
 clean:

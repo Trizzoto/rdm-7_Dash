@@ -157,17 +157,8 @@ static esp_err_t _dtcs_handler(httpd_req_t *req) {
 
     _obd2_ctx_release(&ctx->refs, ctx->done, ctx);   /* handler's reference */
 
-    char *json = cJSON_PrintUnformatted(resp);
-    cJSON_Delete(resp);
-    if (!json) {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
-        return ESP_FAIL;
-    }
-    httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-    esp_err_t r = httpd_resp_sendstr(req, json);
-    free(json);
-    return r;
+    return web_server_send_json(req, resp);
 }
 
 /* ── Clear DTCs ───────────────────────────────────────────────────────── */
@@ -221,17 +212,8 @@ static esp_err_t _clear_handler(httpd_req_t *req) {
 
     _obd2_ctx_release(&ctx->refs, ctx->done, ctx);
 
-    char *json = cJSON_PrintUnformatted(resp);
-    cJSON_Delete(resp);
-    if (!json) {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
-        return ESP_FAIL;
-    }
-    httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-    esp_err_t r = httpd_resp_sendstr(req, json);
-    free(json);
-    return r;
+    return web_server_send_json(req, resp);
 }
 
 /* ── VIN read ─────────────────────────────────────────────────────────── */
@@ -316,17 +298,8 @@ static esp_err_t _ecuname_handler(httpd_req_t *req) {
 
     _obd2_ctx_release(&ctx->refs, ctx->done, ctx);
 
-    char *json = cJSON_PrintUnformatted(resp);
-    cJSON_Delete(resp);
-    if (!json) {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
-        return ESP_FAIL;
-    }
-    httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-    esp_err_t r = httpd_resp_sendstr(req, json);
-    free(json);
-    return r;
+    return web_server_send_json(req, resp);
 }
 
 static esp_err_t _vin_handler(httpd_req_t *req) {
@@ -360,17 +333,8 @@ static esp_err_t _vin_handler(httpd_req_t *req) {
 
     _obd2_ctx_release(&ctx->refs, ctx->done, ctx);
 
-    char *json = cJSON_PrintUnformatted(resp);
-    cJSON_Delete(resp);
-    if (!json) {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
-        return ESP_FAIL;
-    }
-    httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-    esp_err_t r = httpd_resp_sendstr(req, json);
-    free(json);
-    return r;
+    return web_server_send_json(req, resp);
 }
 
 /* ── Diagnostic snapshot ───────────────────────────────────────────────
@@ -625,17 +589,8 @@ static esp_err_t _snapshot_handler(httpd_req_t *req) {
 
     _obd2_ctx_release(&ctx->refs, ctx->done, ctx);   /* handler's reference */
 
-    char *json = cJSON_PrintUnformatted(resp);
-    cJSON_Delete(resp);
-    if (!json) {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
-        return ESP_FAIL;
-    }
-    httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-    esp_err_t r = httpd_resp_sendstr(req, json);
-    free(json);
-    return r;
+    return web_server_send_json(req, resp);
 }
 
 /* ── URI descriptors ─────────────────────────────────────────────────── */
@@ -701,14 +656,8 @@ static esp_err_t _protocols_handler(httpd_req_t *req) {
         cJSON_AddItemToArray(arr, item);
     }
 
-    char *s = cJSON_PrintUnformatted(root);
-    cJSON_Delete(root);
-    if (!s) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "alloc"); return ESP_FAIL; }
-    httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-    esp_err_t r = httpd_resp_send(req, s, strlen(s));
-    free(s);
-    return r;
+    return web_server_send_json(req, root);
 }
 
 static const httpd_uri_t protocols_uri = {
@@ -741,14 +690,8 @@ static esp_err_t _pids_handler(httpd_req_t *req) {
         cJSON_AddItemToArray(arr, item);
     }
 
-    char *s = cJSON_PrintUnformatted(root);
-    cJSON_Delete(root);
-    if (!s) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "alloc"); return ESP_FAIL; }
-    httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-    esp_err_t r = httpd_resp_send(req, s, strlen(s));
-    free(s);
-    return r;
+    return web_server_send_json(req, root);
 }
 
 static const httpd_uri_t pids_uri = {
@@ -801,14 +744,8 @@ static esp_err_t _sim_handler(httpd_req_t *req) {
     cJSON_AddBoolToObject  (root, "sim", sim_on);
     cJSON_AddNumberToObject(root, "pids_polled", npids);
     cJSON_AddBoolToObject  (root, "signal_sim_active", sigsim);
-    char *s = cJSON_PrintUnformatted(root);
-    cJSON_Delete(root);
-    if (!s) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "alloc"); return ESP_FAIL; }
-    httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-    esp_err_t r = httpd_resp_send(req, s, strlen(s));
-    free(s);
-    return r;
+    return web_server_send_json(req, root);
 }
 
 static const httpd_uri_t sim_uri = {
@@ -874,14 +811,8 @@ static esp_err_t _scan_handler(httpd_req_t *req) {
     }
     _obd2_ctx_release(&ctx->refs, ctx->done, ctx);
 
-    char *json = cJSON_PrintUnformatted(resp);
-    cJSON_Delete(resp);
-    if (!json) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM"); return ESP_FAIL; }
-    httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-    esp_err_t r = httpd_resp_sendstr(req, json);
-    free(json);
-    return r;
+    return web_server_send_json(req, resp);
 }
 
 static const httpd_uri_t scan_uri = {

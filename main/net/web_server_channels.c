@@ -334,18 +334,8 @@ static esp_err_t channels_canonical_handler(httpd_req_t *req) {
 		cJSON_AddItemToArray(arr, jc);
 	}
 
-	char *json = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-	if (!json) {
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
-		return ESP_FAIL;
-	}
-
-	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	esp_err_t e = httpd_resp_sendstr(req, json);
-	cJSON_free(json);
-	return e;
+	return web_server_send_json(req, root);
 }
 
 /* ── Mutation helpers ────────────────────────────────────────────── */
@@ -369,17 +359,8 @@ static esp_err_t send_channel_ok(httpd_req_t *req, channel_t *c) {
 		cJSON *jc = channel_to_full_json(c);
 		if (jc) cJSON_AddItemToObject(root, "channel", jc);
 	}
-	char *json = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-	if (!json) {
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
-		return ESP_FAIL;
-	}
-	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	esp_err_t e = httpd_resp_sendstr(req, json);
-	cJSON_free(json);
-	return e;
+	return web_server_send_json(req, root);
 }
 
 /* POST /api/channels/activate — body `{ "id": "rpm" }`.
@@ -1027,17 +1008,8 @@ static esp_err_t channels_source_options_handler(httpd_req_t *req) {
 	free(snap);
 	if (layout_root) cJSON_Delete(layout_root);
 
-	char *json = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-	if (!json) {
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
-		return ESP_FAIL;
-	}
-	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	esp_err_t e = httpd_resp_sendstr(req, json);
-	cJSON_free(json);
-	return e;
+	return web_server_send_json(req, root);
 }
 
 /* POST /api/channels/bind-source

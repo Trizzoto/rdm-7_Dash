@@ -1,0 +1,310 @@
+{
+  "schema_version": 17,
+  "name": "RDM_Race",
+  "screen_w": 800,
+  "screen_h": 480,
+  "signals": [
+    {
+      "name": "GEAR",
+      "value_map": [
+        {
+          "v": 0,
+          "label": "N"
+        }
+      ]
+    },
+    {
+      "name": "FUEL_SENDER_V",
+      "fuel_cal": {
+        "empty_v": 0.5,
+        "full_v": 3,
+        "full_value": 100,
+        "enabled": false
+      }
+    }
+  ],
+  "widgets": [
+    {
+      "type": "shift_light",
+      "id": "shift_0",
+      "x": 0,
+      "y": -230,
+      "w": 796,
+      "h": 16,
+      "config": {
+        "signal_name": "RPM",
+        "led_count": 16,
+        "flash_threshold": 6500,
+        "flash_speed": 50,
+        "color_off": 6372,
+        "fill_mode": 1
+      },
+      "signal": "RPM"
+    },
+    {
+      "type": "rpm_bar",
+      "id": "rpm_0",
+      "x": 0,
+      "y": -190,
+      "w": 784,
+      "h": 52,
+      "config": {
+        "rpm_max": 7000,
+        "redline": 8000,
+        "bar_color": 12010,
+        "grad_stops": [
+          {
+            "pos": 0,
+            "color": 12010
+          },
+          {
+            "pos": 70,
+            "color": 64930
+          },
+          {
+            "pos": 100,
+            "color": 63715
+          }
+        ],
+        "limiter_effect": 1,
+        "limiter_value": 6500,
+        "limiter_color": 63488,
+        "flash_speed": 50,
+        "tick_side": 1,
+        "tick_length": 9,
+        "tick_width": 2,
+        "tick_color": 23275,
+        "bar_bg_color": 4259,
+        "show_rpm_value": true,
+        "rpm_value_font": "Manrope Bold:26",
+        "rpm_value_color": 65535,
+        "signal_name": "RPM",
+        "channel": "rpm"
+      },
+      "signal": "RPM",
+      "channel": "rpm"
+    },
+    {
+      "type": "panel",
+      "id": "speed",
+      "x": -268,
+      "y": -15,
+      "w": 250,
+      "h": 180,
+      "config": {
+        "slot": 8,
+        "label": "SPEED  km/h",
+        "custom_text": "",
+        "peak_y_offset": 52,
+        "value_font": "Manrope Bold:78",
+        "signal_name": "VEHICLE_SPEED",
+        "channel": "vehicle_speed",
+        "border_width": 0,
+        "bg_opa": 0,
+        "label_color": 38066,
+        "value_color": 65535,
+        "value_y_offset": 30,
+        "unit_size": 0
+      },
+      "signal": "VEHICLE_SPEED",
+      "channel": "vehicle_speed"
+    },
+    {
+      "type": "text",
+      "id": "gear",
+      "x": 0,
+      "y": -2,
+      "w": 220,
+      "h": 200,
+      "config": {
+        "slot": 0,
+        "decimals": 0,
+        "signal_name": "GEAR",
+        "channel": "gear",
+        "font": "Manrope Bold:150"
+      },
+      "signal": "GEAR",
+      "channel": "gear"
+    },
+    {
+      "type": "panel",
+      "id": "water",
+      "x": 268,
+      "y": -15,
+      "w": 250,
+      "h": 180,
+      "config": {
+        "slot": 8,
+        "label": "WATER  C",
+        "custom_text": "",
+        "peak_y_offset": 52,
+        "value_font": "Manrope Bold:78",
+        "signal_name": "COOLANT_TEMP",
+        "channel": "coolant_temp",
+        "border_width": 0,
+        "bg_opa": 0,
+        "label_color": 38066,
+        "value_color": 65535,
+        "value_y_offset": 30,
+        "show_unit": true,
+        "unit_size": 1
+      },
+      "signal": "COOLANT_TEMP",
+      "channel": "coolant_temp"
+    },
+    {
+      "type": "panel",
+      "id": "t_oilp",
+      "x": -325,
+      "y": 192,
+      "w": 126,
+      "h": 86,
+      "config": {
+        "slot": 8,
+        "label": "OIL PRESS  kPa",
+        "custom_text": "",
+        "decimals": 0,
+        "peak_y_offset": 40,
+        "value_font": "Manrope Bold:30",
+        "signal_name": "OIL_PRESSURE",
+        "channel": "oil_pressure",
+        "border_width": 1,
+        "border_color": 12776,
+        "bg_color": 4259,
+        "label_color": 38066,
+        "value_color": 65535,
+        "value_y_offset": 18
+      },
+      "signal": "OIL_PRESSURE",
+      "channel": "oil_pressure"
+    },
+    {
+      "type": "panel",
+      "id": "t_oilt",
+      "x": -195,
+      "y": 192,
+      "w": 126,
+      "h": 86,
+      "config": {
+        "slot": 8,
+        "label": "OIL TEMP  F",
+        "custom_text": "",
+        "decimals": 0,
+        "peak_y_offset": 40,
+        "value_font": "Manrope Bold:30",
+        "signal_name": "OIL_TEMP",
+        "channel": "oil_temp",
+        "border_width": 1,
+        "border_color": 12776,
+        "bg_color": 4259,
+        "label_color": 38066,
+        "value_color": 65535,
+        "value_y_offset": 18
+      },
+      "signal": "OIL_TEMP",
+      "channel": "oil_temp"
+    },
+    {
+      "type": "panel",
+      "id": "t_batt",
+      "x": -65,
+      "y": 192,
+      "w": 126,
+      "h": 86,
+      "config": {
+        "slot": 8,
+        "label": "BATTERY  V",
+        "custom_text": "",
+        "peak_y_offset": 40,
+        "value_font": "Manrope Bold:30",
+        "signal_name": "BATTERY_VOLTAGE",
+        "channel": "battery_voltage",
+        "border_width": 1,
+        "border_color": 12776,
+        "bg_color": 4259,
+        "label_color": 38066,
+        "value_color": 65535,
+        "value_y_offset": 18
+      },
+      "signal": "BATTERY_VOLTAGE",
+      "channel": "battery_voltage"
+    },
+    {
+      "type": "panel",
+      "id": "t_boost",
+      "x": 65,
+      "y": 192,
+      "w": 126,
+      "h": 86,
+      "config": {
+        "slot": 8,
+        "label": "BOOST  bar",
+        "custom_text": "",
+        "decimals": 0,
+        "peak_y_offset": 40,
+        "value_font": "Manrope Bold:30",
+        "signal_name": "MATH_BOOST_PRESSURE",
+        "channel": "boost_pressure",
+        "border_width": 1,
+        "border_color": 12776,
+        "bg_color": 4259,
+        "label_color": 38066,
+        "value_color": 11871,
+        "value_y_offset": 18
+      },
+      "signal": "MATH_BOOST_PRESSURE",
+      "channel": "boost_pressure"
+    },
+    {
+      "type": "panel",
+      "id": "t_lam",
+      "x": 195,
+      "y": 192,
+      "w": 126,
+      "h": 86,
+      "config": {
+        "slot": 8,
+        "label": "LAMBDA",
+        "custom_text": "",
+        "decimals": 2,
+        "peak_y_offset": 40,
+        "value_font": "Manrope Bold:30",
+        "signal_name": "LAMBDA",
+        "channel": "lambda_bank1",
+        "border_width": 1,
+        "border_color": 12776,
+        "bg_color": 4259,
+        "label_color": 38066,
+        "value_color": 65535,
+        "value_y_offset": 18
+      },
+      "signal": "LAMBDA",
+      "channel": "lambda_bank1"
+    },
+    {
+      "type": "panel",
+      "id": "t_iat",
+      "x": 325,
+      "y": 192,
+      "w": 126,
+      "h": 86,
+      "config": {
+        "slot": 8,
+        "label": "INTAKE  C",
+        "custom_text": "",
+        "peak_y_offset": 40,
+        "value_font": "Manrope Bold:30",
+        "signal_name": "INTAKE_AIR_TEMP",
+        "channel": "intake_air_temp",
+        "border_width": 1,
+        "border_color": 12776,
+        "bg_color": 4259,
+        "label_color": 38066,
+        "value_color": 65535,
+        "value_y_offset": 18
+      },
+      "signal": "INTAKE_AIR_TEMP",
+      "channel": "intake_air_temp"
+    }
+  ]
+}

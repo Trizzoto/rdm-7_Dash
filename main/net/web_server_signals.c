@@ -51,16 +51,7 @@ static esp_err_t _fuel_status_handler(httpd_req_t *req) {
 		}
 	}
 
-	char *json = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-	if (!json) {
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
-		return ESP_FAIL;
-	}
-	httpd_resp_set_type(req, "application/json");
-	httpd_resp_sendstr(req, json);
-	free(json);
-	return ESP_OK;
+	return web_server_send_json(req, root);
 }
 
 /* POST /api/fuel/set-points
@@ -187,16 +178,7 @@ static esp_err_t _signal_values_handler(httpd_req_t *req) {
 		cJSON_AddItemToArray(arr, obj);
 	}
 
-	char *json = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-	if (!json) {
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
-		return ESP_FAIL;
-	}
-	httpd_resp_set_type(req, "application/json");
-	httpd_resp_sendstr(req, json);
-	free(json);
-	return ESP_OK;
+	return web_server_send_json(req, root);
 }
 
 /* ── Signal simulator ────────────────────────────────────────────────────── */
@@ -337,17 +319,8 @@ static esp_err_t _signal_inject_handler(httpd_req_t *req) {
 	else
 		free(batch);
 
-	char *out = cJSON_PrintUnformatted(resp);
-	cJSON_Delete(resp);
-	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	if (!out) {
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
-		return ESP_FAIL;
-	}
-	esp_err_t e = httpd_resp_sendstr(req, out);
-	free(out);
-	return e;
+	return web_server_send_json(req, resp);
 }
 
 /* ── Signal decode update (live, no layout reload) ──────────────────────────
@@ -647,17 +620,8 @@ static esp_err_t _obd2_test_pid_handler(httpd_req_t *req)
         free(ctx);
     }
 
-    char *json = cJSON_PrintUnformatted(resp);
-    cJSON_Delete(resp);
-    if (!json) {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
-        return ESP_FAIL;
-    }
-    httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-    esp_err_t r = httpd_resp_sendstr(req, json);
-    free(json);
-    return r;
+    return web_server_send_json(req, resp);
 }
 
 /* ── URI descriptors ─────────────────────────────────────────────────────── */

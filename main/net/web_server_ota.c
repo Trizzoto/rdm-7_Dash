@@ -29,7 +29,6 @@ static const char *_ota_status_string(ota_status_t s) {
 
 static esp_err_t _ota_status_handler(httpd_req_t *req) {
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	httpd_resp_set_type(req, "application/json");
 
 	ota_status_t st = get_ota_status();
 	const char *latest = get_latest_version();
@@ -46,11 +45,7 @@ static esp_err_t _ota_status_handler(httpd_req_t *req) {
 	cJSON_AddNumberToObject(root, "progress",        progress);
 	cJSON_AddBoolToObject  (root, "update_available", st == OTA_UPDATE_AVAILABLE);
 
-	char *json = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-	httpd_resp_sendstr(req, json ? json : "{}");
-	free(json);
-	return ESP_OK;
+	return web_server_send_json(req, root);
 }
 
 /* Background-task wrapper: the HTTPD handler returns 202 immediately;

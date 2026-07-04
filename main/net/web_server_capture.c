@@ -18,19 +18,10 @@
 
 static const char *TAG = "web_server_capture";
 
-/* Send a cJSON object (with CORS) and free it + the printed string. */
+/* Thin convenience wrapper bundling the CORS header every caller here wants. */
 static esp_err_t _send_json_capture(httpd_req_t *req, cJSON *root) {
-	char *json = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-	if (!json) {
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
-		return ESP_FAIL;
-	}
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	httpd_resp_set_type(req, "application/json");
-	httpd_resp_sendstr(req, json);
-	free(json);
-	return ESP_OK;
+	return web_server_send_json(req, root);
 }
 
 /* esp_http_server's httpd_err_code_t has no 503, so send one by hand. */

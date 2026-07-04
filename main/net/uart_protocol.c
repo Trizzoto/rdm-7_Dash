@@ -8,7 +8,7 @@
  */
 #include "uart_protocol.h"
 #include "serial_protocol.h"
-#include "serial_commands.h"
+#include "frame_parser.h"
 
 #include "driver/uart.h"
 #include "driver/gpio.h"  /* gpio_pullup_dis() — see uart_protocol_init below */
@@ -29,26 +29,9 @@ static const char *TAG = "uart_proto";
 #define UART_TX_BUF_SIZE   (4 * 1024)
 #define UART_RX_CHUNK      512
 
-/* Frame parser states */
-typedef enum {
-    STATE_IDLE,       /* Waiting for STX */
-    STATE_LENGTH,     /* Reading 4-byte length field */
-    STATE_PAYLOAD,    /* Reading payload bytes */
-    STATE_CRC,        /* Reading 2-byte CRC */
-    STATE_ETX,        /* Expecting ETX byte */
-} parse_state_t;
-
-/* Parser context */
-static struct {
-    parse_state_t state;
-    uint8_t  len_buf[4];
-    uint8_t  len_pos;
-    uint32_t payload_len;
-    uint8_t *payload;
-    uint32_t payload_pos;
-    uint8_t  crc_buf[2];
-    uint8_t  crc_pos;
-} s_parser;
+/* Frame parser context — state machine shared with usb_cdc_protocol.c via
+ * frame_parser.c. */
+static frame_parser_t s_parser;
 
 /* TX mutex for thread-safe sending */
 static SemaphoreHandle_t s_tx_mutex;
@@ -165,138 +148,6 @@ static void s_install_log_hook(void)
     esp_log_set_vprintf(s_log_vprintf);
 }
 
-/* ── Frame parser ───────────────────────────────────────────────────────── */
-
-static void _parser_reset(void)
-{
-    if (s_parser.payload) {
-        free(s_parser.payload);
-        s_parser.payload = NULL;
-    }
-    s_parser.state = STATE_IDLE;
-    s_parser.len_pos = 0;
-    s_parser.payload_len = 0;
-    s_parser.payload_pos = 0;
-    s_parser.crc_pos = 0;
-}
-
-static void _process_complete_frame(void)
-{
-    /* Validate CRC */
-    uint16_t received_crc = (uint16_t)s_parser.crc_buf[0] |
-                            ((uint16_t)s_parser.crc_buf[1] << 8);
-    uint16_t computed_crc = uart_protocol_crc16(s_parser.payload,
-                                                 s_parser.payload_len);
-
-    if (received_crc != computed_crc) {
-        ESP_LOGW(TAG, "CRC mismatch: got 0x%04X, expected 0x%04X",
-                 received_crc, computed_crc);
-        _parser_reset();
-        return;
-    }
-
-    if (s_parser.payload_len < 1) {
-        ESP_LOGW(TAG, "Empty payload");
-        _parser_reset();
-        return;
-    }
-
-    /* Set active transport to UART before dispatching */
-    serial_protocol_set_active(TRANSPORT_UART);
-
-    uint8_t payload_type = s_parser.payload[0];
-    uint8_t *payload_data = s_parser.payload + 1;
-    size_t payload_data_len = s_parser.payload_len - 1;
-
-    if (payload_type == UART_PAYLOAD_JSON) {
-        /* Null-terminate the JSON string */
-        char *json_str = malloc(payload_data_len + 1);
-        if (json_str) {
-            memcpy(json_str, payload_data, payload_data_len);
-            json_str[payload_data_len] = '\0';
-            serial_commands_dispatch(json_str, payload_data_len);
-            free(json_str);
-        } else {
-            ESP_LOGE(TAG, "OOM for JSON dispatch (%u bytes)",
-                     (unsigned)payload_data_len);
-        }
-    } else if (payload_type == UART_PAYLOAD_BINARY) {
-        serial_commands_handle_binary(payload_data, payload_data_len);
-    } else {
-        ESP_LOGW(TAG, "Unknown payload type: 0x%02X", payload_type);
-    }
-
-    /* Don't free payload here — _parser_reset handles it */
-    _parser_reset();
-}
-
-static void _parser_feed(const uint8_t *data, size_t len)
-{
-    for (size_t i = 0; i < len; i++) {
-        uint8_t byte = data[i];
-
-        switch (s_parser.state) {
-        case STATE_IDLE:
-            if (byte == UART_PROTO_STX) {
-                s_parser.state = STATE_LENGTH;
-                s_parser.len_pos = 0;
-            }
-            /* Non-STX bytes (ESP_LOG output) are silently discarded */
-            break;
-
-        case STATE_LENGTH:
-            s_parser.len_buf[s_parser.len_pos++] = byte;
-            if (s_parser.len_pos == 4) {
-                s_parser.payload_len = (uint32_t)s_parser.len_buf[0] |
-                                       ((uint32_t)s_parser.len_buf[1] << 8) |
-                                       ((uint32_t)s_parser.len_buf[2] << 16) |
-                                       ((uint32_t)s_parser.len_buf[3] << 24);
-                if (s_parser.payload_len == 0 ||
-                    s_parser.payload_len > UART_PROTO_MAX_PAYLOAD) {
-                    ESP_LOGW(TAG, "Invalid frame length: %u",
-                             (unsigned)s_parser.payload_len);
-                    _parser_reset();
-                    break;
-                }
-                s_parser.payload = malloc(s_parser.payload_len);
-                if (!s_parser.payload) {
-                    ESP_LOGE(TAG, "OOM for frame (%u bytes)",
-                             (unsigned)s_parser.payload_len);
-                    _parser_reset();
-                    break;
-                }
-                s_parser.payload_pos = 0;
-                s_parser.state = STATE_PAYLOAD;
-            }
-            break;
-
-        case STATE_PAYLOAD:
-            s_parser.payload[s_parser.payload_pos++] = byte;
-            if (s_parser.payload_pos == s_parser.payload_len) {
-                s_parser.state = STATE_CRC;
-                s_parser.crc_pos = 0;
-            }
-            break;
-
-        case STATE_CRC:
-            s_parser.crc_buf[s_parser.crc_pos++] = byte;
-            if (s_parser.crc_pos == 2) {
-                s_parser.state = STATE_ETX;
-            }
-            break;
-
-        case STATE_ETX:
-            if (byte == UART_PROTO_ETX) {
-                _process_complete_frame();
-            } else {
-                ESP_LOGW(TAG, "Expected ETX, got 0x%02X", byte);
-                _parser_reset();
-            }
-            break;
-        }
-    }
-}
-
 /* ── UART RX task ───────────────────────────────────────────────────────── */
 
 static void uart_rx_task(void *arg)
@@ -311,7 +162,7 @@ static void uart_rx_task(void *arg)
         int len = uart_read_bytes(UART_PROTO_PORT_NUM, rx_buf,
                                   sizeof(rx_buf), pdMS_TO_TICKS(50));
         if (len > 0) {
-            _parser_feed(rx_buf, (size_t)len);
+            frame_parser_feed(&s_parser, rx_buf, (size_t)len, TRANSPORT_UART, TAG);
         }
     }
 }
@@ -323,7 +174,7 @@ esp_err_t uart_protocol_init(void)
     s_tx_mutex = xSemaphoreCreateMutex();
     if (!s_tx_mutex) return ESP_ERR_NO_MEM;
 
-    _parser_reset();
+    frame_parser_reset(&s_parser);
 
     /* Configure UART — reuse default console UART pins.
      * On ESP32-S3, UART0 TX=GPIO43, RX=GPIO44 (connected to USB-UART bridge). */

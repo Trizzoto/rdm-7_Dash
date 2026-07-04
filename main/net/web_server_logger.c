@@ -236,15 +236,8 @@ static esp_err_t _log_list_handler(httpd_req_t *req) {
 		_log_list_scan(arr, "/sdcard/logs", "sd");
 	_log_list_scan(arr, "/lfs/logs", "lfs");
 
-	char *json_str = cJSON_PrintUnformatted(arr);
-	cJSON_Delete(arr);
-
-	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	esp_err_t res = httpd_resp_send(req, json_str ? json_str : "[]",
-									HTTPD_RESP_USE_STRLEN);
-	free(json_str);
-	return res;
+	return web_server_send_json(req, arr);
 }
 
 /* Resolve a basename (e.g. "log_42.csv") to a full path by checking both
@@ -593,16 +586,7 @@ static esp_err_t _canraw_cloud_upload_status_handler(httpd_req_t *req)
 	cJSON_AddNumberToObject(j, "uploaded_bytes", st.uploaded_bytes);
 	cJSON_AddStringToObject(j, "message", st.message);
 
-	char *out = cJSON_PrintUnformatted(j);
-	cJSON_Delete(j);
-	if (!out) {
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
-		return ESP_OK;
-	}
-	httpd_resp_set_type(req, "application/json");
-	httpd_resp_sendstr(req, out);
-	free(out);
-	return ESP_OK;
+	return web_server_send_json(req, j);
 }
 
 /* ── Signal Replay helpers ───────────────────────────────────────────────── */

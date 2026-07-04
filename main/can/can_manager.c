@@ -712,13 +712,24 @@ void can_change_bitrate(uint8_t bitrate_index) {
 	s_driver_installed = false;
 	vTaskDelay(pdMS_TO_TICKS(50));
 
+	/* FIX #6 pattern (see reconfigure_can_filter) — don't commit f_config until
+	 * install+start actually succeed. This function used to skip that guard
+	 * (only reconfigure_can_filter/can_set_promiscuous_mode had it), leaving
+	 * f_config holding a filter that was never actually applied if either
+	 * step below failed. */
+	twai_filter_config_t prev_filter = f_config;
 	build_twai_filter_from_signals(&f_config);
 
-	if (_install_twai_with_retry("bitrate change") != ESP_OK) return;
+	if (_install_twai_with_retry("bitrate change") != ESP_OK) {
+		f_config = prev_filter;  /* roll back so equality guard won't wedge */
+		return;
+	}
 	vTaskDelay(pdMS_TO_TICKS(50));
 
 	if (twai_start() != ESP_OK) {
 		ESP_LOGE(TAG, "TWAI start failed after bitrate change");
+		twai_driver_uninstall();
+		f_config = prev_filter;  /* roll back so equality guard won't wedge */
 		return;
 	}
 	s_driver_installed = true;
@@ -728,6 +739,12 @@ void can_change_bitrate(uint8_t bitrate_index) {
 	if (_spawn_can_rx_task() != pdPASS) {
 		ESP_LOGE(TAG, "Failed to create CAN task after bitrate change");
 		canTaskHandle = NULL;
+		/* Driver is started but nothing will ever drain it — tear down
+		 * fully instead of leaving a stray running-but-taskless driver
+		 * (matches can_resume()/can_recover()'s handling of this failure). */
+		twai_stop();
+		twai_driver_uninstall();
+		s_driver_installed = false;
 	}
 	/* Clear suspended flag: scan may have left it true if can_resume() failed */
 	s_suspended = false;

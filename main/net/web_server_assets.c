@@ -15,6 +15,7 @@
  *   POST /api/sd/copy         copy file between LittleFS <-> SD
  *   POST /api/sd/delete       delete file from SD */
 #include "web_server_internal.h"
+#include "sd_file_ops.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
 #include "esp_littlefs.h"
@@ -267,14 +268,8 @@ static esp_err_t image_list_handler(httpd_req_t *req) {
 		closedir(d);
 	}
 
-	char *json_str = cJSON_PrintUnformatted(arr);
-	cJSON_Delete(arr);
-
-	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	esp_err_t res = httpd_resp_send(req, json_str ? json_str : "[]", HTTPD_RESP_USE_STRLEN);
-	free(json_str);
-	return res;
+	return web_server_send_json(req, arr);
 }
 
 static const httpd_uri_t image_list_uri = {.uri = "/api/image/list",
@@ -608,14 +603,8 @@ static esp_err_t font_list_handler(httpd_req_t *req) {
 		}
 	}
 
-	char *json_str = cJSON_PrintUnformatted(arr);
-	cJSON_Delete(arr);
-
-	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	esp_err_t res = httpd_resp_send(req, json_str ? json_str : "[]", HTTPD_RESP_USE_STRLEN);
-	free(json_str);
-	return res;
+	return web_server_send_json(req, arr);
 }
 
 static const httpd_uri_t font_list_uri = {.uri = "/api/font/list",
@@ -741,14 +730,8 @@ static esp_err_t storage_info_handler(httpd_req_t *req) {
 		cJSON_AddBoolToObject(sd_obj, "mounted", false);
 	}
 
-	char *json_str = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-
-	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	esp_err_t res = httpd_resp_send(req, json_str ? json_str : "{}", HTTPD_RESP_USE_STRLEN);
-	free(json_str);
-	return res;
+	return web_server_send_json(req, root);
 }
 
 static const httpd_uri_t storage_info_uri = {
@@ -770,13 +753,8 @@ static esp_err_t sd_status_handler(httpd_req_t *req) {
 		cJSON_AddBoolToObject(root, "mounted", false);
 	}
 
-	char *json_str = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	esp_err_t res = httpd_resp_send(req, json_str ? json_str : "{}", HTTPD_RESP_USE_STRLEN);
-	free(json_str);
-	return res;
+	return web_server_send_json(req, root);
 }
 
 static const httpd_uri_t sd_status_uri = {
@@ -792,37 +770,15 @@ static esp_err_t sd_files_handler(httpd_req_t *req) {
 
 	cJSON *root = cJSON_CreateObject();
 
-	/* Layouts (*.json) */
+	/* Layouts (*.json) — shared with serial_commands.c's sd.files handler */
 	cJSON *layouts = cJSON_AddArrayToObject(root, "layouts");
-	DIR *d = opendir(SD_LAYOUT_DIR);
-	if (d) {
-		struct dirent *de;
-		while ((de = readdir(d)) != NULL) {
-			size_t flen = strlen(de->d_name);
-			if (flen <= 5 || strcmp(de->d_name + flen - 5, ".json") != 0)
-				continue;
-			char path[96];
-			snprintf(path, sizeof(path), "%s/%s", SD_LAYOUT_DIR, de->d_name);
-			struct stat st;
-			if (stat(path, &st) != 0) continue;
+	sd_list_dir(layouts, SD_LAYOUT_DIR, ".json", 5);
 
-			char name[64];
-			size_t copy = flen - 5;
-			if (copy >= sizeof(name)) copy = sizeof(name) - 1;
-			memcpy(name, de->d_name, copy);
-			name[copy] = '\0';
-
-			cJSON *obj = cJSON_CreateObject();
-			cJSON_AddStringToObject(obj, "name", name);
-			cJSON_AddNumberToObject(obj, "size", st.st_size);
-			cJSON_AddItemToArray(layouts, obj);
-		}
-		closedir(d);
-	}
-
-	/* Images (*.rdmimg) */
+	/* Images (*.rdmimg) — NOT shared: this listing validates the RDMIMG
+	 * magic header and reports width/height, which the serial side's
+	 * listing doesn't need. */
 	cJSON *images = cJSON_AddArrayToObject(root, "images");
-	d = opendir(SD_IMAGE_DIR);
+	DIR *d = opendir(SD_IMAGE_DIR);
 	if (d) {
 		struct dirent *de;
 		while ((de = readdir(d)) != NULL) {
@@ -860,97 +816,17 @@ static esp_err_t sd_files_handler(httpd_req_t *req) {
 		closedir(d);
 	}
 
-	/* Fonts (*.ttf) */
+	/* Fonts (*.ttf) — shared with serial_commands.c's sd.files handler */
 	cJSON *fonts = cJSON_AddArrayToObject(root, "fonts");
-	d = opendir(SD_FONT_DIR);
-	if (d) {
-		struct dirent *de;
-		while ((de = readdir(d)) != NULL) {
-			size_t flen = strlen(de->d_name);
-			if (flen <= 4 || strcmp(de->d_name + flen - 4, ".ttf") != 0)
-				continue;
-			char path[96];
-			snprintf(path, sizeof(path), "%s/%s", SD_FONT_DIR, de->d_name);
-			struct stat st;
-			if (stat(path, &st) != 0) continue;
+	sd_list_dir(fonts, SD_FONT_DIR, ".ttf", 4);
 
-			char name[32];
-			size_t copy = flen - 4;
-			if (copy >= sizeof(name)) copy = sizeof(name) - 1;
-			memcpy(name, de->d_name, copy);
-			name[copy] = '\0';
-
-			cJSON *obj = cJSON_CreateObject();
-			cJSON_AddStringToObject(obj, "name", name);
-			cJSON_AddNumberToObject(obj, "size", st.st_size);
-			cJSON_AddItemToArray(fonts, obj);
-		}
-		closedir(d);
-	}
-
-	char *json_str = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	esp_err_t res = httpd_resp_send(req, json_str ? json_str : "{}", HTTPD_RESP_USE_STRLEN);
-	free(json_str);
-	return res;
+	return web_server_send_json(req, root);
 }
 
 static const httpd_uri_t sd_files_uri = {
     .uri = "/api/sd/files", .method = HTTP_GET,
     .handler = sd_files_handler, .user_ctx = NULL};
-
-/* Chunked file copy helper — heap-allocated 4KB buffer */
-static esp_err_t _copy_file(const char *src, const char *dst) {
-	FILE *fin = fopen(src, "rb");
-	if (!fin) return ESP_ERR_NOT_FOUND;
-
-	fseek(fin, 0, SEEK_END);
-	long file_size = ftell(fin);
-	fseek(fin, 0, SEEK_SET);
-
-	if (file_size <= 0) {
-		fclose(fin);
-		return ESP_FAIL;
-	}
-
-	FILE *fout = fopen(dst, "wb");
-	if (!fout) {
-		fclose(fin);
-		return ESP_FAIL;
-	}
-
-	char *buf = malloc(4096);
-	if (!buf) {
-		fclose(fin);
-		fclose(fout);
-		return ESP_FAIL;
-	}
-
-	size_t total_written = 0;
-	while (total_written < (size_t)file_size) {
-		size_t to_read = 4096;
-		if (to_read > (size_t)file_size - total_written)
-			to_read = (size_t)file_size - total_written;
-		size_t nr = fread(buf, 1, to_read, fin);
-		if (nr == 0) break;
-		size_t nw = fwrite(buf, 1, nr, fout);
-		if (nw != nr) {
-			free(buf);
-			fclose(fin);
-			fclose(fout);
-			remove(dst);
-			return ESP_FAIL;
-		}
-		total_written += nw;
-	}
-
-	free(buf);
-	fclose(fin);
-	fclose(fout);
-	return (total_written == (size_t)file_size) ? ESP_OK : ESP_FAIL;
-}
 
 /* POST /api/sd/copy — copy file between internal <-> SD */
 static esp_err_t sd_copy_handler(httpd_req_t *req) {
@@ -1055,7 +931,7 @@ static esp_err_t sd_copy_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
-	esp_err_t err = _copy_file(src, dst);
+	esp_err_t err = sd_copy_file(src, dst);
 	if (err == ESP_ERR_NOT_FOUND) {
 		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Source file not found");
 		return ESP_FAIL;

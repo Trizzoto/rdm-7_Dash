@@ -1201,11 +1201,15 @@ static uint32_t _request_id_for_response(uint32_t resp_id)
 /* ── Bench simulator (virtual ECU) ─────────────────────────────────────
  *
  * _obd2_tx is the single TX choke point for every OBD2 request (polling,
- * scan, test, DTC, VIN, FC). When the sim is active it intercepts Mode 01
- * requests and injects synthetic responses via can_inject_rx_frame() — the
- * response then flows through the normal RX path on the LVGL task, so there
- * is no reentrancy (we only enqueue here, the queue drains later). Requests
- * the sim doesn't handle (FC, Mode 03/09, etc.) fall through to the real
+ * scan, test, DTC, VIN, freeze frame, FC). When the sim is active it
+ * intercepts Mode 01/02/03/04/07/0A/09 requests and injects synthetic
+ * responses via can_inject_rx_frame() — the response then flows through
+ * the normal RX path on the LVGL task, so there is no reentrancy (we only
+ * enqueue here, the queue drains later; the ISO-TP flow-control frame the
+ * RX path sends back for a multi-frame response is itself just another
+ * _obd2_tx call that _sim_consume_tx doesn't recognize and lets fall
+ * through, same as everything below). Requests the sim doesn't handle
+ * (flow control, Mode 21 OEM-specific, etc.) fall through to the real
  * bus, so a real dongle still works if attached. */
 
 /* Synthetic raw value: a per-PID phase-staggered triangle sweep so bound
@@ -1244,6 +1248,26 @@ static void _sim_inject_supported_bitmask(uint8_t base)
     can_inject_rx_frame(OBD2_RESPONSE_ID_FIRST, false, f, 8);
 }
 
+/* Byte-width a Mode 01/02 PID definition needs, capped at 5 (single-frame
+ * budget) — shared by the Mode 01 and freeze-frame (Mode 02) injectors
+ * below since freeze data reuses the Mode 01 PID shape (per
+ * obd2_read_freeze_pid's own comment). 0 = not simulatable here (packed
+ * defs needing >5 bytes would need real ISO-TP chunking). */
+static uint8_t _sim_pid_span(const obd2_pid_def_t *def)
+{
+    if (!def) return 0;
+    if (def->sub_fields && def->sub_field_count > 0) {
+        uint16_t s = 0;
+        for (uint8_t i = 0; i < def->sub_field_count; i++) {
+            uint16_t e = (uint16_t)def->sub_fields[i].byte_offset +
+                         (uint16_t)def->sub_fields[i].bytes;
+            if (e > s) s = e;
+        }
+        return (s == 0 || s > 5) ? 0 : (uint8_t)s;
+    }
+    return (def->bytes < 1 || def->bytes > 5) ? 0 : def->bytes;
+}
+
 /* Build + inject a single-frame Mode 01 response for one PID. */
 static void _sim_inject_mode01_pid(uint8_t pid, uint64_t now_ms)
 {
@@ -1253,22 +1277,8 @@ static void _sim_inject_mode01_pid(uint8_t pid, uint64_t now_ms)
         return;
     }
     const obd2_pid_def_t *def = obd2_pid_find_svc(0x01, pid);
-    if (!def) return;   /* unknown PID — stay silent, like a real ECU NRC */
-
-    uint8_t span;
-    if (def->sub_fields && def->sub_field_count > 0) {
-        uint16_t s = 0;
-        for (uint8_t i = 0; i < def->sub_field_count; i++) {
-            uint16_t e = (uint16_t)def->sub_fields[i].byte_offset +
-                         (uint16_t)def->sub_fields[i].bytes;
-            if (e > s) s = e;
-        }
-        if (s == 0 || s > 5) return;   /* needs ISO-TP — not simulated */
-        span = (uint8_t)s;
-    } else {
-        if (def->bytes < 1 || def->bytes > 5) return;
-        span = def->bytes;
-    }
+    uint8_t span = _sim_pid_span(def);
+    if (span == 0) return;   /* unknown/unsimulatable PID — stay silent, like a real ECU NRC */
 
     uint32_t raw = _sim_raw_for(span, pid, now_ms);
     uint8_t f[8] = { 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55 };
@@ -1281,25 +1291,166 @@ static void _sim_inject_mode01_pid(uint8_t pid, uint64_t now_ms)
     can_inject_rx_frame(OBD2_RESPONSE_ID_FIRST, false, f, 8);
 }
 
-/* Parse an outgoing request frame; if it's a Mode 01 single-frame request,
- * synthesize the matching response(s) and report handled=true so the real
- * TX is skipped. Multi-PID requests get one single-frame response per PID
- * (functionally identical to a batched ISO-TP response for the decoder). */
+/* Generic ISO-TP response injector — single frame when `msg` fits in 7
+ * bytes, First Frame + Consecutive Frame(s) otherwise. `msg` starts at
+ * the service-echo byte (e.g. 0x49 for Mode 09), matching what
+ * obd2_rx_handler hands to _process_full_message. Reuses the same
+ * response id as the Mode 01 injector — one virtual ECU. */
+static void _sim_inject_message(const uint8_t *msg, uint16_t len)
+{
+    if (len == 0 || len > OBD2_ISOTP_BUF_LEN) return;
+
+    if (len <= 7) {
+        uint8_t f[8] = { 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55 };
+        f[0] = (uint8_t)len;
+        memcpy(&f[1], msg, len);
+        can_inject_rx_frame(OBD2_RESPONSE_ID_FIRST, false, f, 8);
+        return;
+    }
+
+    uint8_t ff[8] = { 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55 };
+    ff[0] = (uint8_t)(0x10 | ((len >> 8) & 0x0F));
+    ff[1] = (uint8_t)(len & 0xFF);
+    memcpy(&ff[2], msg, 6);
+    can_inject_rx_frame(OBD2_RESPONSE_ID_FIRST, false, ff, 8);
+
+    uint16_t sent = 6;
+    uint8_t  seq  = 1;
+    while (sent < len) {
+        uint16_t remaining = (uint16_t)(len - sent);
+        uint8_t  take      = (remaining < 7) ? (uint8_t)remaining : 7;
+        uint8_t  cf[8]      = { 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55 };
+        cf[0] = (uint8_t)(0x20 | (seq & 0x0F));
+        memcpy(&cf[1], msg + sent, take);
+        can_inject_rx_frame(OBD2_RESPONSE_ID_FIRST, false, cf, 8);
+        sent = (uint16_t)(sent + take);
+        seq  = (uint8_t)((seq + 1) & 0x0F);
+    }
+}
+
+/* Mode 02 (freeze frame): reuses the Mode 01 PID definition for span and
+ * synthetic value (freeze data is "the same shape as Mode 01 for that
+ * PID, just frozen" — see obd2_read_freeze_pid's own comment), prefixed
+ * with the pid + frame_no the real request carried so the response
+ * matches what the caller is waiting on. */
+static void _sim_inject_freeze(uint8_t data_pid, uint8_t frame_no, uint64_t now_ms)
+{
+    const obd2_pid_def_t *def = obd2_pid_find_svc(0x01, data_pid);
+    uint8_t span = _sim_pid_span(def);
+    if (span == 0) return;
+    uint32_t raw = _sim_raw_for(span, data_pid, now_ms);
+
+    uint8_t msg[8];
+    msg[0] = 0x42;
+    msg[1] = data_pid;
+    msg[2] = frame_no;
+    for (uint8_t i = 0; i < span; i++) {
+        msg[3 + i] = (uint8_t)((raw >> (8 * (span - 1 - i))) & 0xFF);
+    }
+    _sim_inject_message(msg, (uint16_t)(3 + span));
+}
+
+/* Mode 03/07/0A DTC read: a canned, differentiated response per mode so
+ * the three call sites (obd2_read_stored/pending/permanent_dtcs) each
+ * exercise something distinct on the bench — stored has 2 example codes
+ * (no count byte, matching the "older ECU" convention already covered by
+ * test_obd2_one_shot_decode.c's test_dtc_response_without_count_byte),
+ * pending/permanent report zero (a common, valid real-world case). */
+static void _sim_inject_dtc(uint8_t mode)
+{
+    uint8_t svc = (uint8_t)(0x40 + mode);
+    if (mode == 0x03) {
+        uint8_t msg[5] = { svc, 0x04, 0x20, 0xC1, 0x00 }; /* P0420, U0100 */
+        _sim_inject_message(msg, sizeof(msg));
+    } else {
+        uint8_t msg[2] = { svc, 0x00 };
+        _sim_inject_message(msg, sizeof(msg));
+    }
+}
+
+/* Mode 04 (clear DTCs) ack. Some real ECUs answer with a strict 1-byte SF
+ * (just the 0x44 echo, no further payload) — obd2_rx_handler's
+ * `len_bytes < 2` guard would currently drop that before it ever reaches
+ * _process_full_message. That's a real gap, but it's in the shared RX
+ * ingestion path (every response type funnels through it), a bigger
+ * blast radius than this simulator pass should take on — flagged
+ * separately rather than fixed here. Padding this ack to 2 bytes (also a
+ * realistic shape — plenty of ECUs pad with a spare/status byte) keeps
+ * the sim working against the CURRENT firmware without depending on
+ * that guard being relaxed. */
+static void _sim_inject_clear_ack(void)
+{
+    uint8_t msg[2] = { 0x44, 0x00 };
+    _sim_inject_message(msg, sizeof(msg));
+}
+
+/* Mode 09 PID 0x02 — VIN. DI byte 0x01 ("1 data item") + 17 ASCII chars;
+ * 20 bytes total forces First Frame + 2 Consecutive Frames, exercising
+ * the multi-frame path a real VIN read always needs too. */
+static void _sim_inject_vin(void)
+{
+    uint8_t msg[20];
+    msg[0] = 0x49;
+    msg[1] = 0x02;
+    msg[2] = 0x01;
+    memcpy(&msg[3], "RDM7SIMBENCH00001", 17);
+    _sim_inject_message(msg, sizeof(msg));
+}
+
+/* Mode 09 PID 0x0A — ECU name. Same DI-byte convention as VIN. */
+static void _sim_inject_ecuname(void)
+{
+    uint8_t msg[10];
+    msg[0] = 0x49;
+    msg[1] = 0x0A;
+    msg[2] = 0x01;
+    memcpy(&msg[3], "SIM-ECM", 7);
+    _sim_inject_message(msg, sizeof(msg));
+}
+
+/* Parse an outgoing request frame and synthesize the matching response(s),
+ * reporting handled=true so the real TX is skipped. Covers every one-shot
+ * request type obd2.c can send: Mode 01 polling (multi-PID — one
+ * single-frame response per PID), Mode 02 freeze frame, Mode 03/07/0A DTC
+ * read, Mode 04 DTC clear, and Mode 09 VIN/ECU-name. Anything else (flow
+ * control frames we send in reply to our own injected First Frames, Mode
+ * 21 OEM-specific, etc.) falls through to the real bus untouched. */
 static bool _sim_consume_tx(uint32_t tx_id, const uint8_t *d, uint8_t dlc)
 {
     (void)tx_id;
     if (!d || dlc < 2) return false;
     if ((d[0] >> 4) != 0) return false;          /* single-frame requests only */
     uint8_t len = d[0] & 0x0F;
-    if (len < 2 || (uint8_t)(len + 1) > dlc) return false;
-    if (d[1] != 0x01) return false;              /* Mode 01 only */
+    if (len < 1 || (uint8_t)(len + 1) > dlc) return false;
 
     uint64_t now = (uint64_t)(esp_timer_get_time() / 1000ULL);
-    uint8_t  npid = (uint8_t)(len - 1);          /* bytes after the service byte */
-    for (uint8_t i = 0; i < npid; i++) {
-        _sim_inject_mode01_pid(d[2 + i], now);
+
+    if (d[1] == 0x01) {
+        if (len < 2) return false;
+        uint8_t npid = (uint8_t)(len - 1);       /* bytes after the service byte */
+        for (uint8_t i = 0; i < npid; i++) {
+            _sim_inject_mode01_pid(d[2 + i], now);
+        }
+        return true;
     }
-    return true;
+    if (d[1] == 0x02 && len >= 3) {
+        _sim_inject_freeze(d[2], d[3], now);
+        return true;
+    }
+    if ((d[1] == 0x03 || d[1] == 0x07 || d[1] == 0x0A) && len == 1) {
+        _sim_inject_dtc(d[1]);
+        return true;
+    }
+    if (d[1] == 0x04 && len == 1) {
+        _sim_inject_clear_ack();
+        return true;
+    }
+    if (d[1] == 0x09 && len >= 2) {
+        if (d[2] == 0x02) { _sim_inject_vin(); return true; }
+        if (d[2] == 0x0A) { _sim_inject_ecuname(); return true; }
+        return false;
+    }
+    return false;
 }
 
 /* Single TX choke point. In sim mode, Mode 01 requests are answered
@@ -1315,7 +1466,7 @@ static esp_err_t _obd2_tx(uint32_t id, const uint8_t *data, uint8_t dlc)
 void obd2_sim_set_enabled(bool enabled)
 {
     s_sim_enabled = enabled;
-    ESP_LOGW(TAG, "OBD2 bench SIM %s (Mode 01 virtual ECU)",
+    ESP_LOGW(TAG, "OBD2 bench SIM %s (virtual ECU: Modes 01/02/03/04/07/0A/09)",
              enabled ? "ENABLED" : "disabled");
     if (!enabled) return;
 
@@ -1649,16 +1800,17 @@ static void _process_full_message(uint8_t *msg, uint16_t len)
             p++;
             plen--;
         }
+        /* Strip any further leading non-printable padding (e.g. raw NUL
+         * fill some ECUs prepend) BEFORE imposing the fixed 17-byte VIN
+         * window — otherwise the padding eats into that budget and
+         * truncates the tail of the real VIN. */
+        while (plen > 0 && (p[0] < 0x20 || p[0] > 0x7E)) {
+            p++;
+            plen--;
+        }
         uint8_t take = (plen < 17) ? (uint8_t)plen : 17;
         memcpy(s_vin_req.vin, p, take);
-        /* Pad / trim — VIN is 17 fixed ASCII chars; sometimes leading
-         * null bytes precede the VIN on certain ECUs. Strip them. */
-        s_vin_req.vin[17] = '\0';
-        char *start = s_vin_req.vin;
-        while (*start && (*start < 0x20 || *start > 0x7E)) start++;
-        if (start != s_vin_req.vin) {
-            memmove(s_vin_req.vin, start, strlen(start) + 1);
-        }
+        s_vin_req.vin[take] = '\0';
         ESP_LOGI(TAG, "VIN received: '%s'", s_vin_req.vin);
 
         obd2_vin_cb_t cb = s_vin_req.cb;
@@ -1679,16 +1831,17 @@ static void _process_full_message(uint8_t *msg, uint16_t len)
             p++;
             plen--;
         }
+        /* Strip leading non-printable padding BEFORE imposing the
+         * output-buffer window — same reasoning as the VIN branch above,
+         * so padding doesn't eat into the budget and truncate the tail. */
+        while (plen > 0 && (p[0] < 0x20 || p[0] > 0x7E)) {
+            p++;
+            plen--;
+        }
         uint16_t take = (plen < sizeof(s_ecuname_req.name) - 1)
                         ? plen : (uint16_t)(sizeof(s_ecuname_req.name) - 1);
         memcpy(s_ecuname_req.name, p, take);
         s_ecuname_req.name[take] = '\0';
-        /* Strip leading non-printable chars; some ECUs pre-pad with NULs. */
-        char *start = s_ecuname_req.name;
-        while (*start && (*start < 0x20 || *start > 0x7E)) start++;
-        if (start != s_ecuname_req.name) {
-            memmove(s_ecuname_req.name, start, strlen(start) + 1);
-        }
         /* Trim trailing whitespace / non-printable. */
         size_t blen = strlen(s_ecuname_req.name);
         while (blen > 0 && (s_ecuname_req.name[blen-1] <= 0x20)) {

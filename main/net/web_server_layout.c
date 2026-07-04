@@ -167,21 +167,9 @@ static esp_err_t layout_current_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
-	char *json_str = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-	if (!json_str) {
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
-							"Failed to serialise layout JSON");
-		return ESP_FAIL;
-	}
-
-	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 	httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-
-	esp_err_t res = httpd_resp_send(req, json_str, HTTPD_RESP_USE_STRLEN);
-	free(json_str);
-	return res;
+	return web_server_send_json(req, root);
 }
 
 static const httpd_uri_t layout_current_uri = {.uri = "/api/layout/current",
@@ -618,20 +606,8 @@ static esp_err_t layout_list_handler(httpd_req_t *req) {
 	}
 	free(names);   /* names copied into the cJSON array above; done with it */
 
-	char *json_str = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-
-	if (!json_str) {
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
-							"Failed to serialize JSON");
-		return ESP_FAIL;
-	}
-
-	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	esp_err_t res = httpd_resp_send(req, json_str, HTTPD_RESP_USE_STRLEN);
-	free(json_str);
-	return res;
+	return web_server_send_json(req, root);
 }
 
 /* Round a float to remove single-precision artifacts (e.g. 0.100000005 â†’ 0.1) */
@@ -667,19 +643,8 @@ static esp_err_t presets_list_handler(httpd_req_t *req) {
 		cJSON_AddItemToArray(root, item);
 	}
 
-	char *json_str = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-	if (!json_str) {
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
-							"Alloc failed");
-		return ESP_FAIL;
-	}
-
-	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	esp_err_t res = httpd_resp_send(req, json_str, strlen(json_str));
-	free(json_str);
-	return res;
+	return web_server_send_json(req, root);
 }
 
 static const httpd_uri_t presets_list_uri = {.uri = "/api/presets",
@@ -717,14 +682,8 @@ static esp_err_t ecu_list_handler(httpd_req_t *req) {
 	}
 	cJSON_AddNumberToObject(root, "match_threshold", ECU_PRESET_MATCH_THRESHOLD);
 	cJSON_AddBoolToObject  (root, "auto_mode",       config_store_load_ecu_picker_auto());
-	char *s = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-	if (!s) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "alloc"); return ESP_FAIL; }
-	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	esp_err_t r = httpd_resp_send(req, s, strlen(s));
-	free(s);
-	return r;
+	return web_server_send_json(req, root);
 }
 
 /* GET /api/ecu/picker_mode - returns {"auto": bool} */
@@ -767,14 +726,8 @@ static esp_err_t ecu_current_handler(httpd_req_t *req) {
 	cJSON *root = cJSON_CreateObject();
 	cJSON_AddStringToObject(root, "make", make);
 	cJSON_AddStringToObject(root, "version", ver);
-	char *s = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-	if (!s) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "alloc"); return ESP_FAIL; }
-	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	esp_err_t r = httpd_resp_send(req, s, strlen(s));
-	free(s);
-	return r;
+	return web_server_send_json(req, root);
 }
 
 /* POST /api/ecu/set  body: {"make":"...","version":"..."} - empty strings clear */
@@ -976,23 +929,13 @@ static esp_err_t custom_presets_list_handler(httpd_req_t *req) {
 		closedir(d);
 	}
 
-	char *json_str = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-	if (!json_str) {
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Alloc failed");
-		return ESP_FAIL;
-	}
-
-	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 	/* no-store so a stale cached list never masks a freshly-imported preset.
 	 * Without this header, browsers were occasionally returning the pre-save
 	 * list immediately after a successful POST, causing the "DBC went through
 	 * but doesn't show" symptom. */
 	httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-	esp_err_t res = httpd_resp_send(req, json_str, HTTPD_RESP_USE_STRLEN);
-	free(json_str);
-	return res;
+	return web_server_send_json(req, root);
 }
 
 static const httpd_uri_t custom_presets_list_uri = {
@@ -1195,13 +1138,8 @@ static esp_err_t layout_switcher_get_handler(httpd_req_t *req) {
 	(void)config_store_load_layout_switcher(csv, sizeof(csv));
 	cJSON *root = cJSON_CreateObject();
 	cJSON_AddStringToObject(root, "csv", csv);
-	char *s = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	esp_err_t r = httpd_resp_send(req, s ? s : "{}", HTTPD_RESP_USE_STRLEN);
-	free(s);
-	return r;
+	return web_server_send_json(req, root);
 }
 
 /* POST /api/layout/switcher  body: {"csv":"name1,name2,name3"}
@@ -1534,19 +1472,8 @@ static esp_err_t splash_list_handler(httpd_req_t *req) {
 		cJSON_AddItemToArray(arr, cJSON_CreateString(names[i]));
 	free(names);
 
-	char *json_str = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-	if (!json_str) {
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
-							"Failed to serialize JSON");
-		return ESP_FAIL;
-	}
-
-	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	esp_err_t res = httpd_resp_send(req, json_str, HTTPD_RESP_USE_STRLEN);
-	free(json_str);
-	return res;
+	return web_server_send_json(req, root);
 }
 
 static const httpd_uri_t splash_list_uri = {

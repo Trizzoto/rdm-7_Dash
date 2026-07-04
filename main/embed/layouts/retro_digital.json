@@ -1,0 +1,976 @@
+{
+  "schema_version": 17,
+  "name": "Retro_Digital",
+  "screen_w": 800,
+  "screen_h": 480,
+  "signals": [
+    {
+      "name": "GEAR",
+      "value_map": [
+        {
+          "v": 0,
+          "label": "N"
+        }
+      ]
+    },
+    {
+      "name": "FUEL_SENDER_V",
+      "fuel_cal": {
+        "empty_v": 0.5,
+        "full_v": 3,
+        "full_value": 100,
+        "enabled": false
+      }
+    }
+  ],
+  "widgets": [
+    {
+      "type": "shape_panel",
+      "id": "bg",
+      "x": 0,
+      "y": 0,
+      "w": 800,
+      "h": 480,
+      "config": {
+        "bg_color": 0,
+        "border_color": 10597,
+        "border_radius": 0,
+        "bake_into_gauge": true
+      }
+    },
+    {
+      "type": "shape_panel",
+      "id": "bezel",
+      "x": 0,
+      "y": 0,
+      "w": 778,
+      "h": 458,
+      "config": {
+        "bg_color": 0,
+        "border_color": 2790,
+        "border_width": 2,
+        "border_radius": 18,
+        "bake_into_gauge": true
+      }
+    },
+    {
+      "type": "shape_panel",
+      "id": "bezel2",
+      "x": 0,
+      "y": 0,
+      "w": 768,
+      "h": 448,
+      "config": {
+        "bg_color": 0,
+        "bg_opa": 0,
+        "border_color": 452,
+        "border_width": 1,
+        "border_radius": 15,
+        "bake_into_gauge": true
+      }
+    },
+    {
+      "type": "line",
+      "id": "div_top",
+      "x": 0,
+      "y": -158,
+      "w": 712,
+      "h": 4,
+      "config": {
+        "line_color": 2532,
+        "line_width": 2,
+        "rounded": true
+      }
+    },
+    {
+      "type": "line",
+      "id": "div_bot",
+      "x": 0,
+      "y": 80,
+      "w": 712,
+      "h": 4,
+      "config": {
+        "line_color": 2532,
+        "line_width": 2,
+        "rounded": true
+      }
+    },
+    {
+      "type": "line",
+      "id": "div_vL",
+      "x": -130,
+      "y": 152,
+      "w": 10,
+      "h": 132,
+      "config": {
+        "line_color": 2532,
+        "line_width": 2,
+        "rounded": true,
+        "orientation": "vertical"
+      }
+    },
+    {
+      "type": "line",
+      "id": "div_vR",
+      "x": 130,
+      "y": 152,
+      "w": 10,
+      "h": 132,
+      "config": {
+        "line_color": 2532,
+        "line_width": 2,
+        "rounded": true,
+        "orientation": "vertical"
+      }
+    },
+    {
+      "type": "text",
+      "id": "spd_kph",
+      "x": -228,
+      "y": -132,
+      "w": 130,
+      "h": 22,
+      "config": {
+        "slot": 0,
+        "decimals": 0,
+        "static_text": "KM/H",
+        "font": "DSEG14I:15",
+        "text_color": 5612
+      }
+    },
+    {
+      "type": "text",
+      "id": "spd_val",
+      "x": -228,
+      "y": -70,
+      "w": 300,
+      "h": 110,
+      "config": {
+        "slot": 0,
+        "decimals": 0,
+        "signal_name": "VEHICLE_SPEED",
+        "font": "DSEG7I:80",
+        "text_color": 7984
+      },
+      "signal": "VEHICLE_SPEED"
+    },
+    {
+      "type": "text",
+      "id": "spd_lbl",
+      "x": -228,
+      "y": 0,
+      "w": 250,
+      "h": 24,
+      "config": {
+        "slot": 0,
+        "decimals": 0,
+        "static_text": "ELECTRONIC",
+        "font": "DSEG14I:16",
+        "text_color": 3016
+      }
+    },
+    {
+      "type": "text",
+      "id": "rpm_kk",
+      "x": 239,
+      "y": -72,
+      "w": 130,
+      "h": 22,
+      "config": {
+        "slot": 0,
+        "decimals": 0,
+        "static_text": "RPM",
+        "font": "DSEG14I:15",
+        "text_color": 5612
+      }
+    },
+    {
+      "type": "text",
+      "id": "rpm_val",
+      "x": 239,
+      "y": -10,
+      "w": 340,
+      "h": 100,
+      "config": {
+        "slot": 0,
+        "decimals": 0,
+        "signal_name": "RPM",
+        "font": "DSEG7I:64",
+        "text_color": 7984
+      },
+      "signal": "RPM"
+    },
+    {
+      "type": "text",
+      "id": "rpm_lbl2",
+      "x": 239,
+      "y": 60,
+      "w": 250,
+      "h": 24,
+      "config": {
+        "slot": 0,
+        "decimals": 0,
+        "static_text": "ENGINE",
+        "font": "DSEG14I:16",
+        "text_color": 3016
+      }
+    },
+    {
+      "type": "pathbar",
+      "id": "tach",
+      "x": 4,
+      "y": -43,
+      "w": 759,
+      "h": 230,
+      "config": {
+        "signal_name": "RPM",
+        "max": 7000,
+        "redline": 6000,
+        "band_width": 26,
+        "rounded": false,
+        "lead_edge_width": 9,
+        "lead_edge_color": 53243,
+        "dim_color": 2693,
+        "lit_color": 7984,
+        "redline_color": 63778,
+        "dim_opa": 120,
+        "show_ticks": true,
+        "minor_tick_step": 500,
+        "major_tick_step": 1000,
+        "show_labels": true,
+        "tick_label_divisor": 1000,
+        "tick_len": 34,
+        "major_tick_len": 34,
+        "tick_width": 3,
+        "major_tick_width": 4,
+        "tick_color": 0,
+        "major_tick_color": 0,
+        "label_color": 3016,
+        "label_gap": 16,
+        "label_side": 1,
+        "label_font": "DSEG7I:15",
+        "path": [
+          43,
+          293,
+          327,
+          293,
+          447,
+          101,
+          764,
+          101
+        ],
+        "redline_recolor_ticks": false
+      },
+      "signal": "RPM",
+      "locked": true
+    },
+    {
+      "type": "text",
+      "id": "temp_lbl",
+      "x": -250,
+      "y": 110,
+      "w": 150,
+      "h": 20,
+      "config": {
+        "slot": 0,
+        "decimals": 0,
+        "static_text": "TEMP",
+        "font": "DSEG14I:14",
+        "text_color": 5612
+      }
+    },
+    {
+      "type": "bar",
+      "id": "temp_bar",
+      "x": -250,
+      "y": 138,
+      "w": 180,
+      "h": 22,
+      "config": {
+        "slot": 0,
+        "label": " ",
+        "bar_min": 0,
+        "bar_max": 120,
+        "smoothing_ms": 0,
+        "anchor_value": 90,
+        "bar_low_color": 8594,
+        "bar_high_color": 63778,
+        "bar_in_range_color": 7984,
+        "show_bar_value": false,
+        "invert_bar_value": false,
+        "signal_name": "COOLANT_TEMP",
+        "bar_bg_color": 419,
+        "bar_radius": 1,
+        "bar_border_width": 1,
+        "bar_border_color": 2790,
+        "indicator_radius": 0,
+        "fill_edge_width": 5,
+        "fill_edge_color": 53243,
+        "anchor_enabled": true
+      },
+      "signal": "COOLANT_TEMP"
+    },
+    {
+      "type": "text",
+      "id": "press_lbl",
+      "x": -250,
+      "y": 174,
+      "w": 150,
+      "h": 20,
+      "config": {
+        "slot": 0,
+        "decimals": 0,
+        "static_text": "THROTTLE",
+        "font": "DSEG14I:14",
+        "text_color": 5612
+      }
+    },
+    {
+      "type": "bar",
+      "id": "press_bar",
+      "x": -250,
+      "y": 202,
+      "w": 180,
+      "h": 22,
+      "config": {
+        "slot": 0,
+        "label": " ",
+        "bar_min": 0,
+        "bar_max": 700,
+        "smoothing_ms": 20,
+        "anchor_value": 50,
+        "bar_low_color": 8594,
+        "bar_high_color": 7984,
+        "bar_in_range_color": 7984,
+        "show_bar_value": false,
+        "invert_bar_value": false,
+        "signal_name": "THROTTLE",
+        "bar_bg_color": 419,
+        "bar_radius": 1,
+        "bar_border_width": 1,
+        "bar_border_color": 2790,
+        "indicator_radius": 0,
+        "fill_edge_width": 5,
+        "fill_edge_color": 53243,
+        "channel": "throttle_position"
+      },
+      "signal": "THROTTLE",
+      "channel": "throttle_position"
+    },
+    {
+      "type": "text",
+      "id": "fuel_lbl",
+      "x": 250,
+      "y": 110,
+      "w": 150,
+      "h": 20,
+      "config": {
+        "slot": 0,
+        "decimals": 0,
+        "static_text": "FUEL",
+        "font": "DSEG14I:14",
+        "text_color": 5612
+      }
+    },
+    {
+      "type": "bar",
+      "id": "fuel_bar",
+      "x": 250,
+      "y": 138,
+      "w": 180,
+      "h": 22,
+      "config": {
+        "slot": 0,
+        "label": " ",
+        "bar_min": 0,
+        "bar_max": 100,
+        "smoothing_ms": 200,
+        "bar_low_color": 64896,
+        "bar_high_color": 7984,
+        "bar_in_range_color": 7984,
+        "show_bar_value": false,
+        "invert_bar_value": false,
+        "signal_name": "FUEL_LEVEL",
+        "bar_bg_color": 419,
+        "bar_radius": 1,
+        "bar_border_width": 1,
+        "bar_border_color": 2790,
+        "indicator_radius": 0,
+        "fill_edge_width": 5,
+        "fill_edge_color": 53243
+      },
+      "signal": "FUEL_LEVEL"
+    },
+    {
+      "type": "text",
+      "id": "volt_lbl",
+      "x": 250,
+      "y": 174,
+      "w": 150,
+      "h": 20,
+      "config": {
+        "slot": 0,
+        "decimals": 0,
+        "static_text": "VOLTS",
+        "font": "DSEG14I:14",
+        "text_color": 5612
+      }
+    },
+    {
+      "type": "text",
+      "id": "volt_val",
+      "x": 250,
+      "y": 204,
+      "w": 170,
+      "h": 34,
+      "config": {
+        "slot": 0,
+        "decimals": 1,
+        "signal_name": "BATTERY_VOLTAGE",
+        "font": "DSEG7I:26",
+        "text_color": 7984
+      },
+      "signal": "BATTERY_VOLTAGE"
+    },
+    {
+      "type": "text",
+      "id": "odo_lbl",
+      "x": 0,
+      "y": 110,
+      "w": 150,
+      "h": 18,
+      "config": {
+        "slot": 0,
+        "decimals": 0,
+        "static_text": "ODO",
+        "font": "DSEG14I:13",
+        "text_color": 5612
+      }
+    },
+    {
+      "type": "text",
+      "id": "odo_val",
+      "x": 0,
+      "y": 138,
+      "w": 220,
+      "h": 34,
+      "config": {
+        "slot": 0,
+        "decimals": 0,
+        "signal_name": "ODOMETER",
+        "font": "DSEG7I:24",
+        "text_color": 7984
+      },
+      "signal": "ODOMETER"
+    },
+    {
+      "type": "text",
+      "id": "trip_lbl",
+      "x": 0,
+      "y": 174,
+      "w": 150,
+      "h": 18,
+      "config": {
+        "slot": 0,
+        "decimals": 0,
+        "static_text": "TRIP",
+        "font": "DSEG14I:13",
+        "text_color": 5612
+      }
+    },
+    {
+      "type": "text",
+      "id": "trip_val",
+      "x": 0,
+      "y": 204,
+      "w": 170,
+      "h": 34,
+      "config": {
+        "slot": 0,
+        "decimals": 0,
+        "static_text": "0.0",
+        "font": "DSEG7I:24",
+        "text_color": 7984
+      }
+    },
+    {
+      "type": "line",
+      "id": "seg_temp_1",
+      "x": -318,
+      "y": 138,
+      "w": 10,
+      "h": 26,
+      "config": {
+        "line_color": 0,
+        "line_width": 3,
+        "orientation": "vertical"
+      }
+    },
+    {
+      "type": "line",
+      "id": "seg_temp_2",
+      "x": -295,
+      "y": 138,
+      "w": 10,
+      "h": 26,
+      "config": {
+        "line_color": 0,
+        "line_width": 3,
+        "orientation": "vertical"
+      }
+    },
+    {
+      "type": "line",
+      "id": "seg_temp_3",
+      "x": -272,
+      "y": 138,
+      "w": 10,
+      "h": 26,
+      "config": {
+        "line_color": 0,
+        "line_width": 3,
+        "orientation": "vertical"
+      }
+    },
+    {
+      "type": "line",
+      "id": "seg_temp_4",
+      "x": -250,
+      "y": 138,
+      "w": 10,
+      "h": 26,
+      "config": {
+        "line_color": 0,
+        "line_width": 3,
+        "orientation": "vertical"
+      }
+    },
+    {
+      "type": "line",
+      "id": "seg_temp_5",
+      "x": -228,
+      "y": 138,
+      "w": 10,
+      "h": 26,
+      "config": {
+        "line_color": 0,
+        "line_width": 3,
+        "orientation": "vertical"
+      }
+    },
+    {
+      "type": "line",
+      "id": "seg_temp_6",
+      "x": -205,
+      "y": 138,
+      "w": 10,
+      "h": 26,
+      "config": {
+        "line_color": 0,
+        "line_width": 3,
+        "orientation": "vertical"
+      }
+    },
+    {
+      "type": "line",
+      "id": "seg_temp_7",
+      "x": -182,
+      "y": 138,
+      "w": 10,
+      "h": 26,
+      "config": {
+        "line_color": 0,
+        "line_width": 3,
+        "orientation": "vertical"
+      }
+    },
+    {
+      "type": "line",
+      "id": "seg_press_1",
+      "x": -318,
+      "y": 202,
+      "w": 10,
+      "h": 26,
+      "config": {
+        "line_color": 0,
+        "line_width": 3,
+        "orientation": "vertical"
+      }
+    },
+    {
+      "type": "line",
+      "id": "seg_press_2",
+      "x": -295,
+      "y": 202,
+      "w": 10,
+      "h": 26,
+      "config": {
+        "line_color": 0,
+        "line_width": 3,
+        "orientation": "vertical"
+      }
+    },
+    {
+      "type": "line",
+      "id": "seg_press_3",
+      "x": -272,
+      "y": 202,
+      "w": 10,
+      "h": 26,
+      "config": {
+        "line_color": 0,
+        "line_width": 3,
+        "orientation": "vertical"
+      }
+    },
+    {
+      "type": "line",
+      "id": "seg_press_4",
+      "x": -250,
+      "y": 202,
+      "w": 10,
+      "h": 26,
+      "config": {
+        "line_color": 0,
+        "line_width": 3,
+        "orientation": "vertical"
+      }
+    },
+    {
+      "type": "line",
+      "id": "seg_press_5",
+      "x": -228,
+      "y": 202,
+      "w": 10,
+      "h": 26,
+      "config": {
+        "line_color": 0,
+        "line_width": 3,
+        "orientation": "vertical"
+      }
+    },
+    {
+      "type": "line",
+      "id": "seg_press_6",
+      "x": -205,
+      "y": 202,
+      "w": 10,
+      "h": 26,
+      "config": {
+        "line_color": 0,
+        "line_width": 3,
+        "orientation": "vertical"
+      }
+    },
+    {
+      "type": "line",
+      "id": "seg_press_7",
+      "x": -182,
+      "y": 202,
+      "w": 10,
+      "h": 26,
+      "config": {
+        "line_color": 0,
+        "line_width": 3,
+        "orientation": "vertical"
+      }
+    },
+    {
+      "type": "line",
+      "id": "seg_fuel_1",
+      "x": 182,
+      "y": 138,
+      "w": 10,
+      "h": 26,
+      "config": {
+        "line_color": 0,
+        "line_width": 3,
+        "orientation": "vertical"
+      }
+    },
+    {
+      "type": "line",
+      "id": "seg_fuel_2",
+      "x": 205,
+      "y": 138,
+      "w": 10,
+      "h": 26,
+      "config": {
+        "line_color": 0,
+        "line_width": 3,
+        "orientation": "vertical"
+      }
+    },
+    {
+      "type": "line",
+      "id": "seg_fuel_3",
+      "x": 228,
+      "y": 138,
+      "w": 10,
+      "h": 26,
+      "config": {
+        "line_color": 0,
+        "line_width": 3,
+        "orientation": "vertical"
+      }
+    },
+    {
+      "type": "line",
+      "id": "seg_fuel_4",
+      "x": 250,
+      "y": 138,
+      "w": 10,
+      "h": 26,
+      "config": {
+        "line_color": 0,
+        "line_width": 3,
+        "orientation": "vertical"
+      }
+    },
+    {
+      "type": "line",
+      "id": "seg_fuel_5",
+      "x": 272,
+      "y": 138,
+      "w": 10,
+      "h": 26,
+      "config": {
+        "line_color": 0,
+        "line_width": 3,
+        "orientation": "vertical"
+      }
+    },
+    {
+      "type": "line",
+      "id": "seg_fuel_6",
+      "x": 295,
+      "y": 138,
+      "w": 10,
+      "h": 26,
+      "config": {
+        "line_color": 0,
+        "line_width": 3,
+        "orientation": "vertical"
+      }
+    },
+    {
+      "type": "line",
+      "id": "seg_fuel_7",
+      "x": 318,
+      "y": 138,
+      "w": 10,
+      "h": 26,
+      "config": {
+        "line_color": 0,
+        "line_width": 3,
+        "orientation": "vertical"
+      }
+    },
+    {
+      "type": "text",
+      "id": "emark_temp_bar_",
+      "x": -353,
+      "y": 138,
+      "w": 22,
+      "h": 18,
+      "config": {
+        "slot": 0,
+        "decimals": 0,
+        "static_text": "C",
+        "font": "DSEG14I:11",
+        "text_color": 3016
+      }
+    },
+    {
+      "type": "text",
+      "id": "emark_temp_bar_",
+      "x": -147,
+      "y": 138,
+      "w": 22,
+      "h": 18,
+      "config": {
+        "slot": 0,
+        "decimals": 0,
+        "static_text": "H",
+        "font": "DSEG14I:11",
+        "text_color": 3016
+      }
+    },
+    {
+      "type": "text",
+      "id": "emark_fuel_bar_",
+      "x": 147,
+      "y": 138,
+      "w": 22,
+      "h": 18,
+      "config": {
+        "slot": 0,
+        "decimals": 0,
+        "static_text": "E",
+        "font": "DSEG14I:11",
+        "text_color": 3016
+      }
+    },
+    {
+      "type": "text",
+      "id": "emark_fuel_bar_",
+      "x": 353,
+      "y": 138,
+      "w": 22,
+      "h": 18,
+      "config": {
+        "slot": 0,
+        "decimals": 0,
+        "static_text": "F",
+        "font": "DSEG14I:11",
+        "text_color": 3016
+      }
+    },
+    {
+      "type": "text",
+      "id": "emark_press_bar",
+      "x": -353,
+      "y": 202,
+      "w": 22,
+      "h": 18,
+      "config": {
+        "slot": 0,
+        "decimals": 0,
+        "static_text": "L",
+        "font": "DSEG14I:11",
+        "text_color": 3016
+      }
+    },
+    {
+      "type": "text",
+      "id": "emark_press_bar",
+      "x": -147,
+      "y": 202,
+      "w": 22,
+      "h": 18,
+      "config": {
+        "slot": 0,
+        "decimals": 0,
+        "static_text": "H",
+        "font": "DSEG14I:11",
+        "text_color": 3016
+      }
+    },
+    {
+      "type": "text",
+      "id": "tt_oil",
+      "x": -287,
+      "y": -196,
+      "w": 74,
+      "h": 22,
+      "config": {
+        "slot": 0,
+        "decimals": 0,
+        "static_text": "OIL",
+        "font": "DSEG14I:13",
+        "text_color": 3016,
+        "rules": [
+          {
+            "signal_name": "OIL_PRESSURE",
+            "op": "<",
+            "threshold": 80,
+            "overrides": [
+              {
+                "field": "text_color",
+                "type": "color",
+                "value": 63778
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "text",
+      "id": "tt_batt",
+      "x": -205,
+      "y": -196,
+      "w": 74,
+      "h": 22,
+      "config": {
+        "slot": 0,
+        "decimals": 0,
+        "static_text": "BATT",
+        "font": "DSEG14I:13",
+        "text_color": 3016,
+        "rules": [
+          {
+            "signal_name": "BATTERY_VOLTAGE",
+            "op": "<",
+            "threshold": 12.199999809265137,
+            "overrides": [
+              {
+                "field": "text_color",
+                "type": "color",
+                "value": 63778
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "text",
+      "id": "tt_temp",
+      "x": 205,
+      "y": -196,
+      "w": 74,
+      "h": 22,
+      "config": {
+        "slot": 0,
+        "decimals": 0,
+        "static_text": "TEMP",
+        "font": "DSEG14I:13",
+        "text_color": 3016,
+        "rules": [
+          {
+            "signal_name": "COOLANT_TEMP",
+            "op": ">",
+            "threshold": 110,
+            "overrides": [
+              {
+                "field": "text_color",
+                "type": "color",
+                "value": 63778
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "text",
+      "id": "tt_fuel",
+      "x": 290,
+      "y": -196,
+      "w": 74,
+      "h": 22,
+      "config": {
+        "slot": 0,
+        "decimals": 0,
+        "static_text": "FUEL",
+        "font": "DSEG14I:13",
+        "text_color": 3016,
+        "rules": [
+          {
+            "signal_name": "FUEL_LEVEL",
+            "op": "<",
+            "threshold": 15,
+            "overrides": [
+              {
+                "field": "text_color",
+                "type": "color",
+                "value": 64896
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

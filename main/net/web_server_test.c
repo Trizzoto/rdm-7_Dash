@@ -44,20 +44,12 @@ static esp_err_t _send_503(httpd_req_t *req, const char *msg) {
 	return ESP_FAIL;
 }
 
-/* Send a cJSON object as the response (with CORS) and free both it and the
- * printed string. Returns ESP_OK / ESP_FAIL. Takes ownership of `root`. */
+/* Thin convenience wrapper: every caller in this file wants CORS set, so
+ * bundle that with the shared send helper rather than repeat it at each of
+ * the 5 call sites. Takes ownership of `root`. */
 static esp_err_t _send_json(httpd_req_t *req, cJSON *root) {
-	char *json = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-	if (!json) {
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
-		return ESP_FAIL;
-	}
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	httpd_resp_set_type(req, "application/json");
-	httpd_resp_sendstr(req, json);
-	free(json);
-	return ESP_OK;
+	return web_server_send_json(req, root);
 }
 
 /* ── POST /api/can/inject ────────────────────────────────────────────────

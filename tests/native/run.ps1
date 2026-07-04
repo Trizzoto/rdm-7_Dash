@@ -46,6 +46,7 @@ function Get-ExtraIncludes($name) {
 	switch ($name) {
 		"test_widget_rules"      { return @("-Imocks", "-Icjson", "-I.") }
 		"test_layout_migration"  { return @("-Icjson") }
+		"test_widget_fields"     { return @("-Imocks", "-Icjson", "-I../../main") }
 		default                  { return @() }
 	}
 }
