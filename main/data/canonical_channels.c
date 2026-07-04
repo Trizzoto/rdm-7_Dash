@@ -426,9 +426,11 @@ EGT_ENTRY(5), EGT_ENTRY(6), EGT_ENTRY(7), EGT_ENTRY(8),
 	.units_native="V", .units_display_def="V", .decimals=1,
 	.min_default=10, .max_default=16,
 	.low_warn=UL, .high_warn=UH,
-	/* voltages stored as ×10 (12.0V = 120); decimals=1 makes UI present
-	 * correctly. Same convention applies to alternator_voltage below. */
-	.color_normal=0x80A0FF, .notes="Low=discharge, high=regulator fault. V × 10 internal."
+	/* Stored as REAL volts (12.0V is 12.0, not 120); decimals=1 sets display
+	 * precision. min/max 10..16 and every decode confirm this — OBD2 PID 0x42
+	 * uses scale 0.001 and the ECU presets scale to ~12.0. Do NOT ×10 a new
+	 * voltage source. Same for alternator_voltage / ecu_voltage below. */
+	.color_normal=0x80A0FF, .notes="Low=discharge, high=regulator fault."
 },
 {
 	.id="alternator_voltage", .label="Alternator",
@@ -436,7 +438,7 @@ EGT_ENTRY(5), EGT_ENTRY(6), EGT_ENTRY(7), EGT_ENTRY(8),
 	.units_native="V", .units_display_def="V", .decimals=1,
 	.min_default=10, .max_default=16,
 	.low_warn=UL, .high_warn=UH,
-	.color_normal=0x80A0FF, .notes="V × 10 internal."
+	.color_normal=0x80A0FF, .notes=NULL
 },
 {
 	.id="alternator_current", .label="Alt Current",
@@ -452,7 +454,7 @@ EGT_ENTRY(5), EGT_ENTRY(6), EGT_ENTRY(7), EGT_ENTRY(8),
 	.units_native="V", .units_display_def="V", .decimals=2,
 	.min_default=10, .max_default=16,
 	.low_warn=UL, .high_warn=UH,
-	.color_normal=0x80A0FF, .notes="V × 10 internal. Critical-low flags brown-out."
+	.color_normal=0x80A0FF, .notes="Critical-low flags brown-out."
 },
 {
 	.id="system_current", .label="System Current",
