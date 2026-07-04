@@ -860,7 +860,13 @@ static void _panel_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddStringToObject(cfg, "peak_font", pd->peak_font);
 	if (pd->peak_x_offset != 0)
 		cJSON_AddNumberToObject(cfg, "peak_x_offset", pd->peak_x_offset);
-	if (pd->peak_y_offset != 31)
+	/* Omit only when it matches the legacy auto-position (value_y_offset + 22)
+	 * that from_json reconstructs for an absent key — NOT the bare constant 31.
+	 * A panel whose value label was moved (value_y_offset != 9) but whose peak
+	 * offset is still the default 31 would otherwise omit the key and reload as
+	 * value_y_offset+22 != 31, silently shifting the peak label. Aligning the
+	 * omit test with the reconstruction formula keeps the round-trip exact. */
+	if (pd->peak_y_offset != (int8_t)(pd->value_y_offset + 22))
 		cJSON_AddNumberToObject(cfg, "peak_y_offset", pd->peak_y_offset);
 	/* Alert COLOURS + apply-flags are widget-owned styling and DO round-trip
 	 * in the layout. The threshold VALUES + enabled state live on the bound

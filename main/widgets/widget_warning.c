@@ -1254,10 +1254,17 @@ static void _warning_to_json(widget_t *w, cJSON *out) {
 	if (!cfg) return;
 	if (wd) {
 		cJSON_AddNumberToObject(cfg, "slot", wd->slot);
-		cJSON_AddNumberToObject(cfg, "active_color", (int)wd->active_color.full);
+		/* Defaults-only (factory: active=RED, momentary=true, invert=false) to
+		 * stay within the 32 KB layout budget — the warning row can hit its
+		 * 8-instance cap, so redundant per-instance fields add up. from_json and
+		 * the editor both fall back to these same defaults on an absent key. */
+		if (wd->active_color.full != THEME_COLOR_RED.full)
+			cJSON_AddNumberToObject(cfg, "active_color", (int)wd->active_color.full);
 		cJSON_AddStringToObject(cfg, "label", wd->label);
-		cJSON_AddBoolToObject(cfg, "is_momentary", wd->is_momentary);
-		cJSON_AddBoolToObject(cfg, "invert_toggle", wd->invert_toggle);
+		if (!wd->is_momentary)
+			cJSON_AddBoolToObject(cfg, "is_momentary", wd->is_momentary);
+		if (wd->invert_toggle)
+			cJSON_AddBoolToObject(cfg, "invert_toggle", wd->invert_toggle);
 		if (wd->signal_name[0] != '\0')
 			cJSON_AddStringToObject(cfg, "signal_name", wd->signal_name);
 		if (wd->channel_id[0] != '\0')

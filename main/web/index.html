@@ -6528,6 +6528,11 @@
                     currentLayout = JSON.parse(history[historyIndex]);
                     _restoreSelection(oldWidgets);
                 } else {
+                    /* Already at the oldest snapshot — clamp the cursor back to 0
+                     * (it still matches the unchanged currentLayout). Leaving it at
+                     * -1 makes the next _commitHistory() slice(0,0) and wipe the
+                     * entire undo/redo stack. */
+                    historyIndex = 0;
                     return;
                 }
                 renderEditor();
@@ -8480,7 +8485,7 @@
                  * outline reads as intentional, not broken. */
                 const deviceBadge = (w.type === 'shape_panel' || w.type === 'line')
                     ? `<span class="device-badge" title="Rendered on the device only \u2014 geometry isn't drawn in the editor">device</span>` : '';
-                box.innerHTML = `${shapePreview}<div class="id-label">${w.id}${sigTag}${deviceBadge}</div>${typeIcon}${customHtml}`; if (selectedIndices.size === 1 && selectedIndices.has(index) && !w.locked) {
+                box.innerHTML = `${shapePreview}<div class="id-label">${_escAttr(w.id)}${sigTag}${deviceBadge}</div>${typeIcon}${customHtml}`; if (selectedIndices.size === 1 && selectedIndices.has(index) && !w.locked) {
                     const handles = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'];
                     handles.forEach(h => {
                         const hDiv = document.createElement('div');
@@ -9694,7 +9699,7 @@
                     const hue = (hash * 67) % 360;
                     groupBadge = `<span title="Group ${tag}" style="margin-right:4px; padding:1px 5px; border-radius:3px; font-size:9px; background:hsl(${hue}, 60%, 35%); color:#fff; flex-shrink:0;">G·${tag}</span>`;
                 }
-                typeInfo.innerHTML = `${groupBadge}<span class="layer-icon" style="color:${iconColor}">${layerIcon}</span><span class="layer-type">${label}</span><span class="layer-id">${w.id}</span>`;
+                typeInfo.innerHTML = `${groupBadge}<span class="layer-icon" style="color:${iconColor}">${layerIcon}</span><span class="layer-type">${label}</span><span class="layer-id">${_escAttr(w.id)}</span>`;
 
                 const controls = document.createElement('div');
                 controls.className = 'layer-controls';
@@ -11385,7 +11390,7 @@
             } else if (f.type === 'number') {
                 html += `<input type="number" step="any" value="${val}" onblur="updateWidgetConfigField('${f.name}', this.value, true)" onkeydown="if(event.key==='Enter') this.blur()" ${disabledAttr}>`;
             } else {
-                html += `<input type="text" value="${val}" oninput="updateWidgetConfigField('${f.name}', this.value, false)" ${disabledAttr}>`;
+                html += `<input type="text" value="${_escAttr(val)}" oninput="updateWidgetConfigField('${f.name}', this.value, false)" ${disabledAttr}>`;
             }
             html += `</div>`;
             return html;
@@ -11551,7 +11556,7 @@
             /* ── Layout Accordion (open by default) ── */
             html += `<details class="inspector-accordion" open><summary>Layout</summary><div class="accordion-body">`;
             html += `<div class="field"><label>Type</label><input type="text" value="${w.type}" disabled></div>`;
-            html += `<div class="field"><label>ID</label><input type="text" value="${w.id}" onchange="updateWidgetField('id', this.value)" ${uniqAttr}></div>`;
+            html += `<div class="field"><label>ID</label><input type="text" value="${_escAttr(w.id)}" onchange="updateWidgetField('id', this.value)" ${uniqAttr}></div>`;
             html += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
                 <div class="field"><label>X</label><input type="number" value="${w.x}" oninput="updateWidgetField('x', parseInt(this.value), true)" ${uniqAttr}></div>
                 <div class="field"><label>Y</label><input type="number" value="${w.y}" oninput="updateWidgetField('y', parseInt(this.value), true)" ${uniqAttr}></div>
@@ -14018,7 +14023,7 @@
                 const dimCan = sIsInternal ? ' style="opacity:0.3; pointer-events:none;"' : '';
                 html += `<div class="sig-card-body" onclick="event.stopPropagation()">`;
                 html += `<div class="sig-card-grid" style="grid-template-columns:1fr; gap:8px;">`;
-                html += `<input type="text" value="${s.name}" onchange="updateSignalField(${i},'name',this.value); renderSignals();" spellcheck="false" style="font-size:14px; font-weight:600; padding:8px;${sIsInternal ? ' color:#4fc3f7;' : ''}" placeholder="Signal Name">`;
+                html += `<input type="text" value="${_escAttr(s.name)}" onchange="updateSignalField(${i},'name',this.value); renderSignals();" spellcheck="false" style="font-size:14px; font-weight:600; padding:8px;${sIsInternal ? ' color:#4fc3f7;' : ''}" placeholder="Signal Name">`;
                 if (sIsInternal) {
                     html += `<div style="padding:4px 8px; color:#4fc3f7; font-size:12px;">Internal signal — no CAN bus configuration</div>`;
                 }
@@ -14218,7 +14223,7 @@
 
                 return `<tr>` +
                     `<td class="col-status"><span class="sig-bound-dot ${bound ? 'active' : 'inactive'}" title="${boundTitle}"></span></td>` +
-                    `<td class="col-name"><input type="text" value="${s.name}" onchange="updateSignalField(${i},'name',this.value)" spellcheck="false"${isInternal ? ' style="color:#4fc3f7;"' : ''}></td>` +
+                    `<td class="col-name"><input type="text" value="${_escAttr(s.name)}" onchange="updateSignalField(${i},'name',this.value)" spellcheck="false"${isInternal ? ' style="color:#4fc3f7;"' : ''}></td>` +
                     canIdCell +
                     `<td class="col-bit"${dimStyle}><input type="number" value="${s.bit_start}" min="0" max="63" onchange="updateSignalField(${i},'bit_start',+this.value)"${isInternal ? ' tabindex="-1"' : ''}></td>` +
                     `<td class="col-bit"${dimStyle}><input type="number" value="${s.bit_length}" min="1" max="64" onchange="updateSignalField(${i},'bit_length',+this.value)"${isInternal ? ' tabindex="-1"' : ''}></td>` +
@@ -20866,7 +20871,7 @@
                             <div>
                                 <div class="ch2-num">
                                     <span class="ch2-num-label">Label</span>
-                                    <input type="text" value="${c.label||''}" onchange="_chEdit('${c.id}','label', this.value)">
+                                    <input type="text" value="${_escAttr(c.label||'')}" onchange="_chEdit('${c.id}','label', this.value)">
                                 </div>
                             </div>
                             ${canSection}
