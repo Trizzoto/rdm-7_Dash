@@ -299,10 +299,10 @@ esp_err_t web_server_start(void) {
 	 * and IDLE0 is less loaded than IDLE1. Observed in serial log:
 	 * back-to-back WDT hits during /api/screenshot encode stalls. */
 	config.core_id    = 0;
-	/* 160 slots: 106 actual REGISTER_URI calls today (count with
-	 * `grep -rn "REGISTER_URI\b" main/net/ | wc -l`), leaving ~54 slots
-	 * of headroom for the next round of endpoint adds before we have to
-	 * think about this again. ESP-IDF silently drops handlers registered
+	/* 160 slots: 148 actual REGISTER_URI calls today (count with
+	 * `grep -rn "REGISTER_URI\b" main/net/ | wc -l`), leaving ~12 slots
+	 * of headroom -- re-count before adding new endpoints and bump this
+	 * cap if headroom is running low. ESP-IDF silently drops handlers registered
 	 * past max_uri_handlers -- when we ran with 80, the last ~6 POST/OPTIONS
 	 * handlers fell through to the wildcard CORS preflight and returned 405
 	 * (e.g. `/api/signal/simulate` POST). Each slot is ~32 bytes of static
@@ -353,7 +353,6 @@ esp_err_t web_server_start(void) {
 	web_server_obd2_register(server);
 	web_server_channels_register(server);
 	web_server_test_register(server);
-	web_server_mirror_register(server);
 
 	/* Final registration tally. If any registration failed (almost always
 	 * because max_uri_handlers is too low), shout loudly so the developer

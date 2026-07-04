@@ -16,7 +16,6 @@ const path = require('path');
 const PORT = 8180;
 const ROOT = path.resolve(__dirname, '..');
 const INDEX_HTML = path.join(ROOT, 'main', 'web', 'index.html');
-const MIRROR_HTML = path.join(ROOT, 'main', 'web', 'mirror.html');
 
 /* Browser-dev layout persistence. POST /api/layout/save writes the firmware
  * payload here (pretty-printed) and GET /api/layout/current serves it back —
@@ -25,11 +24,9 @@ const MIRROR_HTML = path.join(ROOT, 'main', 'web', 'mirror.html');
  * file to fall back to SAMPLE_LAYOUT. */
 const SAVED_LAYOUT = path.join(ROOT, 'tools', 'ford_cluster.json');
 
-/* --device <ip>: proxy mode for the WASM live mirror. Serves the LOCAL
- * main/web/mirror.html at /mirror (so the page under development is the
- * one being tested) but forwards /mirror/index.js, /mirror/index.wasm and
- * every /api/* request to the real dash. Lets the mirror run same-origin
- * on localhost where browser tooling can inspect it. */
+/* --device <ip>: proxy mode — serves the LOCAL main/web/index.html but
+ * forwards every /api/* request to the real dash, so the editor under
+ * development runs same-origin on localhost against live device data. */
 const _devIdx = process.argv.indexOf('--device');
 const DEVICE_IP = _devIdx >= 0 ? process.argv[_devIdx + 1] : null;
 
@@ -240,13 +237,9 @@ const server = http.createServer((req, res) => {
   const key = `${req.method.padEnd(4)} ${url}`;
   const handler = MOCK[key];
 
-  /* Mirror dev mode: local page, real device behind it. */
+  /* Device-proxy dev mode: serve the local editor, forward API to the dash. */
   if (DEVICE_IP) {
-    if (url === '/mirror') {
-      try { return sendHtml(res, fs.readFileSync(MIRROR_HTML, 'utf8')); }
-      catch (e) { return sendHtml(res, `<h1>Cannot read ${MIRROR_HTML}</h1><pre>${e.message}</pre>`, 500); }
-    }
-    if (url.startsWith('/mirror/') || url.startsWith('/api/')) {
+    if (url.startsWith('/api/')) {
       return proxyToDevice(req, res);
     }
   }
