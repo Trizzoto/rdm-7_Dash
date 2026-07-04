@@ -9800,7 +9800,7 @@
             const anchor = currentLayout.widgets[indices[0]];
             indices.forEach(i => {
                 const w = currentLayout.widgets[i];
-                if (!w) return;
+                if (!w || w.locked) return;   /* honor lock — matches arrow-nudge + inspector */
                 switch (dir) {
                     case 'left':   w.x = -ORIGIN_X + Math.round(w.w / 2); break;
                     case 'center': w.x = anchor.x; break;
@@ -9817,9 +9817,11 @@
 
         function distributeWidgets(axis) {
             const indices = selectedIndices.size > 1 ? [...selectedIndices] : [];
-            if (indices.length < 3) return; /* need 3+ widgets to distribute */
+            /* Exclude locked widgets from the spread (they must not move); guard on
+             * the FILTERED count so 1 remaining widget can't divide-by-zero into NaN. */
+            const widgets = indices.map(i => currentLayout.widgets[i]).filter(w => w && !w.locked);
+            if (widgets.length < 3) return; /* need 3+ unlocked widgets to distribute */
             pushHistory();
-            const widgets = indices.map(i => currentLayout.widgets[i]).filter(Boolean);
             if (axis === 'x') {
                 widgets.sort((a, b) => a.x - b.x);
                 const first = widgets[0].x;
@@ -10267,7 +10269,7 @@
                 pushHistory();
                 _dragMoved = true; /* already pushed */
                 const clone = JSON.parse(JSON.stringify(currentLayout.widgets[index]));
-                clone.id = `w_${Date.now().toString().slice(-4)}`;
+                clone.id = nextWidgetId(clone.type);   /* collision-safe, matches duplicate/paste; not Date.now() slice */
                 if (!sanitizeClone(clone)) {
                     showToast(`No available slots for ${clone.type}`, 'error');
                     return;
@@ -10486,7 +10488,7 @@
                 selectedIndices.forEach(i => {
                     const sw = currentLayout.widgets[i];
                     const sp = _dragStartPositions[i];
-                    if (sp) { sw.x = sp.x + dx; sw.y = sp.y + dy; }
+                    if (sp && !sw.locked) { sw.x = sp.x + dx; sw.y = sp.y + dy; }
                 });
                 renderEditor();
                 updateInspector();

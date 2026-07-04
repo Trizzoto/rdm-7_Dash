@@ -2513,11 +2513,19 @@ static void _meter_apply_night_mode(widget_t *w, bool active) {
 		if (active) {
 			if (md->night_needle)
 				lv_meter_set_indicator_value(md->night_meter, md->night_needle, v);
+			/* Catch up the shadow needle too — the signal callback only drives the
+			 * VISIBLE meter's needles, so the night meter's shadow (never driven
+			 * while hidden) would render detached at a stale/zero angle on a steady
+			 * signal until the next tick. Mirrors the shadow drive in _meter_show_value. */
+			if (md->shadow_enabled && md->night_shadow_needle)
+				lv_meter_set_indicator_value(md->night_meter, md->night_shadow_needle, v);
 			lv_obj_add_flag(md->meter, LV_OBJ_FLAG_HIDDEN);
 			lv_obj_clear_flag(md->night_meter, LV_OBJ_FLAG_HIDDEN);
 		} else {
 			if (md->needle)
 				lv_meter_set_indicator_value(md->meter, md->needle, v);
+			if (md->shadow_enabled && md->shadow_needle)
+				lv_meter_set_indicator_value(md->meter, md->shadow_needle, v);
 			lv_obj_clear_flag(md->meter, LV_OBJ_FLAG_HIDDEN);
 			lv_obj_add_flag(md->night_meter, LV_OBJ_FLAG_HIDDEN);
 		}
