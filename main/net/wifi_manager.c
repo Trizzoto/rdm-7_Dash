@@ -670,6 +670,20 @@ void wifi_manager_start(void)
      * `Haven't to connect to a suitable AP now!` and drops AP frames.
      * Only enable STA if there's at least one saved SSID to connect to. */
     bool need_sta = _has_saved_sta_creds();
+
+    /* Safety net: with AP disabled AND no saved STA credentials the dash has
+     * nothing to connect to and no hotspot to offer — it boots completely
+     * unreachable, and there is no auto-recovery (the STA-auth-failure AP
+     * fallback never fires because STA is never even attempted). Force the
+     * hotspot on so the dash is always configurable, and persist it so the
+     * saved preference / WiFi screen reflect reality on the next boot. */
+    if (!s_ap_enabled && !need_sta) {
+        ESP_LOGW(TAG, "No saved WiFi networks and AP was off — forcing hotspot so the dash stays reachable");
+        s_ap_enabled        = true;
+        boot_cfg.ap_enabled = true;
+        config_store_save_wifi_boot(&boot_cfg);
+    }
+
     wifi_mode_t start_mode;
     if (s_ap_enabled && need_sta)       start_mode = WIFI_MODE_APSTA;
     else if (s_ap_enabled)              start_mode = WIFI_MODE_AP;
