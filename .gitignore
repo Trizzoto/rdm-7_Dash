@@ -34,3 +34,8 @@ __pycache__/
 # a relative path, turning it into a literal directory named
 # `Usersruuvaworkspacerdm7-sandbox`. Catch the whole pattern.
 Usersruuvaworkspace*/
+
+# Scratch/experiment artifacts under tools/ (the "_" prefix is the workspace
+# scratch convention: throwaway layouts, screenshots, capture scripts,
+# per-cluster WIP). Keep them local; don't clutter the tree.
+tools/_*
