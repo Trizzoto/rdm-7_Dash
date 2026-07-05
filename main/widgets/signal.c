@@ -364,6 +364,13 @@ void signal_dispatch_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc)
     for (uint16_t i = 0; i < s_signal_count; i++) {
         signal_t *sig = &s_signals[i];
 
+        /* Skip non-CAN-decoded signals. OBD2- and internal-sourced signals are
+         * registered with can_id=0 / bit_length=0 and are fed by their own
+         * producers, never by bus decode. Without this, a stray frame with CAN
+         * ID 0x000 (a legal, highest-priority ID) would match every one of them
+         * and force it to its decode offset, marking it fresh. */
+        if (sig->can_id == 0 || sig->bit_length == 0) continue;
+
         if (sig->can_id != can_id) continue;
 
         /* Test-lock gate: the web editor / Properties panel has injected a

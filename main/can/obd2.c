@@ -394,6 +394,21 @@ void obd2_start(const uint32_t *enabled_pids, uint8_t count)
 
 void obd2_stop(void)
 {
+    /* A discovery scan rides on the poll timer. If one is mid-flight, finalize
+     * it before deleting the timer — otherwise it freezes at SCAN_WINDOW_OPEN
+     * forever (obd2_discovery_in_progress() stuck true, the next scan refused
+     * as "already in progress", and the bus possibly left on the probe
+     * bitrate). _scan_finalize() resets state, nulls the callback, and retires
+     * the timer itself when polling isn't running, so the delete below is a
+     * no-op in that case. */
+    if (s_scan_state != SCAN_IDLE) {
+        if (s_scan_on_other) {
+            can_change_bitrate(s_scan_orig_bitrate);
+            s_scan_on_other = false;
+        }
+        _scan_finalize(false);
+    }
+
     if (s_poll_timer) {
         lv_timer_del(s_poll_timer);
         s_poll_timer = NULL;
@@ -1533,6 +1548,11 @@ void obd2_rx_handler(uint32_t can_id, const uint8_t *data, uint8_t dlc)
 {
     if (can_id < OBD2_RESPONSE_ID_FIRST || can_id > OBD2_RESPONSE_ID_LAST) return;
     if (!data || dlc < 2) return;
+
+    /* The TWAI driver surfaces the raw 4-bit DLC (0-15) but only ever fills 8
+     * data bytes, so a malformed frame with dlc 9-15 must not drive reads past
+     * data[7]. Clamp here (mirrors the coalesce clamp in can_manager.c). */
+    if (dlc > 8) dlc = 8;
 
     uint8_t pci         = data[0];
     uint8_t pci_type    = pci >> 4;       /* 0=SF, 1=FF, 2=CF, 3=FC */

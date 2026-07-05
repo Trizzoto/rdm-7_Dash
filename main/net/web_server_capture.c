@@ -291,8 +291,12 @@ static esp_err_t _screenshot_hash_handler(httpd_req_t *req) {
 	if (y < 0) y = 0;
 	if (x >= SCREEN_W) x = SCREEN_W - 1;
 	if (y >= SCREEN_H) y = SCREEN_H - 1;
-	if (w <= 0 || x + w > SCREEN_W) w = SCREEN_W - x;
-	if (h <= 0 || y + h > SCREEN_H) h = SCREEN_H - y;
+	/* Bound against remaining width/height, never `x + w` — with an attacker-
+	 * supplied w near INT_MAX the addition overflows to a negative int, sails
+	 * past this clamp, and the FNV loop below reads far off the framebuffer.
+	 * SCREEN_W - x is safe because x is already clamped to [0, SCREEN_W-1]. */
+	if (w <= 0 || w > SCREEN_W - x) w = SCREEN_W - x;
+	if (h <= 0 || h > SCREEN_H - y) h = SCREEN_H - y;
 
 	const uint16_t *fb = display_capture_shadow_fb();
 	if (!fb)

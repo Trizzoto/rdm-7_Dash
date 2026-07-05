@@ -51,6 +51,14 @@ extern void rdm_lvgl_port_task(void *pvParameter);
 static const char *TAG = "ota_handler";
 
 static volatile ota_status_t ota_status = OTA_IDLE;
+
+/* Serializes every OTA operation. Held while a check OR an install runs so a
+ * second check can't race the shared response_buffer and a check can't clobber
+ * an in-progress install's status. Acquired via test_and_set (true = someone
+ * else holds it). Checks release it themselves; an install holds it until it
+ * reboots (success) or hits its failure path. */
+static atomic_flag s_ota_op_busy = ATOMIC_FLAG_INIT;
+
 static char latest_version[16] = {0};
 static char download_url[512] = {0};
 static char *response_buffer = NULL;
@@ -137,6 +145,12 @@ static esp_err_t _http_event_handler(esp_http_client_event_t *evt) {
 
 // Parse GitHub Releases API JSON response
 static void compare_and_set_ota_status(void) {
+    /* Never let a check result overwrite an in-progress install's status —
+     * that would re-open the /api/ota/start guard for a concurrent download.
+     * (The s_ota_op_busy flag already prevents a check from running during an
+     * install; this is defense in depth.) */
+    if (ota_status == OTA_UPDATE_IN_PROGRESS) return;
+
     cJSON *root = cJSON_Parse(response_buffer);
     if (!root) {
         ESP_LOGE(TAG, "Failed to parse GitHub API JSON response");
@@ -269,7 +283,7 @@ static void ota_free_internal_ram(void) {
     vTaskDelay(pdMS_TO_TICKS(50));
 }
 
-void check_for_update(void) {
+static void _do_check_for_update(void) {
     ESP_LOGI(TAG, "Checking for updates from GitHub Releases...");
     ESP_LOGI(TAG, "Current version: %s", FIRMWARE_VERSION);
 
@@ -374,6 +388,18 @@ void check_for_update(void) {
         response_buffer = NULL;
     }
     response_buffer_size = 0;
+}
+
+void check_for_update(void) {
+    /* Serialize against other checks and any in-progress install. Without this
+     * two check tasks (e.g. the boot auto-check and a web-triggered check) race
+     * on the shared response_buffer — double-free / use-after-free. */
+    if (atomic_flag_test_and_set(&s_ota_op_busy)) {
+        ESP_LOGW(TAG, "OTA op already in flight — skipping this check");
+        return;
+    }
+    _do_check_for_update();
+    atomic_flag_clear(&s_ota_op_busy);
 }
 
 // Add new function before start_ota_update
@@ -636,9 +662,12 @@ esp_err_t start_ota_update(void) {
                 ESP_LOGE(TAG, "OTA validation failed: %s", esp_err_to_name(err));
             }
         } else {
+            /* Read the byte count BEFORE abort — esp_https_ota_abort() frees
+             * the handle, so querying it afterward is a use-after-free. */
+            int read_len = esp_https_ota_get_image_len_read(ota_handle);
             esp_https_ota_abort(ota_handle);
             ESP_LOGE(TAG, "Download failed at %d/%d bytes",
-                     esp_https_ota_get_image_len_read(ota_handle), image_size);
+                     read_len, image_size);
         }
     }
 
@@ -711,12 +740,22 @@ static void ota_update_task(void *pvParameter) {
         ESP_LOGE(TAG, "OTA update failed: %s", esp_err_to_name(ret));
         ota_status = OTA_UPDATE_FAILED;
         ota_progress = -1;
+        atomic_flag_clear(&s_ota_op_busy);  /* install done (failed) — release */
     }
-    
+
     vTaskDelete(NULL);
 }
 
 void start_ota_update_task(void) {
+    /* Claim the shared OTA slot. If a check (or another install) is already
+     * running, refuse rather than launch a second esp_https_ota against the
+     * same partition. The slot is released by ota_update_task on failure and
+     * held through the reboot on success. */
+    if (atomic_flag_test_and_set(&s_ota_op_busy)) {
+        ESP_LOGW(TAG, "OTA op already in flight — refusing update start");
+        return;
+    }
+
     ESP_LOGI(TAG, "Creating OTA update task");
 
     ESP_LOGI(TAG, "Free internal (before prep): %lu, free PSRAM: %lu",
@@ -748,6 +787,7 @@ void start_ota_update_task(void) {
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create OTA task");
         ota_status = OTA_UPDATE_FAILED;
+        atomic_flag_clear(&s_ota_op_busy);  /* task never started — release */
     } else {
         ESP_LOGI(TAG, "OTA task created successfully");
         ota_status = OTA_UPDATE_IN_PROGRESS;

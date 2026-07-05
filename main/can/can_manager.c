@@ -332,6 +332,14 @@ void build_twai_filter_from_signals(twai_filter_config_t *out_filter) {
 		signal_t *sig = signal_get_by_index(i);
 		if (!sig || sig->can_id == 0)
 			continue;
+		/* Extended (29-bit) IDs don't fit the standard-frame acceptance filter
+		 * built below, and masking them to 11 bits would filter out their real
+		 * frames entirely. Fall back to accept-all — software dispatch already
+		 * matches on the full ID, so only the hardware pre-filter is skipped. */
+		if (sig->can_id > 0x7FFu) {
+			*out_filter = (twai_filter_config_t)TWAI_FILTER_CONFIG_ACCEPT_ALL();
+			return;
+		}
 		uint32_t sid = sig->can_id & 0x7FFu;
 		/* Deduplicate */
 		bool dup = false;

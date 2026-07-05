@@ -27,6 +27,11 @@ static const char *TAG = "sig_replay";
 #define REPLAY_LINE_MAX    1024
 #define REPLAY_MAX_COLS    64      /* matches LOG_MAX_SIGNALS in data_logger */
 #define REPLAY_NAME_MAX    32
+/* Above this size, skip the up-front full-file row count. signal_replay_start
+ * runs on the LVGL task, so walking a multi-MB SD log line-by-line would freeze
+ * the dashboard and can trip the 15 s TWDT. The count only feeds a progress
+ * readout, so 0 ("unknown") is a fine fallback for big files. */
+#define REPLAY_PRECOUNT_MAX_BYTES  (256 * 1024)
 
 typedef struct {
 	char     name[REPLAY_NAME_MAX]; /* column header text */
@@ -200,15 +205,27 @@ esp_err_t signal_replay_start(const char *path, float speed, bool loop)
 		return ESP_ERR_INVALID_ARG;
 	}
 
-	/* Row count + capture first timestamp by peeking at the first data row */
-	s_total_rows = _count_data_rows();
-	if (s_total_rows == 0) {
+	/* Row count — only pre-walk small files (this runs on the LVGL task; a big
+	 * file would freeze the UI). Size the file via the open handle (avoids
+	 * pulling in <sys/stat.h>, whose newlib _close decl collides with our
+	 * static _close). For large files leave the count 0 ("unknown");
+	 * emptiness is still caught by the first-row peek below. */
+	long after_header = ftell(s_file);
+	long file_size = -1;
+	if (after_header >= 0 && fseek(s_file, 0, SEEK_END) == 0) {
+		file_size = ftell(s_file);
+		fseek(s_file, after_header, SEEK_SET);
+	}
+	bool precount = (file_size >= 0 && file_size <= REPLAY_PRECOUNT_MAX_BYTES);
+	s_total_rows = precount ? _count_data_rows() : 0;
+	if (precount && s_total_rows == 0) {
 		ESP_LOGW(TAG, "No data rows in '%s'", path);
 		_close();
 		return ESP_ERR_INVALID_SIZE;
 	}
 	if (!_read_line(s_pending_line, sizeof(s_pending_line)) ||
 	    !_peek_row_ts(s_pending_line, &s_next_ts_ms)) {
+		ESP_LOGW(TAG, "No usable data row in '%s'", path);
 		_close();
 		return ESP_ERR_INVALID_RESPONSE;
 	}

@@ -322,7 +322,21 @@ static esp_err_t _log_delete_handler(httpd_req_t *req) {
 	}
 
 	char path[160];
-	if (!_log_resolve_path(name, path, sizeof(path)) || remove(path) != 0) {
+	if (!_log_resolve_path(name, path, sizeof(path))) {
+		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Log not found");
+		return ESP_OK;
+	}
+
+	/* Never remove() the file the data logger has open for writing. With
+	 * CONFIG_FATFS_FS_LOCK=0, FatFs happily unlinks an open file and the
+	 * logger's next write through the stale handle can corrupt the volume. */
+	if (data_logger_is_active() &&
+	    strcmp(path, data_logger_current_file()) == 0) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Log file is in use");
+		return ESP_OK;
+	}
+
+	if (remove(path) != 0) {
 		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Log not found");
 		return ESP_OK;
 	}
@@ -375,6 +389,17 @@ static esp_err_t _log_upload_handler(httpd_req_t *req) {
 
 	char path[160];
 	snprintf(path, sizeof(path), "/lfs/logs/%s", name);
+
+	/* Don't open a second write handle on the file the data logger is actively
+	 * writing — concurrent handles on one LittleFS file are undefined behavior
+	 * and can corrupt it. */
+	if (data_logger_is_active() &&
+	    strcmp(path, data_logger_current_file()) == 0) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+		                    "Target is the active log file");
+		return ESP_OK;
+	}
+
 	FILE *f = fopen(path, "wb");
 	if (!f) {
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,

@@ -1389,10 +1389,15 @@ void app_main(void) {
 
   if (boot_cfg.wifi_on_boot) {
     ESP_LOGI(TAG, "WiFi-on-boot enabled, starting WiFi after 4s delay...");
-    /* Start WiFi with a 4-second delay to let dashboard load first */
-    lv_timer_t *wifi_boot_timer =
-        lv_timer_create(_deferred_wifi_boot_cb, 4000, NULL);
-    lv_timer_set_repeat_count(wifi_boot_timer, 1);
+    /* Start WiFi with a 4-second delay to let dashboard load first. Hold the
+     * LVGL lock — the LVGL task is already running lv_timer_handler() on the
+     * other core, and lv_timer_create() mutates the shared global timer list. */
+    if (rdm_lvgl_lock(-1)) {
+      lv_timer_t *wifi_boot_timer =
+          lv_timer_create(_deferred_wifi_boot_cb, 4000, NULL);
+      lv_timer_set_repeat_count(wifi_boot_timer, 1);
+      rdm_lvgl_unlock();
+    }
   } else {
     ESP_LOGI(TAG, "WiFi disabled at boot — enable from Settings > Wi-Fi");
   }
