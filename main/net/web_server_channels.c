@@ -271,15 +271,27 @@ static esp_err_t channels_list_handler(httpd_req_t *req) {
 	char *json = NULL;
 	cJSON *root = cJSON_CreateObject();
 	if (root) {
-		cJSON_AddNumberToObject(root, "count", channel_manager_count());
-		cJSON *arr = cJSON_AddArrayToObject(root, "channels");
-		for (size_t i = 0; i < channel_manager_count(); ++i) {
-			channel_t *c = channel_manager_at(i);
-			if (!c) continue;
-			cJSON *jc = channel_to_full_json(c);
-			if (jc) cJSON_AddItemToArray(arr, jc);
+		/* The channel store is owned by the LVGL task. A concurrent layout
+		 * reload / channel activate / delete on that task reallocs the
+		 * s_channels array (ensure_capacity) or frees + swap-removes an entry,
+		 * so iterating it here on the httpd task (other core) without the LVGL
+		 * lock is a cross-core use-after-free. Hold the lock across the build
+		 * (same guard the mutation handlers + channel_manager_save_to_lfs use),
+		 * then release it before the serialize/send — the cJSON tree is a
+		 * private copy that duplicates every string, so it's safe to walk
+		 * unlocked. On lock timeout leave json NULL -> 503 below. */
+		if (rdm_lvgl_lock(500)) {
+			cJSON_AddNumberToObject(root, "count", channel_manager_count());
+			cJSON *arr = cJSON_AddArrayToObject(root, "channels");
+			for (size_t i = 0; i < channel_manager_count(); ++i) {
+				channel_t *c = channel_manager_at(i);
+				if (!c) continue;
+				cJSON *jc = channel_to_full_json(c);
+				if (jc) cJSON_AddItemToArray(arr, jc);
+			}
+			rdm_lvgl_unlock();
+			json = cJSON_PrintUnformatted(root);
 		}
-		json = cJSON_PrintUnformatted(root);
 		cJSON_Delete(root);
 	}
 
@@ -307,6 +319,15 @@ static esp_err_t channels_canonical_handler(httpd_req_t *req) {
 	cJSON_AddNumberToObject(root, "count", CANONICAL_CHANNEL_COUNT);
 	cJSON *arr = cJSON_AddArrayToObject(root, "channels");
 
+	/* channel_manager_get() (line ~333) walks the LVGL-task-owned s_channels
+	 * array; a concurrent layout/OBD2-preset apply on that task can realloc or
+	 * free+swap it, so hold the LVGL lock across the loop or this httpd-task
+	 * read is a cross-core use-after-free. The static CANONICAL_CHANNELS data
+	 * itself needs no lock, but the per-entry active check does. */
+	if (!rdm_lvgl_lock(500)) {
+		cJSON_Delete(root);
+		return web_server_send_busy(req);
+	}
 	for (size_t i = 0; i < CANONICAL_CHANNEL_COUNT; ++i) {
 		const canonical_channel_def_t *def = &CANONICAL_CHANNELS[i];
 		cJSON *jc = cJSON_CreateObject();
@@ -333,6 +354,7 @@ static esp_err_t channels_canonical_handler(httpd_req_t *req) {
 			channel_manager_get(def->id) != NULL);
 		cJSON_AddItemToArray(arr, jc);
 	}
+	rdm_lvgl_unlock();
 
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 	return web_server_send_json(req, root);

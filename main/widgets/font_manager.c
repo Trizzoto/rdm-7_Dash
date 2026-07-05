@@ -258,7 +258,19 @@ bool font_manager_add_family(const char *name, const uint8_t *data, size_t size)
 	/* Check if family already exists — replace it */
 	int idx = _find_family(name);
 	if (idx >= 0) {
-		/* Destroy any instances using this family */
+		/* Secure the new buffer BEFORE tearing down the old one. The old code
+		 * freed s_families[idx].data first, then malloc'd — so a failed alloc
+		 * (a ~512 KB font under memory pressure) left the family entry pointing
+		 * at freed memory while still counted as present, a use-after-free
+		 * primed for the next lookup. Alloc-first leaves everything intact on
+		 * failure. */
+		uint8_t *buf = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
+		if (!buf) return false;
+		memcpy(buf, data, size);
+
+		/* Destroy any instances using this family (live widgets are re-resolved
+		 * by the caller via a layout reload — see the font upload/delete
+		 * handlers). */
 		for (uint8_t i = 0; i < s_instance_count; ) {
 			if (s_instances[i].family_idx == (uint8_t)idx) {
 				if (s_instances[i].font)
@@ -269,10 +281,6 @@ bool font_manager_add_family(const char *name, const uint8_t *data, size_t size)
 			}
 		}
 		free(s_families[idx].data);
-
-		uint8_t *buf = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
-		if (!buf) return false;
-		memcpy(buf, data, size);
 		s_families[idx].data = buf;
 		s_families[idx].data_size = size;
 		ESP_LOGI(TAG, "Replaced font family '%s' (%u bytes)", name, (unsigned)size);

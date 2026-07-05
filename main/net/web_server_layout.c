@@ -40,14 +40,23 @@ static lv_timer_t *s_splash_debounce_timer  = NULL;
 
 #define RELOAD_DEBOUNCE_MS 600
 
-static void _do_screen_reload(lv_timer_t *t) {
-	(void)t;
-	s_reload_debounce_timer = NULL;
+/* Rebuild + swap in the active dashboard screen NOW. MUST run on the LVGL task
+ * (all lv_* calls). Exposed (web_server_internal.h) so the font upload/delete
+ * path can re-instantiate every widget in the SAME async callback that mutates
+ * the font manager — so no widget is ever drawn holding a font pointer that
+ * font_manager_add_family/remove_family just destroyed. */
+void web_server_rebuild_active_screen(void) {
 	lv_obj_t *old = lv_disp_get_scr_act(lv_disp_get_default());
 	ui_Screen3_screen_init();
 	lv_scr_load(ui_Screen3);
 	if (old && old != ui_Screen3 && lv_obj_is_valid(old))
 		lv_obj_del(old);
+}
+
+static void _do_screen_reload(lv_timer_t *t) {
+	(void)t;
+	s_reload_debounce_timer = NULL;
+	web_server_rebuild_active_screen();
 }
 
 /* Schedule or reset the debounce timer (must run on LVGL task) */

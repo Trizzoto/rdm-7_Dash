@@ -22,6 +22,7 @@
 #include "storage/sd_manager.h"
 #include "storage/boot_assets.h"
 #include "widgets/font_manager.h"
+#include "system/rdm_lv_async.h"   /* rdm_async_call for atomic font re-resolve */
 #include <dirent.h>
 #include <sys/stat.h>
 #include <string.h>
@@ -439,6 +440,41 @@ static void _ensure_font_dir(void) {
 		mkdir(LFS_FONT_DIR, 0755);
 }
 
+/* ── Atomic font apply (LVGL task) ──────────────────────────────────────────
+ * font_manager_add_family/remove_family lv_tiny_ttf_destroy() the old font
+ * instances, but live label widgets still hold that lv_font_t* in their style.
+ * If we mutate the font manager and only later (or on a debounced reload)
+ * rebuild the widgets, the render task draws a label with a freed font in
+ * between -> use-after-free. These callbacks run on the LVGL task via
+ * rdm_async_call and do the mutation AND the full screen rebuild in ONE
+ * uninterrupted callback (lv_async callbacks complete before the render pass),
+ * so no widget is ever drawn holding a destroyed font. */
+typedef struct {
+	char     name[FONT_NAME_LEN];
+	uint8_t *data;   /* owned; freed here */
+	size_t   size;
+} font_apply_t;
+
+static void _font_add_and_reload(void *arg) {
+	font_apply_t *p = (font_apply_t *)arg;
+	if (p) {
+		if (!font_manager_add_family(p->name, p->data, p->size))
+			ESP_LOGE(TAG, "font apply: add_family('%s') failed", p->name);
+		free(p->data);
+		web_server_rebuild_active_screen();   /* re-resolve every widget's font */
+		free(p);
+	}
+}
+
+static void _font_remove_and_reload(void *arg) {
+	char *name = (char *)arg;
+	if (name) {
+		font_manager_remove_family(name);
+		web_server_rebuild_active_screen();
+		free(name);
+	}
+}
+
 /* POST /api/font/upload?name=<family_name>
  * Body: raw TTF binary data */
 static esp_err_t font_upload_handler(httpd_req_t *req) {
@@ -561,21 +597,19 @@ static esp_err_t font_upload_handler(httpd_req_t *req) {
 	}
 	remove(bak_path);                       /* best-effort space reclaim */
 
-	/* Register in font manager UNDER the LVGL lock. font_manager_add_family()
-	 * may lv_tiny_ttf_destroy() a replaced family, and font_manager's own
-	 * contract is that its public functions run on the LVGL task / under the
-	 * mutex — destroying a glyph cache while the render task is mid-draw with
-	 * that font is a data race. (Runs on the httpd task here.) */
-	if (!rdm_lvgl_lock(2000)) {
-		/* Refuse rather than mutate the glyph cache unguarded (heap corruption /
-		 * crash if the render task is mid-draw). Client retries. */
-		ESP_LOGW(TAG, "font upload: LVGL busy — refusing unguarded register");
-		free(buf);
-		return web_server_send_busy(req);
-	}
-	font_manager_add_family(name, buf, received);
-	rdm_lvgl_unlock();
-	free(buf);
+	/* Register + re-resolve widgets on the LVGL task. font_manager_add_family()
+	 * destroys the replaced family's instances, so it must run on the LVGL task
+	 * AND be paired atomically with a widget rebuild (see _font_add_and_reload)
+	 * or live labels draw with a freed font. Hand the TTF buffer to the async
+	 * callback (which frees it). The file is already on flash, so returning
+	 * "ok" before the async apply is safe. */
+	font_apply_t *ap = malloc(sizeof(*ap));
+	if (!ap) { free(buf); httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM"); return ESP_FAIL; }
+	strncpy(ap->name, name, sizeof(ap->name) - 1);
+	ap->name[sizeof(ap->name) - 1] = '\0';
+	ap->data = buf;         /* ownership transferred to the callback */
+	ap->size = received;
+	rdm_async_call(_font_add_and_reload, ap);
 
 	ESP_LOGI(TAG, "Uploaded font '%s' (%u bytes)", name, (unsigned)received);
 	httpd_resp_set_type(req, "application/json");
@@ -658,18 +692,32 @@ static esp_err_t font_delete_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
-	/* Remove under the LVGL lock — lv_tiny_ttf_destroy() on a font the render
-	 * task may be drawing with is a data race (see font_upload_handler). */
+	/* Confirm the font exists (under the lock — reads the family table), then do
+	 * the destructive remove + widget rebuild atomically on the LVGL task via
+	 * _font_remove_and_reload. Removing here on the httpd task then reloading
+	 * later would leave live labels pointing at the destroyed font. */
+	bool exists = false;
 	if (!rdm_lvgl_lock(2000)) {
-		ESP_LOGW(TAG, "font delete: LVGL busy — refusing unguarded remove");
+		ESP_LOGW(TAG, "font delete: LVGL busy — retry");
 		return web_server_send_busy(req);
 	}
-	bool removed = font_manager_remove_family(name);
+	uint8_t nfam = font_manager_family_count();
+	for (uint8_t i = 0; i < nfam; i++) {
+		const char *fn = font_manager_family_name(i);
+		if (fn && strcmp(fn, name) == 0) { exists = true; break; }
+	}
 	rdm_lvgl_unlock();
-	if (!removed) {
+	if (!exists) {
 		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Font not found");
 		return ESP_FAIL;
 	}
+
+	char *nm = strdup(name);
+	if (!nm) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+		return ESP_FAIL;
+	}
+	rdm_async_call(_font_remove_and_reload, nm);   /* remove + rebuild atomically */
 
 	ESP_LOGI(TAG, "Deleted font '%s'", name);
 	httpd_resp_set_type(req, "application/json");

@@ -98,6 +98,10 @@ void web_server_obd2_register(httpd_handle_t server);
 void web_server_channels_register(httpd_handle_t server);
 void web_server_test_register(httpd_handle_t server);
 
+/* Rebuild + load the active dashboard screen immediately. LVGL-task only
+ * (all lv_* calls). Defined in web_server_layout.c. */
+void web_server_rebuild_active_screen(void);
+
 #ifdef __cplusplus
 }
 #endif

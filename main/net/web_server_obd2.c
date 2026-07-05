@@ -678,8 +678,16 @@ static const httpd_uri_t protocols_uri = {
  *   ] }
  */
 static esp_err_t _pids_handler(httpd_req_t *req) {
+    /* obd2_get_enabled() reads the LVGL-task-owned s_poll[]/s_poll_count; take
+     * the LVGL lock (like _sim_handler) so we don't snapshot a table that
+     * obd2_start() is mid-rebuild (it zeroes s_poll_count then repopulates),
+     * which would return a short/garbled PID list. Decoding is pure, so do the
+     * JSON work after releasing. */
     uint32_t enabled[OBD2_MAX_ENABLED];
-    uint8_t  n = obd2_get_enabled(enabled, OBD2_MAX_ENABLED);
+    uint8_t  n;
+    if (!rdm_lvgl_lock(1200)) return web_server_send_busy(req);
+    n = obd2_get_enabled(enabled, OBD2_MAX_ENABLED);
+    rdm_lvgl_unlock();
 
     cJSON *root = cJSON_CreateObject();
     cJSON *arr  = cJSON_AddArrayToObject(root, "pids");
