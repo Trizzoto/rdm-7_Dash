@@ -242,16 +242,19 @@ esp_err_t display_capture_screenshot(uint8_t **output_buffer,
 	return ESP_OK;
 }
 
-/* ── JPEG path (YUYV 4:2:2 packed input) ──────────────────────────────────
- * Read RGB565 from the panel FB, convert to YUYV (JPEG_PIXEL_FORMAT_YCbYCr),
- * then feed the encoder. YUYV is 2 bytes/pixel vs RGB888's 3 bytes/pixel.
- * Full-res intermediate drops from 1.15 MB to 768 KB (-33%), making the
- * contiguous PSRAM allocation much more likely to succeed under heap
- * fragmentation. Encoder also skips its internal RGB→YUV conversion pass.
+/* ── JPEG path — two fidelity tiers ───────────────────────────────────────
+ * Read RGB565 from the panel FB, build the encoder input, then encode.
  *
- * We use subsampling=JPEG_SUBSAMPLE_420 on the output so file sizes stay
- * small — the encoder downsamples the input 4:2:2 chroma to 4:2:0 during
- * the DCT stage, same final compression as if we'd fed it RGB888+4:2:0. */
+ *   full_res=true  (canvas backdrop when sim is off, File>Download):
+ *       RGB565 -> RGB888 (JPEG_PIXEL_FORMAT_RGB888) at 4:4:4 — every pixel's
+ *       colour is preserved, so the dashboard's coloured text, warning icons
+ *       and thin gauge lines stay crisp instead of fringing. 3 B/px intermediate
+ *       (1.15 MB at 800x480); falls back to half-res if that contiguous PSRAM
+ *       alloc fails. Encodes are infrequent thanks to the ETag/304 poll path.
+ *   full_res=false (Control mirror, sim-active canvas):
+ *       RGB565 -> downsampled YUYV (JPEG_PIXEL_FORMAT_YCbYCr) at 4:2:0 — the
+ *       light path: 2 B/px, small frames, keeps the 1 fps mirror responsive
+ *       and clear of the LVGL/PSRAM contention that trips the task watchdog. */
 
 esp_err_t display_capture_screenshot_jpeg(int quality, bool full_res, bool smooth,
                                           uint8_t **output_buffer,
@@ -272,8 +275,12 @@ esp_err_t display_capture_screenshot_jpeg(int quality, bool full_res, bool smoot
 	const int out_w  = CAPTURE_WIDTH  / step;
 	const int out_h  = CAPTURE_HEIGHT / step;
 	const size_t out_px    = (size_t)out_w * (size_t)out_h;
-	const size_t yuv_bytes = out_px * 2;  /* YUYV: 2 bytes/pixel */
-	const size_t jpg_max   = out_px;       /* generous ceiling */
+	/* Full-res path feeds RGB888 (3 B/px) so the encoder can keep full 4:4:4
+	 * chroma — crisp colored text / thin gauge lines. Half-res path keeps the
+	 * packed YUYV (2 B/px, 4:2:0) light path for the control mirror. */
+	const size_t in_bpp    = full_res ? 3 : 2;
+	const size_t yuv_bytes = out_px * in_bpp;   /* encoder input buffer size */
+	const size_t jpg_max   = out_px;            /* generous ceiling */
 
 	if (!_ensure_mutex()) return ESP_ERR_NO_MEM;
 	/* Short timeout — if another request is mid-encode, fail fast so the
@@ -317,38 +324,52 @@ esp_err_t display_capture_screenshot_jpeg(int quality, bool full_res, bool smoot
 		jpg = s_jpg_buf;
 	}
 
-	/* ── Step 1: RGB565 → YUYV conversion ──────────────────────────────
-	 * Walk the output image pair-by-pair horizontally. For each pair
-	 * compute RGB (optionally 2x2 box-averaged), then pack as:
-	 *     [Y0][Cb][Y1][Cr]
-	 * where Cb/Cr are averaged from the two pixels' chroma values.
-	 *
+	/* ── Step 1: build the encoder input ───────────────────────────────
 	 * No LVGL mutex — torn frames at a flush boundary are visually fine.
 	 * Yield every 32 rows so the encoder task doesn't hog CPU 0. */
 	int64_t t0 = esp_timer_get_time();
-	for (int y = 0; y < out_h; y++) {
-		uint8_t *row_out = yuv + (size_t)y * out_w * 2;
-		for (int x = 0; x < out_w; x += 2) {
-			uint8_t r0, g0, b0, r1, g1, b1;
-			_output_rgb(src, x,     y, step, smooth, &r0, &g0, &b0);
-			_output_rgb(src, x + 1, y, step, smooth, &r1, &g1, &b1);
-
-			uint8_t Y0  = _rgb_to_y(r0, g0, b0);
-			uint8_t Y1  = _rgb_to_y(r1, g1, b1);
-			/* Average R/G/B across the pair, then derive Cb/Cr once —
-			 * equivalent to averaging Cb/Cr but avoids two conversions. */
-			uint8_t ra = (uint8_t)((r0 + r1 + 1) >> 1);
-			uint8_t ga = (uint8_t)((g0 + g1 + 1) >> 1);
-			uint8_t ba = (uint8_t)((b0 + b1 + 1) >> 1);
-			uint8_t Cb  = _rgb_to_cb(ra, ga, ba);
-			uint8_t Cr  = _rgb_to_cr(ra, ga, ba);
-
-			*row_out++ = Y0;
-			*row_out++ = Cb;
-			*row_out++ = Y1;
-			*row_out++ = Cr;
+	if (full_res) {
+		/* Full-res quality path: expand RGB565 -> RGB888 so the encoder keeps
+		 * every pixel's colour (4:4:4). The old path pre-packed to 4:2:2 YUYV
+		 * then 4:2:0, quartering chroma resolution — very visible as colour
+		 * fringing on the dashboard's text, warning icons and thin gauge lines.
+		 * step is 1 here, so this is a straight per-pixel expansion. */
+		for (int y = 0; y < out_h; y++) {
+			uint8_t *row_out = yuv + (size_t)y * out_w * 3;
+			for (int x = 0; x < out_w; x++) {
+				uint8_t r, g, b;
+				_output_rgb(src, x, y, step, false, &r, &g, &b);
+				*row_out++ = r;
+				*row_out++ = g;
+				*row_out++ = b;
+			}
+			if ((y & 0x1F) == 0x1F) vTaskDelay(0);
 		}
-		if ((y & 0x1F) == 0x1F) vTaskDelay(0);
+	} else {
+		/* Half-res light path: downsample + pack to YUYV (4:2:2) pair-by-pair.
+		 *     [Y0][Cb][Y1][Cr], Cb/Cr derived once from the averaged pair. */
+		for (int y = 0; y < out_h; y++) {
+			uint8_t *row_out = yuv + (size_t)y * out_w * 2;
+			for (int x = 0; x < out_w; x += 2) {
+				uint8_t r0, g0, b0, r1, g1, b1;
+				_output_rgb(src, x,     y, step, smooth, &r0, &g0, &b0);
+				_output_rgb(src, x + 1, y, step, smooth, &r1, &g1, &b1);
+
+				uint8_t Y0  = _rgb_to_y(r0, g0, b0);
+				uint8_t Y1  = _rgb_to_y(r1, g1, b1);
+				uint8_t ra = (uint8_t)((r0 + r1 + 1) >> 1);
+				uint8_t ga = (uint8_t)((g0 + g1 + 1) >> 1);
+				uint8_t ba = (uint8_t)((b0 + b1 + 1) >> 1);
+				uint8_t Cb  = _rgb_to_cb(ra, ga, ba);
+				uint8_t Cr  = _rgb_to_cr(ra, ga, ba);
+
+				*row_out++ = Y0;
+				*row_out++ = Cb;
+				*row_out++ = Y1;
+				*row_out++ = Cr;
+			}
+			if ((y & 0x1F) == 0x1F) vTaskDelay(0);
+		}
 	}
 	int64_t t1 = esp_timer_get_time();
 
@@ -356,8 +377,13 @@ esp_err_t display_capture_screenshot_jpeg(int quality, bool full_res, bool smoot
 	jpeg_enc_config_t cfg = DEFAULT_JPEG_ENC_CONFIG();
 	cfg.width       = out_w;
 	cfg.height      = out_h;
-	cfg.src_type    = JPEG_PIXEL_FORMAT_YCbYCr;   /* YUYV 4:2:2 packed */
-	cfg.subsampling = JPEG_SUBSAMPLE_420;          /* encoder downsamples chroma further */
+	if (full_res) {
+		cfg.src_type    = JPEG_PIXEL_FORMAT_RGB888;   /* full colour input */
+		cfg.subsampling = JPEG_SUBSAMPLE_444;          /* no chroma loss — crisp UI */
+	} else {
+		cfg.src_type    = JPEG_PIXEL_FORMAT_YCbYCr;   /* YUYV 4:2:2 packed */
+		cfg.subsampling = JPEG_SUBSAMPLE_420;          /* light path */
+	}
 	cfg.quality     = (uint8_t)quality;
 
 	jpeg_enc_handle_t enc = NULL;

@@ -15148,7 +15148,9 @@
                  *     back off to the cheap path there.
                  * q=90 (was 80) for a cleaner, less-blocky JPEG. */
                 const heavy = (typeof _simActive !== 'undefined' && _simActive);
-                const params = heavy ? 'smooth=1&q=90' : 'full=1&q=90';
+                /* full-res is 4:4:4 RGB888 (crisp) and, via ETag/304, only
+                 * re-encodes on an actual change — so it can afford q95. */
+                const params = heavy ? 'smooth=1&q=90' : 'full=1&q=95';
                 /* Conditional GET: send our last ETag; a 304 means the dashboard
                  * hasn't changed, so we skip the download + decode entirely and
                  * keep the frame already on the canvas. */
