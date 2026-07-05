@@ -86,6 +86,27 @@ static esp_err_t screenshot_handler(httpd_req_t *req) {
 	bool smooth   = (_query_int(req, "smooth", 0) == 1);
 	int  quality  = _query_int(req, "q", 100);
 
+	/* Conditional GET (JPEG only). The shadow-FB seq plus the render params
+	 * uniquely identify the frame's bytes, so build an ETag from them. If the
+	 * client already holds this exact frame (If-None-Match matches), return 304
+	 * and skip the encode AND the transmit entirely — the dominant idle-poll
+	 * cost. A stale ETag can only cause an extra fetch, never a wrong 304. */
+	char etag[48] = {0};
+	if (!want_raw && display_capture_shadow_ready()) {
+		snprintf(etag, sizeof(etag), "\"%lu-%d-%d-%d\"",
+		         (unsigned long)display_capture_shadow_seq(),
+		         quality, full_res ? 1 : 0, smooth ? 1 : 0);
+		char inm[48];
+		if (httpd_req_get_hdr_value_str(req, "If-None-Match", inm, sizeof(inm))
+		        == ESP_OK && strcmp(inm, etag) == 0) {
+			httpd_resp_set_status(req, "304 Not Modified");
+			httpd_resp_set_hdr(req, "ETag", etag);
+			httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+			httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+			return httpd_resp_send(req, NULL, 0);
+		}
+	}
+
 	/* Dedup cache check — only for JPEG requests (raw is uncommon and
 	 * big enough that caching the full RGB565 blob isn't worthwhile). */
 	uint8_t *buf = NULL;
@@ -167,7 +188,12 @@ static esp_err_t screenshot_handler(httpd_req_t *req) {
 
 	httpd_resp_set_type(req, want_raw ? "application/octet-stream" : "image/jpeg");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
+	/* ETag lets the client conditionally GET the next frame (304 when the
+	 * dashboard hasn't changed). must-revalidate + no-store would forbid the
+	 * client from replaying a body it never keeps anyway, but we DO want it to
+	 * revalidate via If-None-Match, so advertise the tag and keep no-cache. */
+	if (etag[0]) httpd_resp_set_hdr(req, "ETag", etag);
+	httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
 
 	esp_err_t send_ret = httpd_resp_send(req, (const char *)buf, size);
 	display_capture_free_buffer(buf);
