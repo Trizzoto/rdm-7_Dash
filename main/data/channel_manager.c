@@ -26,6 +26,8 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_system.h"    /* esp_register_shutdown_handler */
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h" /* vTaskDelay for transient-read retry backoff */
 #include "cJSON.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -1258,25 +1260,44 @@ static bool channel_from_json(channel_t *c, cJSON *j) {
 
 /* Read + parse one channels-file path. Returns the cJSON root (caller
  * deletes) or NULL if the file is missing / unreadable / unparseable.
- * out_existed distinguishes "file not present" from "present but bad" so
- * the caller can preserve a corrupt file for diagnostics. */
-static cJSON *chm_read_and_parse(const char *path, bool *out_existed) {
+ *   out_existed  — false only when the file is not present (stat fails).
+ *   out_io_error — true when the bytes could NOT be read (fopen/malloc/short
+ *                  read) even after retries, i.e. a TRANSIENT failure rather
+ *                  than corruption. NULL-with-io_error=false means the file was
+ *                  read fine but does not parse (genuine corruption).
+ * Callers use out_io_error to avoid demoting a good file to .corrupt/.bak just
+ * because of momentary heap pressure or an FS glitch at boot. */
+static cJSON *chm_read_and_parse(const char *path, bool *out_existed,
+                                 bool *out_io_error) {
 	if (out_existed) *out_existed = false;
+	if (out_io_error) *out_io_error = false;
 	struct stat st;
 	if (stat(path, &st) != 0) return NULL;
 	if (out_existed) *out_existed = true;
 
-	FILE *f = fopen(path, "r");
-	if (!f) return NULL;
-	char *buf = malloc(st.st_size + 1);
-	if (!buf) { fclose(f); return NULL; }
-	size_t n = fread(buf, 1, st.st_size, f);
-	buf[n] = '\0';
-	fclose(f);
-
-	cJSON *root = cJSON_Parse(buf);
-	free(buf);
-	return root;   /* NULL if parse failed */
+	/* Retry transient I/O failures (fopen glitch, momentary OOM, short read)
+	 * with a real yield between attempts so a good file isn't mistaken for
+	 * corrupt. A failure that persists across all attempts sets io_error. */
+	for (int attempt = 0; attempt < 3; ++attempt) {
+		if (attempt) vTaskDelay(pdMS_TO_TICKS(20));
+		FILE *f = fopen(path, "r");
+		if (!f) { if (out_io_error) *out_io_error = true; continue; }
+		char *buf = malloc((size_t)st.st_size + 1);
+		if (!buf) { fclose(f); if (out_io_error) *out_io_error = true; continue; }
+		size_t n = fread(buf, 1, (size_t)st.st_size, f);
+		fclose(f);
+		if (n < (size_t)st.st_size) {
+			free(buf);
+			if (out_io_error) *out_io_error = true;
+			continue;
+		}
+		buf[n] = '\0';
+		if (out_io_error) *out_io_error = false;   /* read succeeded */
+		cJSON *root = cJSON_Parse(buf);
+		free(buf);
+		return root;   /* NULL here = parsed-but-bad = genuine corruption */
+	}
+	return NULL;   /* transient failure persisted; io_error is set */
 }
 
 /* ── Heal: break spurious shared signal bindings ──────────────────────
@@ -1366,46 +1387,63 @@ static int chm_heal_shared_bindings(void) {
 	return cleared;
 }
 
-/* Preserve the bad live file as .corrupt, then try the staged .tmp and the
- * previous-good .bak. Returns the recovered root (republished as the live
- * file) or NULL when nothing usable exists. */
-static cJSON *chm_preserve_and_recover(void) {
-	remove(CHM_CORRUPT_PATH);                 /* drop any stale copy */
-	rename(CHM_FILE_PATH, CHM_CORRUPT_PATH);  /* preserve the bad file */
-
+/* Try the staged .tmp then the previous-good .bak. On success, republish the
+ * recovered copy as the live file (so the next boot is clean) and return its
+ * root. Returns NULL when nothing usable exists. A recovery copy that is
+ * present but only failed transiently (io_error) is left in place, not removed,
+ * so a later boot can still use it. */
+static cJSON *chm_recover_from_copies(void) {
 	const char *recover_from[] = { CHM_TMP_PATH, CHM_BAK_PATH };
 	for (size_t i = 0; i < sizeof(recover_from) / sizeof(recover_from[0]); ++i) {
-		bool rexist = false;
-		cJSON *rroot = chm_read_and_parse(recover_from[i], &rexist);
+		bool rexist = false, rio = false;
+		cJSON *rroot = chm_read_and_parse(recover_from[i], &rexist, &rio);
 		if (rroot) {
 			ESP_LOGW(TAG, "recovered channels from %s", recover_from[i]);
-			/* Republish the recovered copy as the live file so the next
-			 * boot is clean (best-effort; recovery already succeeded). */
 			rename(recover_from[i], CHM_FILE_PATH);
 			return rroot;
 		}
-		if (rexist) remove(recover_from[i]);  /* recovery file also bad */
+		if (rexist && !rio) remove(recover_from[i]);  /* present but corrupt */
 	}
 	return NULL;
 }
 
+/* Preserve the bad live file as .corrupt, then recover from .tmp / .bak. */
+static cJSON *chm_preserve_and_recover(void) {
+	remove(CHM_CORRUPT_PATH);                 /* drop any stale copy */
+	rename(CHM_FILE_PATH, CHM_CORRUPT_PATH);  /* preserve the bad file */
+	return chm_recover_from_copies();
+}
+
 esp_err_t channel_manager_load_from_lfs(void) {
-	bool existed = false;
-	cJSON *root = chm_read_and_parse(CHM_FILE_PATH, &existed);
+	bool existed = false, io_error = false;
+	cJSON *root = chm_read_and_parse(CHM_FILE_PATH, &existed, &io_error);
 
 	if (!root && !existed) {
-		/* Genuinely no live file — caller seeds defaults. */
-		return ESP_ERR_NOT_FOUND;
+		/* No live file. This is the normal fresh-device case, but it is ALSO
+		 * what a power loss between save_to_lfs's two renames leaves behind
+		 * (live->.bak done, .tmp->live not yet), with a fully-fsync'd .tmp and
+		 * the previous-good .bak both sitting on disk. Try to recover those
+		 * before declaring "no file" — otherwise init() reseeds defaults and
+		 * the reseed save truncates the good .tmp, losing the user's data. */
+		root = chm_recover_from_copies();
+		if (!root) {
+			return ESP_ERR_NOT_FOUND;   /* truly nothing — caller seeds defaults */
+		}
+		ESP_LOGW(TAG, "%s absent — recovered from a staged copy", CHM_FILE_PATH);
 	}
 
 	if (!root && existed) {
-		/* Live file is present but failed to parse — a power loss mid-write
-		 * (pre-atomic-write data) or flash corruption. Do NOT let init()
-		 * reseed-and-overwrite it: preserve the bad copy for diagnostics,
-		 * then try to recover from the staged .tmp or previous-good .bak so
-		 * the user's bindings survive. */
-		ESP_LOGW(TAG, "%s failed to parse — preserving as %s and attempting recovery",
-		         CHM_FILE_PATH, CHM_CORRUPT_PATH);
+		/* Live file is present but unusable. Either it failed to PARSE (power
+		 * loss mid-write / flash corruption) or — after chm_read_and_parse's
+		 * retries — could not be READ at all (io_error, a persistent FS/heap
+		 * problem). Either way, do NOT let init() reseed-and-overwrite it:
+		 * preserve the bad/unreadable copy as .corrupt for diagnostics, then
+		 * try to recover from the staged .tmp or previous-good .bak so the
+		 * user's bindings survive. The common momentary-glitch case was already
+		 * absorbed by the read retries, so reaching here means a real problem. */
+		ESP_LOGW(TAG, "%s %s — preserving as %s and attempting recovery",
+		         CHM_FILE_PATH, io_error ? "unreadable" : "failed to parse",
+		         CHM_CORRUPT_PATH);
 		root = chm_preserve_and_recover();
 		if (!root) {
 			/* No recoverable copy. Return ESP_FAIL; init() may reseed now
@@ -1453,14 +1491,31 @@ esp_err_t channel_manager_load_from_lfs(void) {
 		channel_t *c = NULL;
 		if (canonical_channel_exists(jid->valuestring)) {
 			c = channel_manager_activate(jid->valuestring);
+		} else if (channel_id_is_custom(jid->valuestring)) {
+			/* Re-create the custom channel so its decode, thresholds, colors and
+			 * signal binding survive a reboot. The first-run wizard, studio
+			 * import, and the v2->v3 decode migration all mint custom_* channels
+			 * and persist them here; the old "Phase 2 skip" silently dropped them
+			 * on the next boot, and the following save rewrote channels.json
+			 * without them (permanent loss). group/card aren't persisted
+			 * (channel_to_json omits them) so default to the wizard's choice;
+			 * channel_from_json below restores everything else. A duplicate
+			 * custom id returns NULL here (already exists) and is skipped. */
+			c = channel_manager_create_custom(jid->valuestring, jid->valuestring,
+			                                  CHGRP_DIAGNOSTIC, CHCARD_SCALAR,
+			                                  "", "", 0, 0.0f, 100.0f);
 		}
-		/* Custom channels (Phase 2) — skipped for now. */
 		if (!c) continue;
 		channel_from_json(c, jc);
-		/* Re-subscribe to signal if name was set in JSON */
+		/* Re-subscribe to signal if name was set in JSON. Guard against a
+		 * duplicate id in the file subscribing the same channel twice:
+		 * signal_subscribe doesn't de-dupe, so a second slot would dangle after
+		 * the channel is freed (channel_free unsubscribes only once), corrupting
+		 * memory on every later CAN frame. signal_index starts at -1, so this
+		 * only skips a genuine repeat. */
 		if (c->signal_name[0] != '\0') {
 			int16_t idx = signal_find_by_name(c->signal_name);
-			if (idx >= 0) {
+			if (idx >= 0 && c->signal_index != idx) {
 				c->signal_index = idx;
 				signal_subscribe(idx, chm_signal_cb, c);
 			}
@@ -1508,16 +1563,22 @@ esp_err_t channel_manager_save_to_lfs(void) {
 	 * a torn signal_name/label string and persist garbage. Build the JSON
 	 * STRING under the lock, then do the slow flash I/O unlocked so rendering
 	 * isn't stalled. The mutex is recursive, so callers already holding it
-	 * (end_bulk on the LVGL task) are fine; on a lock timeout (LVGL wedged —
-	 * which also means nothing is concurrently mutating) fall back to an
-	 * unguarded build rather than dropping the save. */
-	bool locked = rdm_lvgl_lock(500);
-	if (!locked)
-		ESP_LOGW(TAG, "save: LVGL lock timeout — serializing unguarded");
+	 * (end_bulk on the LVGL task) are fine. On a lock timeout, DEFER rather than
+	 * serialize unguarded: a 500 ms timeout does NOT prove LVGL is wedged — a
+	 * long layout reload / wizard apply legitimately holds the recursive mutex
+	 * for seconds while actively mutating s_channels (ensure_capacity's realloc
+	 * can move/free the pointer array; channel_free frees entries), so an
+	 * unguarded iterate could read freed memory or persist torn strings. s_dirty
+	 * stays set and the debounce timer re-arms, so the save just happens a bit
+	 * later once the lock frees. */
+	if (!rdm_lvgl_lock(500)) {
+		ESP_LOGW(TAG, "save: LVGL lock busy — deferring save");
+		return ESP_ERR_TIMEOUT;
+	}
 
 	cJSON *root = cJSON_CreateObject();
 	if (!root) {
-		if (locked) rdm_lvgl_unlock();
+		rdm_lvgl_unlock();
 		return ESP_ERR_NO_MEM;
 	}
 	/* Emit the tracked on-disk version (not the compile-time constant): stays
@@ -1534,7 +1595,7 @@ esp_err_t channel_manager_save_to_lfs(void) {
 
 	char *json = cJSON_PrintUnformatted(root);
 	cJSON_Delete(root);
-	if (locked) rdm_lvgl_unlock();
+	rdm_lvgl_unlock();
 	if (!json) return ESP_ERR_NO_MEM;
 
 	size_t len = strlen(json);
@@ -1650,7 +1711,14 @@ esp_err_t channel_manager_import_raw(const char *json, size_t len) {
 
 static void chm_save_timer_cb(void *arg) {
 	(void)arg;
-	if (s_dirty) channel_manager_save_to_lfs();
+	if (!s_dirty) return;
+	/* If the save deferred because the LVGL lock was busy (a long layout/wizard
+	 * apply legitimately holds it for seconds), it's still dirty — re-arm to
+	 * retry rather than drop the pending save until the next edit. */
+	if (channel_manager_save_to_lfs() == ESP_ERR_TIMEOUT &&
+	    s_dirty && s_save_timer) {
+		esp_timer_start_once(s_save_timer, CHM_SAVE_DEBOUNCE_US);
+	}
 }
 
 void channel_manager_mark_dirty(void) {
