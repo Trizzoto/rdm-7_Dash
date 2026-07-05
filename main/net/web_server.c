@@ -32,6 +32,10 @@ static httpd_handle_t server = NULL;
  * past this we stop reading and accept that the socket resets. */
 #define WEB_DRAIN_CAP (384 * 1024)
 
+/* Max consecutive httpd recv timeouts before web_server_recv_body_raw() gives
+ * up, so a stalled client can't wedge the single httpd task indefinitely. */
+#define WEB_RECV_MAX_TIMEOUTS 3
+
 /* Drain up to `max_drain` bytes of an unread request body.
  *
  * esp_http_server closes a connection with a TCP RST (not a clean FIN) when
@@ -187,11 +191,21 @@ int web_server_recv_body_raw(httpd_req_t *req, char *buf, size_t cap) {
 	size_t want = req->content_len;
 	if (want == 0 || want >= cap) return -1;
 	size_t total = 0;
+	int timeouts = 0;
 	while (total < want) {
 		int r = httpd_req_recv(req, buf + total, want - total);
-		if (r == HTTPD_SOCK_ERR_TIMEOUT) continue;
+		if (r == HTTPD_SOCK_ERR_TIMEOUT) {
+			/* Bound consecutive timeouts so a stalled or silently-dead client
+			 * can't spin this loop forever and wedge the single httpd task
+			 * (every web endpoint would then hang). Each timeout is the socket
+			 * recv-wait interval (~5 s), so a few in a row is a generous
+			 * deadline; any actual progress resets the counter. */
+			if (++timeouts >= WEB_RECV_MAX_TIMEOUTS) return -1;
+			continue;
+		}
 		if (r <= 0) return -1;
 		total += (size_t)r;
+		timeouts = 0;
 	}
 	buf[total] = '\0';
 	return (int)total;

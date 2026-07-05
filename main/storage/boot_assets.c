@@ -87,10 +87,15 @@ static esp_err_t _write_if_missing(const char *path, const uint8_t *data, size_t
 		return ESP_FAIL;
 	}
 	size_t written = fwrite(data, 1, len, f);
-	fclose(f);
-	if (written != len) {
-		ESP_LOGE(TAG, "short write to %s: %u/%u", path,
-		         (unsigned)written, (unsigned)len);
+	/* fclose commits LittleFS's buffered data and can fail on ENOSPC, so its
+	 * result matters. On a short write OR a close failure, remove the partial
+	 * file — otherwise it's left with st_size > 0 and the check above treats it
+	 * as a valid asset forever, never re-seeding the truncated/corrupt file. */
+	int close_rc = fclose(f);
+	if (written != len || close_rc != 0) {
+		ESP_LOGE(TAG, "write to %s failed (%u/%u bytes, close=%d) — removing partial",
+		         path, (unsigned)written, (unsigned)len, close_rc);
+		remove(path);
 		return ESP_FAIL;
 	}
 	ESP_LOGI(TAG, "Seeded %s (%u bytes)", path, (unsigned)len);

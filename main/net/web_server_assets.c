@@ -525,24 +525,41 @@ static esp_err_t font_upload_handler(httpd_req_t *req) {
 		received += ret;
 	}
 
-	/* Write to LittleFS */
-	char path[80];
+	/* Write to LittleFS atomically — stage into .tmp, fsync, keep the previous
+	 * font as .bak across the rename window, then rename over the live file.
+	 * The old code fopen(path,"wb")'d in place, truncating any existing font of
+	 * that name before the first byte and remove()'ing it on a short write —
+	 * the atomic guarantee the image path (above) already has, missing here. */
+	char path[96], tmp_path[112], bak_path[112];
 	snprintf(path, sizeof(path), "%s/%s.ttf", LFS_FONT_DIR, name);
-	FILE *f = fopen(path, "wb");
+	snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+	snprintf(bak_path, sizeof(bak_path), "%s.bak", path);
+	FILE *f = fopen(tmp_path, "wb");
 	if (!f) {
 		free(buf);
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Cannot write file");
 		return ESP_FAIL;
 	}
 	size_t nw = fwrite(buf, 1, received, f);
-	fclose(f);
+	bool wok = (nw == received) && (fflush(f) == 0) && (fsync(fileno(f)) == 0);
+	if (fclose(f) != 0) wok = false;
 
-	if (nw != received) {
+	if (!wok) {
 		free(buf);
-		remove(path);
+		remove(tmp_path);
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Write incomplete");
 		return ESP_FAIL;
 	}
+
+	rename(path, bak_path);                 /* keep previous good font */
+	if (rename(tmp_path, path) != 0) {
+		rename(bak_path, path);             /* restore on failure */
+		remove(tmp_path);
+		free(buf);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Cannot write file");
+		return ESP_FAIL;
+	}
+	remove(bak_path);                       /* best-effort space reclaim */
 
 	/* Register in font manager UNDER the LVGL lock. font_manager_add_family()
 	 * may lv_tiny_ttf_destroy() a replaced family, and font_manager's own

@@ -168,7 +168,21 @@ void _handle_replay_start(int id, cJSON *params)
     serial_replay_args_t *a = (serial_replay_args_t *)calloc(1, sizeof(*a));
     if (!a) { _send_error(id, "OOM"); return; }
     const char *fn = file_item->valuestring;
+    /* Reject path traversal — a serial client must not be able to make
+     * signal_replay fopen arbitrary files. The web handler enforces the same
+     * (tier prefix + no ".."); the serial path previously took any absolute
+     * path verbatim and let "../" through on relative names. */
+    if (strstr(fn, "..")) {
+        free(a);
+        _send_error(id, "Invalid path");
+        return;
+    }
     if (fn[0] == '/') {
+        if (strncmp(fn, "/sdcard/", 8) != 0 && strncmp(fn, "/lfs/", 5) != 0) {
+            free(a);
+            _send_error(id, "Path must be under /sdcard/ or /lfs/");
+            return;
+        }
         strncpy(a->path, fn, sizeof(a->path) - 1);
     } else {
         snprintf(a->path, sizeof(a->path), "/sdcard/logs/%s", fn);

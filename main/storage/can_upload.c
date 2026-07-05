@@ -274,12 +274,24 @@ static void _upload_task(void *arg)
 
 /* ── Public API ────────────────────────────────────────────────────────── */
 
+/* True if s contains a CR or LF — those must never reach esp_http_client_set_
+ * header(), where they would let an attacker inject extra headers or split the
+ * outbound upload request (HTTP header injection). */
+static bool _has_crlf(const char *s)
+{
+    return s && (strchr(s, '\r') != NULL || strchr(s, '\n') != NULL);
+}
+
 esp_err_t can_upload_start(const char *filename, const char *make,
                            const char *model, const char *notes)
 {
     if (!filename || !make || !model) return ESP_ERR_INVALID_ARG;
     if (!filename[0] || !make[0] || !model[0]) return ESP_ERR_INVALID_ARG;
     if (strchr(filename, '/') || strchr(filename, '\\')) return ESP_ERR_INVALID_ARG;
+    /* make/model/notes become outbound HTTP headers (X-Make/X-Model/X-Notes) —
+     * reject CR/LF so they can't inject headers or split the request. */
+    if (_has_crlf(make) || _has_crlf(model) || _has_crlf(notes))
+        return ESP_ERR_INVALID_ARG;
 
     if (!s_status_mtx) {
         s_status_mtx = xSemaphoreCreateMutex();

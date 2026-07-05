@@ -198,10 +198,18 @@ esp_err_t data_logger_start(void) {
 	s_log_dir[sizeof(s_log_dir) - 1] = '\0';
 	_ensure_log_dir(s_log_dir);
 
-	/* Generate filename using seconds since boot (ESP32 may not have RTC) */
+	/* Generate filename using seconds since boot (ESP32 may not have RTC).
+	 * Seconds-since-boot repeats across boots, so a session started N seconds
+	 * after boot would truncate a previous boot's log started at the same N.
+	 * Bump a suffix until the name is free so an earlier log is never clobbered. */
 	uint32_t ts = (uint32_t)(esp_timer_get_time() / 1000000ULL);
 	snprintf(s_filename, sizeof(s_filename), "%s/log_%lu.csv",
 	         s_log_dir, (unsigned long)ts);
+	struct stat fst;
+	for (int suffix = 1; stat(s_filename, &fst) == 0 && suffix < 1000; suffix++) {
+		snprintf(s_filename, sizeof(s_filename), "%s/log_%lu_%d.csv",
+		         s_log_dir, (unsigned long)ts, suffix);
+	}
 
 	s_log_file = fopen(s_filename, "w");
 	if (!s_log_file) {

@@ -14,6 +14,8 @@
 #include "serial_commands_internal.h"
 #include "serial_protocol.h"
 #include "uart_protocol.h"
+#include "storage/boot_assets.h"
+#include "widgets/font_manager.h"   /* FONT_MAX_FILE_SIZE */
 
 #include "cJSON.h"
 #include "esp_heap_caps.h"
@@ -21,7 +23,9 @@
 #include "esp_ota_ops.h"
 #include "esp_random.h"
 
+#include <stdio.h>
 #include <string.h>
+#include <unistd.h>   /* fsync, fileno */
 
 static const char *TAG = "serial_cmd";
 
@@ -64,8 +68,26 @@ void _handle_upload_start(int id, cJSON *params)
         return;
     }
 
+    /* Refuse to overwrite a built-in protected asset — the web handlers already
+     * return 403 for these (web_server_assets.c), but the serial path bypassed
+     * the check, so a serial client could clobber a bundled image/font. */
+    if (is_image && boot_assets_is_protected_image(name)) {
+        _send_error(id, "Cannot overwrite a built-in image");
+        return;
+    }
+    if (is_font && boot_assets_is_protected_font(name)) {
+        _send_error(id, "Cannot overwrite a built-in font");
+        return;
+    }
+
     if (is_image && total_size > IMAGE_MAX_SIZE) {
         _send_error(id, "Image too large");
+        return;
+    }
+    /* Font cap mirrors the web path (FONT_MAX_FILE_SIZE); the serial path had
+     * no cap, so an oversized font could waste flash or fill the partition. */
+    if (is_font && total_size > FONT_MAX_FILE_SIZE) {
+        _send_error(id, "Font too large");
         return;
     }
 
@@ -153,10 +175,17 @@ void _handle_upload_finish(int id, cJSON *params)
         return;
     }
 
-    /* Image or font — write accumulated buffer to LittleFS */
+    /* Image or font — write accumulated buffer to LittleFS. Reject an
+     * incomplete transfer instead of publishing a truncated asset over the
+     * existing good one (the old code only logged and wrote the short buffer). */
     if (s_upload.received != s_upload.total_size) {
-        ESP_LOGW(TAG, "Upload incomplete: %u/%u bytes",
+        ESP_LOGW(TAG, "Upload incomplete: %u/%u bytes — rejecting",
                  (unsigned)s_upload.received, (unsigned)s_upload.total_size);
+        free(s_upload.buffer);
+        s_upload.buffer = NULL;
+        s_upload.active = false;
+        _send_error(id, "Upload incomplete");
+        return;
     }
 
     char path[80];
@@ -185,7 +214,18 @@ void _handle_upload_finish(int id, cJSON *params)
         return;
     }
 
-    FILE *f = fopen(path, "wb");
+    /* Atomic publish (mirrors the web image path + channel_manager save): stage
+     * into path.tmp, fsync, keep the previous asset as .bak across the rename
+     * window, then rename .tmp over the live file. rename() is atomic on
+     * LittleFS, so a crash leaves either the old or the new file — never a
+     * half-written asset. The old code fopen(path,"wb")'d in place, truncating
+     * the good asset before the first byte and remove()'ing it on a short
+     * write. */
+    char tmp_path[96], bak_path[96];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+    snprintf(bak_path, sizeof(bak_path), "%s.bak", path);
+
+    FILE *f = fopen(tmp_path, "wb");
     if (!f) {
         free(s_upload.buffer);
         s_upload.buffer = NULL;
@@ -194,16 +234,27 @@ void _handle_upload_finish(int id, cJSON *params)
         return;
     }
     size_t nw = fwrite(s_upload.buffer, 1, s_upload.received, f);
-    fclose(f);
+    bool wok = (nw == s_upload.received) &&
+               (fflush(f) == 0) && (fsync(fileno(f)) == 0);
+    if (fclose(f) != 0) wok = false;
     free(s_upload.buffer);
     s_upload.buffer = NULL;
     s_upload.active = false;
 
-    if (nw != s_upload.received) {
-        remove(path);
+    if (!wok) {
+        remove(tmp_path);
         _send_error(id, "Write incomplete");
         return;
     }
+
+    rename(path, bak_path);                 /* keep previous good copy */
+    if (rename(tmp_path, path) != 0) {
+        rename(bak_path, path);             /* restore on failure */
+        remove(tmp_path);
+        _send_error(id, "Cannot publish file");
+        return;
+    }
+    remove(bak_path);                       /* best-effort space reclaim */
 
     ESP_LOGI(TAG, "Upload complete: %s '%s' (%u bytes)",
              is_image ? "image" : "font", s_upload.name,
