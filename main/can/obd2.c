@@ -282,6 +282,8 @@ static uint64_t s_last_resp_ms[OBD2_LAST_RESP_TABLE_SZ] = {0};
 
 /* Forward decls */
 static void _poll_timer_cb(lv_timer_t *t);
+static void _ensure_poll_timer(void);
+static bool _any_oneshot_active(void);
 static void _try_dispatch(uint64_t now);
 static void _send_pid_request(uint8_t service, uint16_t pid);
 static void _send_multi_pid_request(uint8_t service, const uint8_t *pids, uint8_t n);
@@ -548,6 +550,7 @@ void obd2_test_pid(uint8_t service, uint8_t pid, uint32_t request_id,
     uint64_t now = (uint64_t)(esp_timer_get_time() / 1000ULL);
 
     s_test.active      = true;
+    _ensure_poll_timer();   /* so the timeout ticks even when polling is idle */
     s_test.service     = service;
     s_test.pid         = pid;
     s_test.sent_ms     = now;
@@ -621,6 +624,21 @@ static void _test_capture(const uint8_t *payload, uint16_t payload_len,
  * via the poll-timer timeout check. Each has its own state struct so
  * they don't collide with each other or with a pending test_pid. */
 
+/* Ensure the poll timer exists so one-shot request timeouts (and RX dispatch)
+ * tick even when no PIDs are being polled. Without it, a one-shot fired while
+ * polling is idle that gets TX-ok-but-no-response stays active forever, bricking
+ * that request type until reboot. The timer self-retires in _poll_timer_cb once
+ * nothing needs it. */
+static void _ensure_poll_timer(void) {
+    if (!s_poll_timer)
+        s_poll_timer = lv_timer_create(_poll_timer_cb, OBD2_TICK_MS, NULL);
+}
+
+static bool _any_oneshot_active(void) {
+    return s_test.active || s_dtc_req.active || s_clear_req.active ||
+           s_vin_req.active || s_ecuname_req.active || s_freeze_req.active;
+}
+
 static void _dtc_start(uint8_t mode, obd2_dtc_cb_t cb, void *user) {
     if (!cb) return;
     if (s_dtc_req.active) {
@@ -630,6 +648,7 @@ static void _dtc_start(uint8_t mode, obd2_dtc_cb_t cb, void *user) {
     }
     uint64_t now = (uint64_t)(esp_timer_get_time() / 1000ULL);
     s_dtc_req.active  = true;
+    _ensure_poll_timer();   /* so the timeout ticks even when polling is idle */
     s_dtc_req.mode    = mode;
     s_dtc_req.sent_ms = now;
     s_dtc_req.cb      = cb;
@@ -668,6 +687,7 @@ void obd2_clear_dtcs(obd2_clear_cb_t cb, void *user) {
     }
     uint64_t now = (uint64_t)(esp_timer_get_time() / 1000ULL);
     s_clear_req.active  = true;
+    _ensure_poll_timer();   /* so the timeout ticks even when polling is idle */
     s_clear_req.sent_ms = now;
     s_clear_req.cb      = cb;
     s_clear_req.user    = user;
@@ -695,6 +715,7 @@ void obd2_read_vin(obd2_vin_cb_t cb, void *user) {
     }
     uint64_t now = (uint64_t)(esp_timer_get_time() / 1000ULL);
     s_vin_req.active  = true;
+    _ensure_poll_timer();   /* so the timeout ticks even when polling is idle */
     s_vin_req.sent_ms = now;
     s_vin_req.cb      = cb;
     s_vin_req.user    = user;
@@ -723,6 +744,7 @@ void obd2_read_freeze_pid(uint8_t data_pid, uint8_t frame_no,
     }
     uint64_t now = (uint64_t)(esp_timer_get_time() / 1000ULL);
     s_freeze_req.active   = true;
+    _ensure_poll_timer();   /* so the timeout ticks even when polling is idle */
     s_freeze_req.sent_ms  = now;
     s_freeze_req.cb       = cb;
     s_freeze_req.user     = user;
@@ -753,6 +775,7 @@ void obd2_read_ecu_name(obd2_ecuname_cb_t cb, void *user) {
     }
     uint64_t now = (uint64_t)(esp_timer_get_time() / 1000ULL);
     s_ecuname_req.active  = true;
+    _ensure_poll_timer();   /* so the timeout ticks even when polling is idle */
     s_ecuname_req.sent_ms = now;
     s_ecuname_req.cb      = cb;
     s_ecuname_req.user    = user;
@@ -1116,6 +1139,18 @@ static void _poll_timer_cb(lv_timer_t *t)
     }
 
     _try_dispatch(now);
+
+    /* Self-retire when nothing needs the ticker: no active polling, no one-shot
+     * request in flight, and no discovery scan. This lets a one-shot fired while
+     * polling was idle (which armed the timer via _ensure_poll_timer) clean up
+     * after it completes or times out, instead of ticking forever. Deleting the
+     * timer from its own callback is safe here (LVGL defers the free) and is the
+     * same pattern _scan_finalize uses. */
+    if (!s_running && s_scan_state == SCAN_IDLE && !_any_oneshot_active() &&
+        s_poll_timer) {
+        lv_timer_del(s_poll_timer);
+        s_poll_timer = NULL;
+    }
 }
 
 static void _send_pid_request(uint8_t service, uint16_t pid)
@@ -1383,19 +1418,13 @@ static void _sim_inject_dtc(uint8_t mode)
     }
 }
 
-/* Mode 04 (clear DTCs) ack. Some real ECUs answer with a strict 1-byte SF
- * (just the 0x44 echo, no further payload) — obd2_rx_handler's
- * `len_bytes < 2` guard would currently drop that before it ever reaches
- * _process_full_message. That's a real gap, but it's in the shared RX
- * ingestion path (every response type funnels through it), a bigger
- * blast radius than this simulator pass should take on — flagged
- * separately rather than fixed here. Padding this ack to 2 bytes (also a
- * realistic shape — plenty of ECUs pad with a spare/status byte) keeps
- * the sim working against the CURRENT firmware without depending on
- * that guard being relaxed. */
+/* Mode 04 (clear DTCs) ack. Emit the strict 1-byte SF (just the 0x44 echo, no
+ * payload) that some real ECUs send — the SF guard now accepts len_bytes==1 and
+ * _process_full_message handles the bare ack, so the sim exercises that real
+ * shape instead of padding it to 2 bytes to dodge the old drop. */
 static void _sim_inject_clear_ack(void)
 {
-    uint8_t msg[2] = { 0x44, 0x00 };
+    uint8_t msg[1] = { 0x44 };
     _sim_inject_message(msg, sizeof(msg));
 }
 
@@ -1561,7 +1590,10 @@ void obd2_rx_handler(uint32_t can_id, const uint8_t *data, uint8_t dlc)
     if (pci_type == 0) {
         /* ── Single frame — payload fits in one CAN frame. ───────── */
         uint8_t len_bytes = pci & 0x0F;
-        if (len_bytes < 2 || len_bytes > 7) return;
+        /* Allow a strict 1-byte SF (ISO 15765-2 valid 1..7): some ECUs answer
+         * a Mode 04 clear with just the bare 0x44 echo. _process_full_message
+         * handles that 1-byte case and drops any other 1-byte frame. */
+        if (len_bytes < 1 || len_bytes > 7) return;
         if (dlc < (uint8_t)(1 + len_bytes)) return;
         _process_full_message((uint8_t *)&data[1], len_bytes);
         return;
@@ -1667,6 +1699,18 @@ static void _decode_packed(const obd2_pid_def_t *def,
  * multi-PID walking, or Mode 21 packed/single-value decode. */
 static void _process_full_message(uint8_t *msg, uint16_t len)
 {
+    /* Strict 1-byte positive response: the bare Mode 04 clear ack (just the
+     * 0x44 echo, no payload) that some real ECUs send. Handle it before the
+     * len<2 guard, which would otherwise drop it and report a successful DTC
+     * clear as a failure. Any other 1-byte frame still falls through. */
+    if (len == 1 && msg[0] == 0x44 && s_clear_req.active) {
+        ESP_LOGI(TAG, "Clear DTC acknowledged (1-byte ack)");
+        obd2_clear_cb_t cb = s_clear_req.cb;
+        void *user = s_clear_req.user;
+        s_clear_req.active = false;
+        cb(true, user);
+        return;
+    }
     if (len < 2) return;
     uint8_t resp_service = msg[0];
 
@@ -1711,6 +1755,17 @@ static void _process_full_message(uint8_t *msg, uint16_t len)
             uint8_t mode = s_dtc_req.mode;
             s_dtc_req.active = false;
             cb(false, NULL, 0, mode, user);
+            return;
+        }
+        /* A Mode 09 NRC (0x7F 09 NN) does not echo the PID, so when BOTH the VIN
+         * and ECU-name requests are in flight (device_settings + the web snapshot
+         * fire them back-to-back) it can't be attributed. Firing VIN's callback
+         * (checked first) would wrongly cancel the VIN read for an ECU-name PID
+         * rejection. When both are pending, let each resolve by its own positive
+         * response or timeout rather than cancelling the wrong one. */
+        if (rejected_svc == 0x09 && s_vin_req.active && s_ecuname_req.active) {
+            ESP_LOGW(TAG, "Mode 09 NRC 0x%02X with VIN+ECU-name both pending — "
+                     "ambiguous, letting them time out", msg[2]);
             return;
         }
         if (s_vin_req.active && rejected_svc == 0x09) {
