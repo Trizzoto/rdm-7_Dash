@@ -15,7 +15,15 @@ const path = require('path');
 
 const PORT = 8180;
 const ROOT = path.resolve(__dirname, '..');
-const INDEX_HTML = path.join(ROOT, 'main', 'web', 'index.html');
+
+/* --index <path>: serve a different editor HTML (e.g. the desktop studio's
+ * merged src/dist/index.html) with the same API mocks. Static assets
+ * (transport.js, build/*.wasm, …) are served from that file's directory. */
+const _idxArg = process.argv.indexOf('--index');
+const INDEX_HTML = _idxArg >= 0
+  ? path.resolve(process.argv[_idxArg + 1])
+  : path.join(ROOT, 'main', 'web', 'index.html');
+const STATIC_ROOT = path.dirname(INDEX_HTML);
 
 /* Browser-dev layout persistence. POST /api/layout/save writes the firmware
  * payload here (pretty-printed) and GET /api/layout/current serves it back —
@@ -357,10 +365,10 @@ const server = http.createServer((req, res) => {
     }
   }
 
-  const fp = path.join(ROOT, 'main', 'web', url);
-  if (fp.startsWith(path.join(ROOT, 'main', 'web')) && fs.existsSync(fp) && fs.statSync(fp).isFile()) {
+  const fp = path.join(STATIC_ROOT, url);
+  if (fp.startsWith(STATIC_ROOT) && fs.existsSync(fp) && fs.statSync(fp).isFile()) {
     const ext = path.extname(fp);
-    const ct = { '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.svg': 'image/svg+xml', '.html': 'text/html', '.ico': 'image/x-icon' }[ext] || 'application/octet-stream';
+    const ct = { '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.svg': 'image/svg+xml', '.html': 'text/html', '.ico': 'image/x-icon', '.wasm': 'application/wasm' }[ext] || 'application/octet-stream';
     res.writeHead(200, { 'Content-Type': ct });
     return res.end(fs.readFileSync(fp));
   }
