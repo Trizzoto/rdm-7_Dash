@@ -13,7 +13,8 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-const PORT = 8180;
+const _portArg = process.argv.indexOf('--port');
+const PORT = _portArg >= 0 ? parseInt(process.argv[_portArg + 1], 10) : 8180;
 const ROOT = path.resolve(__dirname, '..');
 
 /* --index <path>: serve a different editor HTML (e.g. the desktop studio's
@@ -109,8 +110,16 @@ const MOCK = {
   'GET  /api/ecu/current':      () => ({ ecu: 'MS3-Pro', version: '1.5.x' }),
   'POST /api/ecu/set':          () => ({ ok: true }),
   'GET  /api/device/info':      () => ({
-    model: 'RDM-7 Dash', version: '1.4.0-dev', ip: '192.168.4.1', hostname: '',
-    mac: 'AA:BB:CC:DD:EE:FF', uptime_s: 1234, free_heap: 145000, free_psram: 6200000, chip: 'ESP32-S3'
+    /* mirrors web_server_system.c _device_info_handler — the discovery
+     * sweep in the desktop app identifies a dash by the "serial" field */
+    serial: 'MOCKDASH01', schema: 17,
+    display: { width: 800, height: 480, shape: 'rect' },
+    hardware: { chip: 'esp32s3', cores: 2, psram_mb: 8, flash_mb: 16 },
+    system: { uptime_s: 1234, heap_free: 145000, heap_min_free: 98000, psram_free: 6200000, logger_active: false, replay_active: false },
+    can: { state: 'running', rx_pending: 0, tx_errors: 0, rx_errors: 0, bus_errors: 0, rx_missed: 0 },
+    wifi: { state: 'connected', ssid: 'MockNet', sta_ip: '127.0.0.1', ap_enabled: false, ap_ssid: '', ap_ip: '' },
+    sd: { mounted: false },
+    signals: { total: 5, fresh: 5, stale: 0 }
   }),
   'GET  /api/storage/info':     () => ({ total: 8800000, used: 420000, free: 8380000 }),
   'GET  /api/image/list':       () => ([{ name: 'warning.rdmimg', size: 4200, width: 64, height: 64 }]),  /* firmware returns a BARE array of {name,width,height,size} */
