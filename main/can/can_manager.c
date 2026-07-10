@@ -44,6 +44,12 @@ static uint8_t g_bitrate_index = 2;
  * underneath an in-flight probe. */
 static bool s_promiscuous_active = false;
 
+/* OBD2 29-bit (extended addressing) mode. When true the acceptance
+ * filter is built ACCEPT_ALL so 0x18DAF1xx responses reach dispatch.
+ * Loaded from NVS at can_init (a scan that locked a 29-bit car persists
+ * it); toggled transiently by the OBD2 auto-search scan. */
+static bool s_obd_extended = false;
+
 /* Tracks whether the TWAI driver is currently installed (and the RX path
  * is meant to be live). Used by reconfigure_can_filter()'s equality
  * guard: a dead/uninstalled driver must NEVER be skipped just because
@@ -316,6 +322,13 @@ static BaseType_t _spawn_can_rx_task(void) {
 /* ── Public API ──────────────────────────────────────────────────────── */
 
 void build_twai_filter_from_signals(twai_filter_config_t *out_filter) {
+	/* 29-bit OBD2 mode: the single-filter mask built below only matches
+	 * standard frames; extended responses (0x18DAF1xx) would be dropped in
+	 * hardware. Stay wide open — software dispatch filters per-frame. */
+	if (s_obd_extended) {
+		*out_filter = (twai_filter_config_t)TWAI_FILTER_CONFIG_ACCEPT_ALL();
+		return;
+	}
 	uint16_t sig_count = signal_get_count();
 	if (sig_count == 0) {
 		*out_filter = (twai_filter_config_t)TWAI_FILTER_CONFIG_ACCEPT_ALL();
@@ -649,6 +662,16 @@ void can_init(void) {
 	config_store_load_bitrate(&saved_bitrate);
 	g_bitrate_index = saved_bitrate;
 
+	/* OBD2 addressing mode persisted by a previous auto-search scan lock.
+	 * Must load BEFORE the filter is built below so a 29-bit car's
+	 * responses aren't hardware-filtered on the first boot after a scan. */
+	uint8_t obd_ext = 0;
+	config_store_load_obd_extended(&obd_ext);
+	s_obd_extended = (obd_ext != 0);
+	if (s_obd_extended) {
+		ESP_LOGI(TAG, "OBD2 29-bit addressing active (persisted)");
+	}
+
 	g_t_config = _bitrate_to_timing(saved_bitrate);
 	static const char *bitrate_labels[] = {"125 kbps", "250 kbps", "500 kbps", "1 Mbps"};
 	ESP_LOGI(TAG, "CAN bitrate: %s", bitrate_labels[saved_bitrate > 3 ? 2 : saved_bitrate]);
@@ -768,16 +791,35 @@ void can_persist_bitrate(uint8_t bitrate_index) {
 	g_bitrate_index = bitrate_index;
 }
 
-esp_err_t can_transmit_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc) {
+esp_err_t can_transmit_frame_ext(uint32_t can_id, bool extd,
+                                 const uint8_t *data, uint8_t dlc) {
 	twai_message_t msg = {0};
-	msg.identifier = can_id & 0x7FFu;
+	msg.identifier = extd ? (can_id & 0x1FFFFFFFu) : (can_id & 0x7FFu);
+	msg.extd = extd ? 1 : 0;
 	msg.data_length_code = dlc > 8 ? 8 : dlc;
 	if (data && dlc > 0)
 		memcpy(msg.data, data, msg.data_length_code);
 	esp_err_t ret = twai_transmit(&msg, pdMS_TO_TICKS(5));
 	if (ret != ESP_OK)
-		ESP_LOGD(TAG, "CAN TX 0x%03lX failed: %s", (unsigned long)can_id, esp_err_to_name(ret));
+		ESP_LOGD(TAG, "CAN TX 0x%lX failed: %s", (unsigned long)can_id, esp_err_to_name(ret));
 	return ret;
+}
+
+esp_err_t can_transmit_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc) {
+	return can_transmit_frame_ext(can_id, false, data, dlc);
+}
+
+void can_set_obd_extended(bool extended) {
+	s_obd_extended = extended;
+}
+
+bool can_get_obd_extended(void) {
+	return s_obd_extended;
+}
+
+void can_persist_obd_extended(bool extended) {
+	s_obd_extended = extended;
+	config_store_save_obd_extended(extended ? 1 : 0);
 }
 
 esp_err_t can_inject_rx_frame(uint32_t id, bool extd, const uint8_t *data, uint8_t dlc) {
@@ -842,11 +884,17 @@ void can_process_queued_frames(void) {
 				memcpy(coal[k].data, msg.data, coal[k].dlc);
 				if (k == n_coal) n_coal++;
 			}
-			/* OBD2 response decoder: any frame on 0x7E8-0x7EF could be a
-			 * Mode 01 PID response. Cheap early-return when polling isn't
-			 * active or the ID is out of the OBD2 range. */
-			if (msg.identifier >= OBD2_RESPONSE_ID_FIRST &&
-			    msg.identifier <= OBD2_RESPONSE_ID_LAST) {
+			/* OBD2 response decoder: standard frames on 0x7E8-0x7EF, or
+			 * 29-bit ISO 15765-4 responses 0x18DAF1xx (target F1 = tester)
+			 * when the car uses extended addressing. Cheap early-return
+			 * for everything else. */
+			bool obd_std = !msg.extd &&
+			               msg.identifier >= OBD2_RESPONSE_ID_FIRST &&
+			               msg.identifier <= OBD2_RESPONSE_ID_LAST;
+			bool obd_ext = msg.extd &&
+			               (msg.identifier & OBD2_RESPONSE_29_MASK) ==
+			                   OBD2_RESPONSE_29_BASE;
+			if (obd_std || obd_ext) {
 				obd2_rx_handler(msg.identifier, msg.data, msg.data_length_code);
 			}
 			/* Per-ID tracker for live diagnostics screen — captures every

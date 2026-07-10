@@ -45,7 +45,12 @@ const obd2_pid_def_t OBD2_PIDS[] = {
      * but default to PID 0x45 (relative) for the friendly "THROTTLE"
      * signal that widgets actually want. */
     { 0x11, "THROTTLE_ABS",           "Throttle Sensor (raw)",   "%",     1, 0.392157f,   0.0f,    FAST, false, false },
-    { 0x14, "O2_B1S1",                "O2 Sensor B1S1 Voltage",  "V",     1, 0.005f,      0.0f,    SLOW, true,  false },
+    /* PIDs 0x14-0x1B (narrow-band O2) return TWO data bytes per J1979:
+     * A = voltage (A/200), B = short fuel trim for that sensor. We decode
+     * only the voltage, but resp_len MUST say 2 or the multi-PID batch
+     * walker desyncs after this PID and silently drops / garbage-decodes
+     * every PID that follows it in the same batched response. */
+    { 0x14, "O2_B1S1",                "O2 Sensor B1S1 Voltage",  "V",     1, 0.005f,      0.0f,    SLOW, true,  false, .resp_len = 2 },
     { 0x1F, "RUN_TIME",               "Run Time Since Engine On","s",     2, 1.0f,        0.0f,    SLOW, true,  false },
     { 0x21, "DTC_DISTANCE",           "Distance with MIL on",    "km",    2, 1.0f,        0.0f,    SLOW, true,  false },
     { 0x23, "FUEL_RAIL_PRESSURE",     "Fuel Rail Pressure",      "kPa",   2, 10.0f,       0.0f,    SLOW, true,  false },
@@ -72,12 +77,30 @@ const obd2_pid_def_t OBD2_PIDS[] = {
     { 0x5E, "FUEL_RATE",              "Engine Fuel Rate",        "L/h",   2, 0.05f,       0.0f,    SLOW, true,  true  },
 
     /* ── Additional PIDs (not in the starter set; surfaced by discovery) ── */
-    { 0x03, "FUEL_SYSTEM_STATUS",     "Fuel System Status",      "",      1, 1.0f,        0.0f,    SLOW, false, false },
+    /* 2 data bytes per J1979 (A = fuel system 1 status, B = system 2). */
+    { 0x03, "FUEL_SYSTEM_STATUS",     "Fuel System Status",      "",      1, 1.0f,        0.0f,    SLOW, false, false, .resp_len = 2 },
     { 0x09, "LONG_FUEL_TRIM_2",       "Long Fuel Trim B2",       "%",     1, 0.78125f,    -100.0f, SLOW, false, false },
     { 0x08, "SHORT_FUEL_TRIM_2",      "Short Fuel Trim B2",      "%",     1, 0.78125f,    -100.0f, SLOW, false, false },
     { 0x22, "FUEL_RAIL_REL_PRESSURE", "Fuel Rail Pressure (rel)","kPa",   2, 0.079f,      0.0f,    SLOW, false, false },
-    { 0x32, "EVAP_VAPOR_PRESSURE",    "Evap Vapor Pressure",     "Pa",    2, 0.25f,       -8192.0f,SLOW, false, false },
-    { 0x34, "O2S1_LAMBDA",            "O2 Sensor 1 Lambda",      "lambda",2, 0.0000305f,  0.0f,    SLOW, false, false },
+    /* PID 0x32 is a SIGNED two's-complement 16-bit value / 4 Pa per J1979
+     * — the old unsigned scale+offset (raw*0.25 - 8192) decoded +1 Pa as
+     * -8191 and -1 Pa as +8191. Packed signed sub-field decodes it right. */
+    {
+        .pid = 0x32,
+        .signal_name = NULL,
+        .human_name = "Evap Vapor Pressure",
+        .unit = "",
+        .tier = OBD2_TIER_SLOW,
+        .service = 0x01,
+        .sub_fields = (const obd2_subfield_t[]){
+            { "EVAP_VAPOR_PRESSURE", "Pa", 0, 2, true, 0.25f, 0.0f },
+        },
+        .sub_field_count = 1,
+    },
+    /* PIDs 0x34-0x3B (wide-range O2) return FOUR data bytes per J1979:
+     * AB = lambda, CD = current. We decode lambda only; resp_len keeps
+     * the batch walker in sync (see PID 0x14 note). */
+    { 0x34, "O2S1_LAMBDA",            "O2 Sensor 1 Lambda",      "lambda",2, 0.0000305f,  0.0f,    SLOW, false, false, .resp_len = 4 },
     { 0x47, "ABS_THROTTLE_B",         "Absolute Throttle Pos B", "%",     1, 0.392157f,   0.0f,    SLOW, false, false },
     { 0x48, "ABS_THROTTLE_C",         "Absolute Throttle Pos C", "%",     1, 0.392157f,   0.0f,    SLOW, false, false },
     { 0x49, "ACCEL_PEDAL_D",          "Accelerator Pedal D",     "%",     1, 0.392157f,   0.0f,    SLOW, false, false },
@@ -106,7 +129,9 @@ const obd2_pid_def_t OBD2_PIDS[] = {
      * users can build rules like "value >= 128 → MIL on" or "value & 127
      * → DTC count". Splitting in firmware would require bit-mask support
      * in the decoder, which we don't have. */
-    { 0x01, "MIL_DTC_STATUS",         "MIL + DTC Count (raw)",   "",      1, 1.0f,        0.0f,    SLOW, false, false },
+    /* 4 data bytes per J1979 (A = MIL + count, B-D = readiness bitfields);
+     * we decode byte A only — resp_len keeps the batch walker in sync. */
+    { 0x01, "MIL_DTC_STATUS",         "MIL + DTC Count (raw)",   "",      1, 1.0f,        0.0f,    SLOW, false, false, .resp_len = 4 },
     { 0x1C, "OBD_STANDARD",           "OBD Standard (enum)",     "",      1, 1.0f,        0.0f,    SLOW, false, false },
     { 0x51, "FUEL_TYPE",              "Fuel Type (enum)",        "",      1, 1.0f,        0.0f,    SLOW, false, false },
 
@@ -140,6 +165,7 @@ const obd2_pid_def_t OBD2_PIDS[] = {
         },
         .sub_field_count = 1,
         .request_id = 0,
+        .resp_len = 5,   /* J1979-DA: support byte + 4 sensor slots */
     },
 
     /* PID 0x78 — Exhaust Gas Temperature, Bank 1 (up to 4 sensors,
@@ -186,6 +212,7 @@ const obd2_pid_def_t OBD2_PIDS[] = {
         },
         .sub_field_count = 1,
         .request_id = 0,
+        .resp_len = 7,   /* J1979-DA: support byte + delta/inlet/outlet pairs */
     },
 
     /* ── Tier 3: Diesel-specific, EXPERIMENTAL decodes ─────────────────
@@ -224,6 +251,7 @@ const obd2_pid_def_t OBD2_PIDS[] = {
         },
         .sub_field_count = 1,
         .request_id = 0,
+        .resp_len = 10,  /* J1979-DA: support + cmd A/B + actual A/B + status */
     },
 
     /* PID 0x6D — Fuel Pressure Control System (Diesel common rail).

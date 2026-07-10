@@ -161,6 +161,27 @@ esp_err_t config_store_load_bitrate(uint8_t *bitrate)
     return ESP_OK;
 }
 
+esp_err_t config_store_save_obd_extended(uint8_t extended)
+{
+    nvs_handle_t handle;
+    if (nvs_open(NS_CAN, NVS_READWRITE, &handle) != ESP_OK) return ESP_FAIL;
+    esp_err_t err = nvs_set_u8(handle, "obd_ext", extended ? 1 : 0);
+    if (err != ESP_OK) { nvs_close(handle); return err; }
+    err = nvs_commit(handle);
+    nvs_close(handle);
+    return err;
+}
+
+esp_err_t config_store_load_obd_extended(uint8_t *extended)
+{
+    if (!extended) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t handle;
+    if (nvs_open(NS_CAN, NVS_READONLY, &handle) != ESP_OK) return ESP_FAIL;
+    nvs_get_u8(handle, "obd_ext", extended); /* keeps default if key absent */
+    nvs_close(handle);
+    return ESP_OK;
+}
+
 
 /* ═══════════════════════════════════════════════════════════════════════
  *  WIFI CREDENTIALS

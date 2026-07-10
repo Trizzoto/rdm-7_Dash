@@ -90,6 +90,34 @@ void can_process_queued_frames(void);
 esp_err_t can_transmit_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc);
 
 /**
+ * Transmit a single CAN frame with explicit frame format.
+ * Same semantics as can_transmit_frame but supports extended (29-bit)
+ * identifiers — required for 29-bit ISO 15765-4 OBD2 addressing
+ * (request 0x18DB33F1, responses 0x18DAF1xx).
+ *
+ * @param can_id  11-bit ID when extd=false, 29-bit ID when extd=true.
+ * @param extd    true → extended frame format.
+ */
+esp_err_t can_transmit_frame_ext(uint32_t can_id, bool extd,
+                                 const uint8_t *data, uint8_t dlc);
+
+/* ── OBD2 29-bit (extended addressing) mode ────────────────────────────
+ *
+ * When active, the hardware acceptance filter is forced to ACCEPT_ALL so
+ * the 29-bit response range 0x18DAF1xx reaches software dispatch (the
+ * SJA1000-style single filter built from 11-bit signal IDs would reject
+ * extended frames). RAM flag + NVS persistence are separate so the OBD2
+ * scan can probe transiently and only persist a confirmed lock:
+ *   - can_set_obd_extended(): RAM flag only. Take effect on the NEXT
+ *     filter rebuild (reconfigure_can_filter / can_change_bitrate).
+ *   - can_persist_obd_extended(): RAM flag + NVS (survives reboot;
+ *     can_init loads it).
+ */
+void can_set_obd_extended(bool extended);
+bool can_get_obd_extended(void);
+void can_persist_obd_extended(bool extended);
+
+/**
  * Inject a synthetic RX frame into the receive queue, as if it had arrived on
  * the bus. The frame flows through the exact same decode path as a real one
  * (can_process_queued_frames → signal_dispatch_frame → channel/widget update,

@@ -85,6 +85,8 @@ typedef struct {
                                   dead uses OBD2_PERIOD_DEAD_MS) */
     uint64_t last_tx_ms;
     uint64_t last_response_ms;
+    bool     last_tx_batched;  /* most recent TX was part of a multi-PID batch */
+    bool     was_alive;        /* previous _refresh_periods verdict (flap detect) */
 } obd2_poll_state_t;
 
 static obd2_poll_state_t s_poll[OBD2_MAX_ENABLED];
@@ -100,6 +102,43 @@ static uint64_t s_last_tx_ms_global = 0;
 /* Bench virtual-ECU simulator. When true, _obd2_tx synthesizes Mode 01
  * responses instead of hitting the bus. See obd2_sim_set_enabled(). */
 static bool s_sim_enabled = false;
+
+/* ── Multi-PID batch health ────────────────────────────────────────────
+ *
+ * Mode 01 multi-PID requests are mandated by ISO 15765-4 but a minority
+ * of ECUs reject them (NRC 0x12/0x31) or silently ignore them while
+ * answering single-PID requests fine. Without detection those cars fall
+ * into a poll flap: batched (no answer) → PIDs go dead after 3 s → 5 s
+ * solo probes succeed → alive → batched again → dead... so every gauge
+ * updates once per ~5 s and reads stale the rest of the time.
+ *
+ * Detection latches batching OFF for the session (solo requests only)
+ * on either signal:
+ *   - an NRC for service 0x01 arriving while our last TX was a batch
+ *     (2 strikes), or
+ *   - repeated alive→dead flapping of PIDs whose last TX was batched
+ *     (4 strikes).
+ * Both are suppressed once a batch has ever demonstrably worked (a
+ * Mode 01 response decoding 2+ PIDs), so a chatty TCU NRC-ing batches
+ * the engine ECU answers fine can't disable them. */
+static bool    s_batch_disabled     = false;
+static bool    s_batch_ever_ok     = false;
+static uint8_t s_batch_nrc_strikes  = 0;
+static uint8_t s_batch_flap_strikes = 0;
+static bool    s_last_tx_was_batch  = false;
+
+/* Latch batching off and make every PID max-starved so the solo probes
+ * re-establish live data immediately instead of on the 5 s dead cadence. */
+static void _disable_batching(const char *why)
+{
+    if (s_batch_disabled) return;
+    s_batch_disabled = true;
+    ESP_LOGW(TAG, "Multi-PID batching disabled for this session (%s) — "
+             "falling back to single-PID requests", why);
+    for (uint8_t i = 0; i < s_poll_count; i++) {
+        s_poll[i].last_tx_ms = 0;
+    }
+}
 
 /* ── Custom PID storage ────────────────────────────────────────────────
  *
@@ -133,7 +172,7 @@ static uint8_t             s_custom_count = 0;
 static struct {
     bool            active;
     uint8_t         service;
-    uint8_t         pid;
+    uint16_t        pid;       /* 16-bit — Mode 22 PIDs exceed one byte */
     uint64_t        sent_ms;
     obd2_test_cb_t  cb;
     void           *user;
@@ -147,14 +186,23 @@ static struct {
 /* ── DTC read request state (Modes 03 / 07 / 0A) ───────────────────────
  *
  * Single in-flight at a time. Accumulator buffer holds up to OBD2_MAX_DTCS
- * codes from one response. Multi-frame ISO-TP responses are reassembled
- * by the shared s_isotp path; we just decode the resulting payload. */
-#define OBD2_DTC_TIMEOUT_MS 2000   /* multi-frame allow ample time */
+ * codes merged (deduped) across EVERY ECU that answers the broadcast —
+ * the request goes to 0x7DF, so engine, transmission, hybrid etc. all
+ * reply. Completing on the first response used to hide the TCU's codes
+ * behind the engine's faster "0 codes" answer; instead we hold a short
+ * merge window after each response and only fire the callback when the
+ * bus goes quiet (or the overall timeout hits). Multi-frame ISO-TP
+ * responses are reassembled by the shared s_isotp path; we just decode
+ * the resulting payloads. */
+#define OBD2_DTC_TIMEOUT_MS      2000   /* overall cap, multi-frame ample */
+#define OBD2_DTC_MERGE_WINDOW_MS  350   /* quiet time after last ECU reply */
 
 static struct {
     bool            active;
     uint8_t         mode;          /* 0x03 / 0x07 / 0x0A */
     uint64_t        sent_ms;
+    uint64_t        last_resp_ms;  /* last positive/NRC reply; 0 = none yet */
+    bool            got_positive;  /* at least one ECU answered positively */
     obd2_dtc_cb_t   cb;
     void           *user;
     obd2_dtc_t      codes[OBD2_MAX_DTCS];
@@ -241,29 +289,59 @@ static void              *s_scan_user          = NULL;
 
 /* ── Scan auto-search (ELM327 ATSP0-style, scoped to CAN) ──────────────
  * Before declaring "not connected", probe Mode 01 PID 0x00 across the two
- * standard ISO 15765-4 CAN bitrates (500k/250k) and both addressing modes
- * (functional 0x7DF, physical 0x7E0). On the first combo that answers, lock
- * it: persist the winning bitrate (so raw-CAN reception benefits too) and
- * keep the winning request id for subsequent polling. */
+ * standard ISO 15765-4 CAN bitrates (500k/250k), both 11-bit addressing
+ * modes (functional 0x7DF, physical 0x7E0), and 29-bit extended
+ * addressing (functional 0x18DB33F1 — many Hondas, some GM answer only
+ * this). On the first combo that answers, lock it: persist the winning
+ * bitrate and addressing mode (so they survive reboot) and keep the
+ * winning request id for subsequent polling.
+ *
+ * 29-bit probes need the acceptance filter open (the standard-frame
+ * filter drops extended responses in hardware) — the flag flips via
+ * can_set_obd_extended + one filter rebuild, and s_scan_filter_ext
+ * tracks what the INSTALLED filter honors so we only rebuild when the
+ * final mode actually differs. */
 static bool     s_scan_probing       = false;
 static uint8_t  s_scan_probe_step    = 0;
 static uint8_t  s_scan_orig_bitrate  = 2;   /* restore on total failure */
 static uint8_t  s_scan_other_bitrate = 1;   /* the alternate rate to try */
 static bool     s_scan_on_other      = false;
+static bool     s_scan_orig_ext      = false; /* addressing mode at scan start */
+static bool     s_scan_filter_ext    = false; /* installed filter honors ext? */
+static uint32_t s_scan_rx_at_start   = 0;   /* bus-alive gate for rate probes */
 
 /* Default OBD request CAN id used when a PID def carries no per-PID override.
  * 0x7DF functional broadcast by default; the auto-search may switch this to
- * 0x7E0 (physical, engine ECU) for both scan and polling if that's what the
- * car answers. */
+ * 0x7E0 (physical, engine ECU) or 0x18DB33F1 (29-bit functional) for both
+ * scan and polling if that's what the car answers. */
 static uint32_t s_obd_req_id = OBD2_REQUEST_ID_BROADCAST;
 
-static const struct { bool other_rate; uint32_t req_id; } SCAN_PROBE[] = {
-    { false, OBD2_REQUEST_ID_BROADCAST },  /* current rate, functional 0x7DF */
-    { false, 0x7E0u },                     /* current rate, physical  0x7E0  */
-    { true,  OBD2_REQUEST_ID_BROADCAST },  /* other rate,   functional 0x7DF */
-    { true,  0x7E0u },                     /* other rate,   physical  0x7E0  */
+static const struct { bool other_rate; bool ext; uint32_t req_id; } SCAN_PROBE[] = {
+    { false, false, OBD2_REQUEST_ID_BROADCAST },  /* current rate, functional 0x7DF */
+    { false, false, 0x7E0u },                     /* current rate, physical  0x7E0  */
+    { false, true,  OBD2_REQUEST_ID_FUNC_29 },    /* current rate, 29-bit functional */
+    { true,  false, OBD2_REQUEST_ID_BROADCAST },  /* other rate,   functional 0x7DF */
+    { true,  false, 0x7E0u },                     /* other rate,   physical  0x7E0  */
+    { true,  true,  OBD2_REQUEST_ID_FUNC_29 },    /* other rate,   29-bit functional */
 };
 #define SCAN_PROBE_COUNT (sizeof(SCAN_PROBE) / sizeof(SCAN_PROBE[0]))
+
+/* Default request id for anything that doesn't carry a per-PID override:
+ * polling, DTC read/clear, VIN, freeze frame, test. Lazily upgrades to the
+ * 29-bit functional address when a persisted scan lock says the car uses
+ * extended addressing — lazy because one-shots (background DTC monitor)
+ * can fire before obd2_start ever runs on a broadcast-preset layout. */
+static uint32_t _obd_default_req_id(void)
+{
+    /* Never touch the id mid-scan: the probe sequencer owns it then (the
+     * extended flag stays raised across later 11-bit probe combos, which
+     * would otherwise wrongly re-upgrade an 0x7DF probe to 29-bit). */
+    if (s_scan_state == SCAN_IDLE &&
+        can_get_obd_extended() && s_obd_req_id <= 0x7FFu) {
+        s_obd_req_id = OBD2_REQUEST_ID_FUNC_29;
+    }
+    return s_obd_req_id;
+}
 
 /* ── Per-service last-response timestamps ───────────────────────────────
  *
@@ -315,6 +393,16 @@ static void _refresh_periods(uint64_t now)
         const obd2_pid_def_t *def = obd2_pid_find_svc(ps->service, ps->pid);
         bool alive = (ps->last_response_ms != 0) &&
                      ((now - ps->last_response_ms) < OBD2_DEAD_THRESHOLD_MS);
+        /* Batch-flap detect: a PID that was alive (solo probe answered)
+         * and died again after being sent in a batch is the signature of
+         * an ECU that ignores multi-PID requests. */
+        if (ps->was_alive && !alive && ps->last_tx_batched &&
+            !s_batch_ever_ok && !s_batch_disabled) {
+            if (++s_batch_flap_strikes >= 4) {
+                _disable_batching("PIDs flap alive/dead after batched requests");
+            }
+        }
+        ps->was_alive = alive;
         ps->target_period_ms = alive ? _alive_period_for(def)
                                      : OBD2_PERIOD_DEAD_MS;
     }
@@ -404,9 +492,19 @@ void obd2_stop(void)
      * the timer itself when polling isn't running, so the delete below is a
      * no-op in that case. */
     if (s_scan_state != SCAN_IDLE) {
+        /* Mid-PROBE stop: restore the pre-scan addressing mode and request
+         * id (a lock already rebased "orig" onto the winning combo, so a
+         * stop mid-ENUMERATION keeps the locked state — correct). */
+        if (s_scan_probing) {
+            can_set_obd_extended(s_scan_orig_ext);
+            s_obd_req_id = s_scan_orig_ext ? OBD2_REQUEST_ID_FUNC_29
+                                           : OBD2_REQUEST_ID_BROADCAST;
+            s_scan_probing = false;
+        }
         if (s_scan_on_other) {
             can_change_bitrate(s_scan_orig_bitrate);
-            s_scan_on_other = false;
+            s_scan_on_other   = false;
+            s_scan_filter_ext = can_get_obd_extended();
         }
         _scan_finalize(false);
     }
@@ -528,7 +626,7 @@ const obd2_pid_def_t *obd2_custom_find_svc(uint8_t service, uint16_t pid)
 
 /* ── One-shot test ────────────────────────────────────────────────── */
 
-void obd2_test_pid(uint8_t service, uint8_t pid, uint32_t request_id,
+void obd2_test_pid(uint8_t service, uint16_t pid, uint32_t request_id,
                    uint8_t data_offset, uint8_t data_bytes,
                    float scale, float offset, bool is_signed,
                    obd2_test_cb_t cb, void *user)
@@ -563,9 +661,17 @@ void obd2_test_pid(uint8_t service, uint8_t pid, uint32_t request_id,
     s_test.is_signed   = is_signed;
 
     /* Fire one request. Multi-PID Mode 01 NOT used here — we want a
-     * deterministic single-PID response for the test. */
-    uint32_t tx_id = request_id ? request_id : OBD2_REQUEST_ID_BROADCAST;
-    uint8_t data[8] = { 0x02, service, pid, 0x55, 0x55, 0x55, 0x55, 0x55 };
+     * deterministic single-PID response for the test. Default follows the
+     * scan-locked request id (0x7DF / 0x7E0 / 29-bit functional). Mode 22
+     * carries a 16-bit PID (UDS Read Data By Identifier framing). */
+    uint32_t tx_id = request_id ? request_id : _obd_default_req_id();
+    uint8_t data[8] = { 0x02, service, (uint8_t)(pid & 0xFF),
+                        0x55, 0x55, 0x55, 0x55, 0x55 };
+    if (service == 0x22) {
+        data[0] = 0x03;
+        data[2] = (uint8_t)((pid >> 8) & 0xFF);
+        data[3] = (uint8_t)(pid & 0xFF);
+    }
     esp_err_t err = _obd2_tx(tx_id, data, 8);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "Test TX failed: %s", esp_err_to_name(err));
@@ -647,20 +753,22 @@ static void _dtc_start(uint8_t mode, obd2_dtc_cb_t cb, void *user) {
         return;
     }
     uint64_t now = (uint64_t)(esp_timer_get_time() / 1000ULL);
-    s_dtc_req.active  = true;
+    s_dtc_req.active       = true;
     _ensure_poll_timer();   /* so the timeout ticks even when polling is idle */
-    s_dtc_req.mode    = mode;
-    s_dtc_req.sent_ms = now;
-    s_dtc_req.cb      = cb;
-    s_dtc_req.user    = user;
-    s_dtc_req.count   = 0;
+    s_dtc_req.mode         = mode;
+    s_dtc_req.sent_ms      = now;
+    s_dtc_req.last_resp_ms = 0;
+    s_dtc_req.got_positive = false;
+    s_dtc_req.cb           = cb;
+    s_dtc_req.user         = user;
+    s_dtc_req.count        = 0;
     memset(s_dtc_req.codes, 0, sizeof(s_dtc_req.codes));
 
     /* Mode 03/07/0A: single-byte service request, no PID. ISO-TP single
      * frame: [length=1][service]. ECUs may respond multi-frame if they
      * have many codes — handled by the shared ISO-TP RX reassembly. */
     uint8_t data[8] = { 0x01, mode, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55 };
-    esp_err_t err = _obd2_tx(OBD2_REQUEST_ID_BROADCAST, data, 8);
+    esp_err_t err = _obd2_tx(_obd_default_req_id(), data, 8);
     if (err != ESP_OK) {
         /* DEBUG level — TX failures here are normal when the bus is
          * inactive (bench, ignition off, no CAN dongle plugged in).
@@ -696,7 +804,7 @@ void obd2_clear_dtcs(obd2_clear_cb_t cb, void *user) {
      * success or 0x7F 04 NN as negative. Many cars require engine off
      * (NRC 0x22 conditionsNotCorrect if running). */
     uint8_t data[8] = { 0x01, 0x04, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55 };
-    esp_err_t err = _obd2_tx(OBD2_REQUEST_ID_BROADCAST, data, 8);
+    esp_err_t err = _obd2_tx(_obd_default_req_id(), data, 8);
     if (err != ESP_OK) {
         ESP_LOGD(TAG, "Clear DTC TX failed: %s", esp_err_to_name(err));
         s_clear_req.active = false;
@@ -724,7 +832,7 @@ void obd2_read_vin(obd2_vin_cb_t cb, void *user) {
     /* Mode 09 PID 0x02 = VIN. Single-frame request, multi-frame response
      * (17 chars + 3 byte preamble = 20 bytes typical). */
     uint8_t data[8] = { 0x02, 0x09, 0x02, 0x55, 0x55, 0x55, 0x55, 0x55 };
-    esp_err_t err = _obd2_tx(OBD2_REQUEST_ID_BROADCAST, data, 8);
+    esp_err_t err = _obd2_tx(_obd_default_req_id(), data, 8);
     if (err != ESP_OK) {
         ESP_LOGD(TAG, "VIN TX failed: %s", esp_err_to_name(err));
         s_vin_req.active = false;
@@ -756,7 +864,7 @@ void obd2_read_freeze_pid(uint8_t data_pid, uint8_t frame_no,
      * data shape as the Mode 01 response for that PID, just frozen. */
     uint8_t data[8] = { 0x03, 0x02, data_pid, frame_no,
                         0x55, 0x55, 0x55, 0x55 };
-    esp_err_t err = _obd2_tx(OBD2_REQUEST_ID_BROADCAST, data, 8);
+    esp_err_t err = _obd2_tx(_obd_default_req_id(), data, 8);
     if (err != ESP_OK) {
         ESP_LOGD(TAG, "Freeze TX failed: %s", esp_err_to_name(err));
         s_freeze_req.active = false;
@@ -783,7 +891,7 @@ void obd2_read_ecu_name(obd2_ecuname_cb_t cb, void *user) {
 
     /* Mode 09 PID 0x0A. Same framing as VIN. */
     uint8_t data[8] = { 0x02, 0x09, 0x0A, 0x55, 0x55, 0x55, 0x55, 0x55 };
-    esp_err_t err = _obd2_tx(OBD2_REQUEST_ID_BROADCAST, data, 8);
+    esp_err_t err = _obd2_tx(_obd_default_req_id(), data, 8);
     if (err != ESP_OK) {
         ESP_LOGD(TAG, "ECU-name TX failed: %s", esp_err_to_name(err));
         s_ecuname_req.active = false;
@@ -809,13 +917,23 @@ static void _decode_dtc_pair(uint8_t a, uint8_t b, char out[6]) {
 
 /* Parse a DTC response payload (after the service+count framing has been
  * stripped) into the request accumulator. Walks 2-byte pairs, stops at
- * 0x00 0x00 padding or buffer limit. */
+ * 0x00 0x00 padding or buffer limit. Dedupes against codes already
+ * accumulated — with the multi-ECU merge window two modules can report
+ * the same code (e.g. U0100 from both TCU and ABS). */
 static void _dtc_decode_payload(const uint8_t *p, uint16_t len) {
     while (len >= 2 && s_dtc_req.count < OBD2_MAX_DTCS) {
         if (p[0] == 0x00 && p[1] == 0x00) break;  /* end-of-list pad */
-        _decode_dtc_pair(p[0], p[1], s_dtc_req.codes[s_dtc_req.count].code);
-        s_dtc_req.codes[s_dtc_req.count].status = 0;
-        s_dtc_req.count++;
+        char code[6];
+        _decode_dtc_pair(p[0], p[1], code);
+        bool dup = false;
+        for (uint8_t i = 0; i < s_dtc_req.count; i++) {
+            if (strcmp(s_dtc_req.codes[i].code, code) == 0) { dup = true; break; }
+        }
+        if (!dup) {
+            memcpy(s_dtc_req.codes[s_dtc_req.count].code, code, sizeof(code));
+            s_dtc_req.codes[s_dtc_req.count].status = 0;
+            s_dtc_req.count++;
+        }
         p   += 2;
         len -= 2;
     }
@@ -952,6 +1070,8 @@ static void _try_dispatch(uint64_t now)
     if (top->service != 0x01) {
         _send_pid_request(top->service, top->pid);
         top->last_tx_ms = now;
+        top->last_tx_batched = false;
+        s_last_tx_was_batch  = false;
         s_last_tx_ms_global = now;
         return;
     }
@@ -968,9 +1088,11 @@ static void _try_dispatch(uint64_t now)
     const obd2_pid_def_t *top_def = obd2_pid_find_svc(0x01, top->pid);
     bool top_packed = (top_def && top_def->sub_fields &&
                        top_def->sub_field_count > 0);
-    if (top_packed) {
+    if (top_packed || s_batch_disabled) {
         _send_pid_request(0x01, top->pid);
         top->last_tx_ms = now;
+        top->last_tx_batched = false;
+        s_last_tx_was_batch  = false;
         s_last_tx_ms_global = now;
         return;
     }
@@ -1000,7 +1122,10 @@ static void _try_dispatch(uint64_t now)
         if (starv < 0) continue;     /* not yet due — let it wait */
         batch[batch_n++] = ps->pid;
         ps->last_tx_ms = now;
+        ps->last_tx_batched = true;
     }
+    top->last_tx_batched = (batch_n > 1);
+    s_last_tx_was_batch  = (batch_n > 1);
 
     if (batch_n == 1) {
         _send_pid_request(0x01, batch[0]);
@@ -1042,15 +1167,30 @@ static void _poll_timer_cb(lv_timer_t *t)
         if (cb) cb(false, NULL, 0, 0.0f, elapsed, user);
     }
 
-    /* DTC read timeout — multi-frame ISO-TP may legitimately take ~1 s
-     * on cars with many codes; cap at OBD2_DTC_TIMEOUT_MS. */
-    if (s_dtc_req.active && (now - s_dtc_req.sent_ms) > OBD2_DTC_TIMEOUT_MS) {
-        obd2_dtc_cb_t cb = s_dtc_req.cb;
-        void *user = s_dtc_req.user;
-        uint8_t mode = s_dtc_req.mode;
-        ESP_LOGW(TAG, "DTC mode 0x%02X timed out", mode);
-        s_dtc_req.active = false;
-        if (cb) cb(false, NULL, 0, mode, user);
+    /* DTC read completion. Two exits:
+     *  - merge window: at least one ECU replied and the bus has been
+     *    quiet for OBD2_DTC_MERGE_WINDOW_MS — every module has had its
+     *    say, deliver the merged (deduped) code list;
+     *  - overall timeout: nothing (or only NRCs) arrived within
+     *    OBD2_DTC_TIMEOUT_MS — deliver failure. */
+    if (s_dtc_req.active) {
+        bool window_closed = (s_dtc_req.last_resp_ms != 0) &&
+                             ((now - s_dtc_req.last_resp_ms) > OBD2_DTC_MERGE_WINDOW_MS) &&
+                             (s_isotp.state != ISOTP_RECEIVING);
+        bool timed_out = (now - s_dtc_req.sent_ms) > OBD2_DTC_TIMEOUT_MS;
+        if (window_closed || timed_out) {
+            obd2_dtc_cb_t cb   = s_dtc_req.cb;
+            void *user         = s_dtc_req.user;
+            uint8_t mode       = s_dtc_req.mode;
+            bool ok            = s_dtc_req.got_positive;
+            uint8_t count      = s_dtc_req.count;
+            if (!ok) ESP_LOGW(TAG, "DTC mode 0x%02X %s", mode,
+                              (s_dtc_req.last_resp_ms != 0) ? "rejected by all ECUs"
+                                                            : "timed out");
+            s_dtc_req.active = false;
+            if (cb) cb(ok, (ok && count > 0) ? s_dtc_req.codes : NULL,
+                       ok ? count : 0, mode, user);
+        }
     }
 
     /* Clear DTC timeout. */
@@ -1099,34 +1239,69 @@ static void _poll_timer_cb(lv_timer_t *t)
                     if (s_scan_on_other) {
                         /* The alternate bitrate is the car's real rate — persist
                          * it so it survives reboot and raw-CAN reception benefits
-                         * too. */
+                         * too. The locked rate becomes "home" so a mid-enumeration
+                         * obd2_stop can't revert it. */
                         can_persist_bitrate(s_scan_other_bitrate);
                         ESP_LOGI(TAG, "Scan: locked bitrate index %u (persisted)",
                                  s_scan_other_bitrate);
+                        s_scan_orig_bitrate = s_scan_other_bitrate;
+                        s_scan_on_other     = false;
                     }
+                    /* Lock the addressing mode. Persist only on change so an
+                     * 11-bit car doesn't touch NVS every scan. The locked mode
+                     * becomes "home" for the same stop-mid-enumeration reason. */
+                    bool locked_ext = (s_obd_req_id > 0x7FFu);
+                    can_set_obd_extended(locked_ext);
+                    if (locked_ext != s_scan_orig_ext) {
+                        can_persist_obd_extended(locked_ext);
+                        ESP_LOGI(TAG, "Scan: locked %s OBD addressing (persisted)",
+                                 locked_ext ? "29-bit extended" : "11-bit standard");
+                    }
+                    s_scan_orig_ext = locked_ext;
                     if (s_obd_req_id != OBD2_REQUEST_ID_BROADCAST) {
-                        ESP_LOGI(TAG, "Scan: using physical addressing 0x%03lX",
+                        ESP_LOGI(TAG, "Scan: using request id 0x%lX",
                                  (unsigned long)s_obd_req_id);
                     }
                     /* Continue enumeration — the RX of PID 0x00 may already have
-                     * queued the next supported-PID block. */
+                     * queued the next supported-PID block. Filter reconciliation
+                     * (narrowing an opened filter back down for an 11-bit lock)
+                     * waits until _scan_finalize so the driver isn't bounced
+                     * mid-enumeration. */
                     if (s_scan_advance) {
                         s_scan_advance = false;
                         _scan_send(s_scan_next_query);
                     } else {
                         _scan_finalize(true);
                     }
-                } else if (++s_scan_probe_step < SCAN_PROBE_COUNT) {
-                    _scan_begin_probe_step();
                 } else {
-                    /* No combo answered — restore the original bitrate. */
-                    if (s_scan_on_other) {
-                        can_change_bitrate(s_scan_orig_bitrate);
-                        s_scan_on_other = false;
+                    bool exhausted = (++s_scan_probe_step >= SCAN_PROBE_COUNT);
+                    /* Bus-alive gate: if frames are flowing at the CURRENT
+                     * bitrate, the other rate is definitively wrong — switching
+                     * would blast error frames onto a healthy, live bus for no
+                     * gain. Skip straight to failure instead. */
+                    if (!exhausted && SCAN_PROBE[s_scan_probe_step].other_rate &&
+                        !s_scan_on_other &&
+                        (can_get_rx_frame_count() - s_scan_rx_at_start) > 20) {
+                        ESP_LOGI(TAG, "Scan: bus alive at current bitrate — "
+                                 "skipping other-rate probes");
+                        exhausted = true;
                     }
-                    s_obd_req_id   = OBD2_REQUEST_ID_BROADCAST;
-                    s_scan_probing = false;
-                    _scan_finalize(false);
+                    if (!exhausted) {
+                        _scan_begin_probe_step();
+                    } else {
+                        /* No combo answered — restore original bitrate and
+                         * addressing mode. */
+                        can_set_obd_extended(s_scan_orig_ext);
+                        if (s_scan_on_other) {
+                            can_change_bitrate(s_scan_orig_bitrate);
+                            s_scan_on_other   = false;
+                            s_scan_filter_ext = can_get_obd_extended();
+                        }
+                        s_obd_req_id = s_scan_orig_ext ? OBD2_REQUEST_ID_FUNC_29
+                                                       : OBD2_REQUEST_ID_BROADCAST;
+                        s_scan_probing = false;
+                        _scan_finalize(false);
+                    }
                 }
             } else if (s_scan_advance) {
                 s_scan_advance = false;
@@ -1174,7 +1349,7 @@ static void _send_pid_request(uint8_t service, uint16_t pid)
     if (service == 0) service = 0x01;
     const obd2_pid_def_t *def = obd2_pid_find_svc(service, pid);
     uint32_t tx_id = (def && def->request_id) ? def->request_id
-                                              : s_obd_req_id;
+                                              : _obd_default_req_id();
     uint8_t data[8] = { 0, 0, 0, 0x55, 0x55, 0x55, 0x55, 0x55 };
     if (service == 0x22) {
         data[0] = 0x03;
@@ -1211,7 +1386,7 @@ static void _send_multi_pid_request(uint8_t service, const uint8_t *pids, uint8_
      * be defensive). */
     const obd2_pid_def_t *def0 = obd2_pid_find_svc(service, pids[0]);
     uint32_t tx_id = (def0 && def0->request_id) ? def0->request_id
-                                                : s_obd_req_id;
+                                                : _obd_default_req_id();
 
     uint8_t data[8] = {0};
     data[0] = (uint8_t)(n + 1);
@@ -1244,6 +1419,11 @@ static uint32_t _request_id_for_response(uint32_t resp_id)
 {
     if (resp_id >= OBD2_RESPONSE_ID_FIRST && resp_id <= OBD2_RESPONSE_ID_LAST) {
         return 0x7E0u + (resp_id - OBD2_RESPONSE_ID_FIRST);
+    }
+    /* 29-bit: response 0x18DAF1xx (source = ECU xx) → physical request /
+     * flow control 0x18DAxxF1 addressed back at that ECU. */
+    if ((resp_id & OBD2_RESPONSE_29_MASK) == OBD2_RESPONSE_29_BASE) {
+        return OBD2_REQUEST_29_FOR(resp_id & 0xFFu);
     }
     return OBD2_REQUEST_ID_BROADCAST;
 }
@@ -1298,27 +1478,25 @@ static void _sim_inject_supported_bitmask(uint8_t base)
     can_inject_rx_frame(OBD2_RESPONSE_ID_FIRST, false, f, 8);
 }
 
-/* Byte-width a Mode 01/02 PID definition needs, capped at 5 (single-frame
- * budget) — shared by the Mode 01 and freeze-frame (Mode 02) injectors
- * below since freeze data reuses the Mode 01 PID shape (per
- * obd2_read_freeze_pid's own comment). 0 = not simulatable here (packed
- * defs needing >5 bytes would need real ISO-TP chunking). */
+/* Forward decl — the generic injector lives just below but the Mode 01
+ * injector needs it for wide (multi-frame) responses. */
+static void _sim_inject_message(const uint8_t *msg, uint16_t len);
+
+/* Byte-width a Mode 01/02 PID's response carries — the same effective
+ * length the real decode walk consumes (resp_len when set, else the
+ * decode span), so the sim's framing matches a real ECU's. Capped at
+ * 16 to bound the stack buffer; 0 = unknown PID, stay silent like a
+ * real ECU with no NRC. */
 static uint8_t _sim_pid_span(const obd2_pid_def_t *def)
 {
-    if (!def) return 0;
-    if (def->sub_fields && def->sub_field_count > 0) {
-        uint16_t s = 0;
-        for (uint8_t i = 0; i < def->sub_field_count; i++) {
-            uint16_t e = (uint16_t)def->sub_fields[i].byte_offset +
-                         (uint16_t)def->sub_fields[i].bytes;
-            if (e > s) s = e;
-        }
-        return (s == 0 || s > 5) ? 0 : (uint8_t)s;
-    }
-    return (def->bytes < 1 || def->bytes > 5) ? 0 : def->bytes;
+    uint8_t n = obd2_def_resp_len(def);
+    return (n > 16) ? 0 : n;
 }
 
-/* Build + inject a single-frame Mode 01 response for one PID. */
+/* Build + inject a Mode 01 response for one PID. Single-frame when the
+ * payload fits (the common case); wide diesel PIDs (EGT block, DPF)
+ * route through the generic ISO-TP injector so the bench exercises the
+ * same First Frame / Consecutive Frame reassembly a real car needs. */
 static void _sim_inject_mode01_pid(uint8_t pid, uint64_t now_ms)
 {
     if (pid == 0x00 || pid == 0x20 || pid == 0x40 || pid == 0x60 ||
@@ -1328,17 +1506,16 @@ static void _sim_inject_mode01_pid(uint8_t pid, uint64_t now_ms)
     }
     const obd2_pid_def_t *def = obd2_pid_find_svc(0x01, pid);
     uint8_t span = _sim_pid_span(def);
-    if (span == 0) return;   /* unknown/unsimulatable PID — stay silent, like a real ECU NRC */
+    if (span == 0) return;
 
     uint32_t raw = _sim_raw_for(span, pid, now_ms);
-    uint8_t f[8] = { 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55 };
-    f[0] = (uint8_t)(2 + span);   /* SF length: 0x41 + pid + span data bytes */
-    f[1] = 0x41;
-    f[2] = pid;
+    uint8_t msg[2 + 16];
+    msg[0] = 0x41;
+    msg[1] = pid;
     for (uint8_t i = 0; i < span; i++) {
-        f[3 + i] = (uint8_t)((raw >> (8 * (span - 1 - i))) & 0xFF);
+        msg[2 + i] = (uint8_t)((raw >> (8 * (span - 1 - i))) & 0xFF);
     }
-    can_inject_rx_frame(OBD2_RESPONSE_ID_FIRST, false, f, 8);
+    _sim_inject_message(msg, (uint16_t)(2 + span));
 }
 
 /* Generic ISO-TP response injector — single frame when `msg` fits in 7
@@ -1390,7 +1567,7 @@ static void _sim_inject_freeze(uint8_t data_pid, uint8_t frame_no, uint64_t now_
     if (span == 0) return;
     uint32_t raw = _sim_raw_for(span, data_pid, now_ms);
 
-    uint8_t msg[8];
+    uint8_t msg[3 + 16];   /* header + max _sim_pid_span */
     msg[0] = 0x42;
     msg[1] = data_pid;
     msg[2] = frame_no;
@@ -1498,13 +1675,15 @@ static bool _sim_consume_tx(uint32_t tx_id, const uint8_t *d, uint8_t dlc)
 }
 
 /* Single TX choke point. In sim mode, Mode 01 requests are answered
- * synthetically (no bus traffic); everything else falls through. */
+ * synthetically (no bus traffic); everything else falls through. IDs
+ * above the 11-bit range transmit as extended frames (29-bit ISO
+ * 15765-4 addressing — request 0x18DB33F1 / FC 0x18DAxxF1). */
 static esp_err_t _obd2_tx(uint32_t id, const uint8_t *data, uint8_t dlc)
 {
     if (s_sim_enabled && _sim_consume_tx(id, data, dlc)) {
         return ESP_OK;
     }
-    return can_transmit_frame(id, data, dlc);
+    return can_transmit_frame_ext(id, id > 0x7FFu, data, dlc);
 }
 
 void obd2_sim_set_enabled(bool enabled)
@@ -1575,7 +1754,10 @@ static void _scan_consume_bitmask(uint8_t base_pid, const uint8_t *bm)
 
 void obd2_rx_handler(uint32_t can_id, const uint8_t *data, uint8_t dlc)
 {
-    if (can_id < OBD2_RESPONSE_ID_FIRST || can_id > OBD2_RESPONSE_ID_LAST) return;
+    bool std_resp = (can_id >= OBD2_RESPONSE_ID_FIRST &&
+                     can_id <= OBD2_RESPONSE_ID_LAST);
+    bool ext_resp = ((can_id & OBD2_RESPONSE_29_MASK) == OBD2_RESPONSE_29_BASE);
+    if (!std_resp && !ext_resp) return;
     if (!data || dlc < 2) return;
 
     /* The TWAI driver surfaces the raw 4-bit DLC (0-15) but only ever fills 8
@@ -1748,13 +1930,14 @@ static void _process_full_message(uint8_t *msg, uint16_t len)
             return;
         }
         if (s_dtc_req.active && rejected_svc == s_dtc_req.mode) {
-            ESP_LOGW(TAG, "DTC mode 0x%02X rejected — NRC 0x%02X",
+            /* One ECU declining doesn't fail the read — another module
+             * may still answer positively (e.g. the engine NRCs Mode 0A
+             * while the TCU supports it). Count it as a reply so the
+             * merge window closes promptly; the timer completion fires
+             * ok=false only if NO positive response ever arrives. */
+            ESP_LOGW(TAG, "DTC mode 0x%02X rejected by one ECU — NRC 0x%02X",
                      rejected_svc, msg[2]);
-            obd2_dtc_cb_t cb = s_dtc_req.cb;
-            void *user = s_dtc_req.user;
-            uint8_t mode = s_dtc_req.mode;
-            s_dtc_req.active = false;
-            cb(false, NULL, 0, mode, user);
+            s_dtc_req.last_resp_ms = (uint64_t)(esp_timer_get_time() / 1000ULL);
             return;
         }
         /* A Mode 09 NRC (0x7F 09 NN) does not echo the PID, so when BOTH the VIN
@@ -1794,6 +1977,18 @@ static void _process_full_message(uint8_t *msg, uint16_t len)
             void *user = s_freeze_req.user;
             s_freeze_req.active = false;
             cb(false, NULL, 0, user);
+            return;
+        }
+        /* NRC for Mode 01 while our last TX was a multi-PID batch: the
+         * ECU is rejecting batched requests. Two strikes latch batching
+         * off (suppressed once any batch has demonstrably worked, so a
+         * secondary ECU NRC-ing batches the engine answers can't). */
+        if (rejected_svc == 0x01 && s_last_tx_was_batch &&
+            !s_batch_ever_ok && !s_batch_disabled) {
+            ESP_LOGW(TAG, "Mode 01 batch rejected — NRC 0x%02X", msg[2]);
+            if (++s_batch_nrc_strikes >= 2) {
+                _disable_batching("ECU NRCs multi-PID requests");
+            }
             return;
         }
         return;
@@ -1841,13 +2036,13 @@ static void _process_full_message(uint8_t *msg, uint16_t len)
                 plen--;
             }
         }
+        /* Merge this ECU's codes and keep the request armed — the
+         * broadcast reaches every module, and slower ECUs (TCU, ABS,
+         * hybrid) answer tens of ms after the engine. The merge window
+         * in _poll_timer_cb fires the callback once replies go quiet. */
         _dtc_decode_payload(p, plen);
-        obd2_dtc_cb_t cb = s_dtc_req.cb;
-        void *user = s_dtc_req.user;
-        uint8_t mode = s_dtc_req.mode;
-        uint8_t count = s_dtc_req.count;
-        s_dtc_req.active = false;
-        cb(true, count > 0 ? s_dtc_req.codes : NULL, count, mode, user);
+        s_dtc_req.got_positive = true;
+        s_dtc_req.last_resp_ms = (uint64_t)(esp_timer_get_time() / 1000ULL);
         return;
     }
 
@@ -2015,6 +2210,7 @@ static void _process_full_message(uint8_t *msg, uint16_t len)
     if (service == 0x01) {
         const uint8_t *p = &msg[1];
         uint16_t rem = (uint16_t)(len - 1);
+        uint8_t decoded_pids = 0;
         while (rem >= 2) {
             uint8_t pid = p[0];
             const obd2_pid_def_t *def = obd2_pid_find_svc(0x01, pid);
@@ -2023,37 +2219,49 @@ static void _process_full_message(uint8_t *msg, uint16_t len)
                 return;
             }
 
-            /* Determine how many data bytes this PID's response carries
-             * and how to decode them. Both branches must agree on the
-             * `consumed` count so the walk stays in sync for any
-             * trailing PIDs in a multi-PID batch response. */
-            uint8_t  consumed;
-            uint16_t data_len;
-            bool     packed = (def->sub_fields && def->sub_field_count > 0);
-
-            if (packed) {
-                /* Packed Mode 01 (diesel EGT / DPF / boost / rail
-                 * pressure etc.). Compute the byte span as the max
-                 * (byte_offset + bytes) across all sub-fields — that's
-                 * how many data bytes the ECU emits for this PID. */
-                uint16_t span = 0;
-                for (uint8_t i = 0; i < def->sub_field_count; i++) {
-                    uint16_t end = (uint16_t)def->sub_fields[i].byte_offset +
-                                    (uint16_t)def->sub_fields[i].bytes;
-                    if (end > span) span = end;
-                }
-                if (span == 0) { ESP_LOGW(TAG, "Packed PID 0x%02X span=0", pid); return; }
-                data_len = span;
-                consumed = (uint8_t)(1 + span);
-            } else {
-                data_len = def->bytes;
-                consumed = (uint8_t)(1 + def->bytes);
+            /* How many data bytes the ECU emits for this PID — resp_len
+             * when the table sets it (PIDs where the spec response is
+             * wider than what we decode, e.g. 0x14 = voltage + trim),
+             * otherwise the decode span. Getting this right is what
+             * keeps the walk aligned for trailing PIDs in a batch. */
+            uint8_t resp_bytes = obd2_def_resp_len(def);
+            bool    packed     = (def->sub_fields && def->sub_field_count > 0);
+            if (resp_bytes == 0) {
+                ESP_LOGW(TAG, "PID 0x%02X has zero response length", pid);
+                return;
             }
-            if (rem < consumed) return;
+            uint8_t consumed = (uint8_t)(1 + resp_bytes);
+
+            /* Short payload vs table: real ECUs sometimes emit fewer
+             * slots than J1979-DA declares (e.g. a 0x77 with 2 sensors
+             * instead of 4). Decode what actually arrived, then end the
+             * walk — without the full span we can't trust alignment for
+             * any trailing PID. */
+            if (rem < consumed) {
+                uint16_t avail = (uint16_t)(rem - 1);
+                bool decoded = false;
+                if (packed) {
+                    _decode_packed(def, &p[1], avail);
+                    decoded = true;   /* per-sub-field bounds guard inside */
+                } else if (avail >= def->bytes) {
+                    _decode_and_push(def, &p[1]);
+                    decoded = true;
+                }
+                if (decoded) {
+                    for (uint8_t i = 0; i < s_poll_count; i++) {
+                        if (s_poll[i].pid == pid && s_poll[i].service == 0x01) {
+                            s_poll[i].last_response_ms = now;
+                            break;
+                        }
+                    }
+                    decoded_pids++;
+                }
+                break;
+            }
 
             if (packed) {
-                _decode_packed(def, &p[1], data_len);
-            } else {
+                _decode_packed(def, &p[1], resp_bytes);
+            } else if (resp_bytes >= def->bytes) {
                 _decode_and_push(def, &p[1]);
             }
 
@@ -2071,9 +2279,40 @@ static void _process_full_message(uint8_t *msg, uint16_t len)
                     break;
                 }
             }
+            decoded_pids++;
 
             p   += consumed;
             rem -= consumed;
+
+            /* Continuation gate: a multi-PID response can only contain
+             * PIDs we requested, and we only request polled PIDs. If the
+             * next byte isn't one of those, it's trailing data from a PID
+             * whose table resp_len understates the ECU's real emission —
+             * stop rather than decode garbage into whatever signal that
+             * byte happens to alias. */
+            if (rem >= 2) {
+                uint8_t next_pid = p[0];
+                bool expected = false;
+                for (uint8_t i = 0; i < s_poll_count; i++) {
+                    if (s_poll[i].service == 0x01 && s_poll[i].pid == next_pid) {
+                        expected = true;
+                        break;
+                    }
+                }
+                if (!expected) {
+                    ESP_LOGD(TAG, "Multi-PID walk: 0x%02X not polled — trailing bytes, stopping",
+                             next_pid);
+                    break;
+                }
+            }
+        }
+        /* A response carrying 2+ PIDs proves this car handles batched
+         * requests — permanently suppress the batch-disable heuristics
+         * (a flaky secondary ECU can no longer latch them off). */
+        if (decoded_pids >= 2 && !s_batch_ever_ok) {
+            s_batch_ever_ok      = true;
+            s_batch_nrc_strikes  = 0;
+            s_batch_flap_strikes = 0;
         }
         /* Response done — kick off next request immediately. See note
          * at end of function for the response-triggered dispatch path. */
@@ -2124,13 +2363,17 @@ void obd2_discovery_start(obd2_scan_cb_t cb, void *user)
     s_scan_got_any   = false;
 
     /* Auto-search setup: try the current rate first, then the OTHER standard
-     * ISO 15765-4 CAN rate (250k<->500k), each on functional then physical
-     * addressing — so a car on 250k or one that only answers 0x7E0 still gets
+     * ISO 15765-4 CAN rate (250k<->500k) — each on 11-bit functional, 11-bit
+     * physical, then 29-bit functional addressing — so a car on 250k, one
+     * that only answers 0x7E0, or a 29-bit-only car (Honda et al) still gets
      * found instead of a flat "not connected". */
     s_scan_orig_bitrate  = can_get_bitrate_index();
     s_scan_other_bitrate = (s_scan_orig_bitrate == 1 /*250k*/) ? 2 /*500k*/
                                                                : 1 /*250k*/;
     s_scan_on_other      = false;
+    s_scan_orig_ext      = can_get_obd_extended();
+    s_scan_filter_ext    = s_scan_orig_ext;   /* installed filter matches flag */
+    s_scan_rx_at_start   = can_get_rx_frame_count();
     s_scan_probing       = true;
     s_scan_probe_step    = 0;
     s_obd_req_id         = OBD2_REQUEST_ID_BROADCAST;
@@ -2143,18 +2386,36 @@ void obd2_discovery_start(obd2_scan_cb_t cb, void *user)
 }
 
 /* Apply the current probe combo (bitrate + addressing) and fire a PID 0x00
- * query. Switching bitrate bounces the TWAI driver (~250 ms) — acceptable for
- * a one-shot, user-initiated scan; the "Scanning…" status is already shown. */
+ * query. Switching bitrate bounces the TWAI driver (~250 ms), and the first
+ * 29-bit probe opens the acceptance filter (~similar bounce) — acceptable
+ * for a one-shot, user-initiated scan; the "Scanning…" status is already
+ * shown. Once opened, the filter stays open for the remaining probes (an
+ * ACCEPT_ALL filter passes 11-bit traffic too) and is reconciled with the
+ * final addressing mode in _scan_finalize. */
 static void _scan_begin_probe_step(void)
 {
     const bool     need_other = SCAN_PROBE[s_scan_probe_step].other_rate;
+    const bool     need_ext   = SCAN_PROBE[s_scan_probe_step].ext;
     const uint32_t req_id     = SCAN_PROBE[s_scan_probe_step].req_id;
+
+    if (need_ext && !can_get_obd_extended()) {
+        ESP_LOGI(TAG, "Scan: probing 29-bit extended addressing");
+        can_set_obd_extended(true);   /* RAM only — persisted on lock */
+    }
 
     if (need_other != s_scan_on_other) {
         uint8_t target = need_other ? s_scan_other_bitrate : s_scan_orig_bitrate;
         ESP_LOGI(TAG, "Scan: probing CAN bitrate index %u", target);
-        can_change_bitrate(target);   /* transient — persisted only on success */
-        s_scan_on_other = need_other;
+        can_change_bitrate(target);   /* transient — persisted only on success;
+                                         rebuilds the filter with the current
+                                         extended flag as a side effect */
+        s_scan_on_other   = need_other;
+        s_scan_filter_ext = can_get_obd_extended();
+    } else if (can_get_obd_extended() != s_scan_filter_ext) {
+        /* Extended flag flipped but no bitrate bounce to carry it into the
+         * hardware filter — rebuild explicitly so 0x18DAF1xx responses pass. */
+        reconfigure_can_filter();
+        s_scan_filter_ext = can_get_obd_extended();
     }
     s_obd_req_id   = req_id;
     s_scan_got_any = false;           /* per-combo detection */
@@ -2208,6 +2469,15 @@ static void _scan_finalize(bool completed)
 {
     s_scan_result.completed = completed;
     s_scan_state            = SCAN_IDLE;
+
+    /* Reconcile the acceptance filter with the final addressing mode.
+     * 29-bit probing leaves the filter ACCEPT_ALL; if the scan settled on
+     * 11-bit (lock or failure-restore) narrow it back down. One driver
+     * bounce, only when the states actually differ. */
+    if (s_scan_filter_ext != can_get_obd_extended()) {
+        reconfigure_can_filter();
+        s_scan_filter_ext = can_get_obd_extended();
+    }
 
     obd2_scan_cb_t cb  = s_scan_cb;
     void          *usr = s_scan_user;

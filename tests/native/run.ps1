@@ -39,6 +39,7 @@ function Get-ExtraSources($name) {
 	switch ($name) {
 		"test_widget_rules"      { return @("cjson/cJSON.c") }
 		"test_layout_migration"  { return @("cjson/cJSON.c") }
+		"test_obd2_pid_table"    { return @("../../main/can/obd2_pids.c") }
 		default                  { return @() }
 	}
 }

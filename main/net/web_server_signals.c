@@ -507,7 +507,7 @@ typedef struct {
     /* Test parameters (kept so _kick can call obd2_test_pid from the
      * LVGL task after lv_async_call hands off). */
     uint8_t           service;
-    uint8_t           pid;
+    uint16_t          pid;      /* 16-bit — Mode 22 PIDs exceed one byte */
     uint32_t          request_id;
     uint8_t           data_offset;
     uint8_t           data_bytes;
@@ -569,7 +569,7 @@ static esp_err_t _obd2_test_pid_handler(httpd_req_t *req)
     t = cJSON_GetObjectItemCaseSensitive(root, "service");
     ctx->service = cJSON_IsNumber(t) ? (uint8_t)t->valueint : 0x01;
     t = cJSON_GetObjectItemCaseSensitive(root, "pid");
-    ctx->pid = cJSON_IsNumber(t) ? (uint8_t)t->valueint : 0;
+    ctx->pid = cJSON_IsNumber(t) ? (uint16_t)t->valueint : 0;
     t = cJSON_GetObjectItemCaseSensitive(root, "request_id");
     ctx->request_id = cJSON_IsNumber(t) ? (uint32_t)t->valueint : 0;
     t = cJSON_GetObjectItemCaseSensitive(root, "data_offset");

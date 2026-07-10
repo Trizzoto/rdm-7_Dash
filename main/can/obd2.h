@@ -36,6 +36,19 @@ extern "C" {
 #define OBD2_RESPONSE_ID_FIRST    0x7E8u
 #define OBD2_RESPONSE_ID_LAST     0x7EFu
 
+/* 29-bit ("extended addressing") ISO 15765-4 IDs. A minority of cars —
+ * many 2006-2012 Hondas, some GM/Mazda — only answer OBD2 on these.
+ * Functional request:  0x18DB33F1 (target 0x33 = all-OBD, source 0xF1 = tester)
+ * Physical responses:  0x18DAF1xx (target 0xF1 = tester, source xx = ECU)
+ * Flow control to ECU: 0x18DAxxF1 (swap source/target). The auto-search
+ * scan probes these after the 11-bit combos fail; a lock is persisted
+ * via can_persist_obd_extended(). */
+#define OBD2_REQUEST_ID_FUNC_29   0x18DB33F1u
+#define OBD2_RESPONSE_29_BASE     0x18DAF100u
+#define OBD2_RESPONSE_29_MASK     0x1FFFFF00u
+#define OBD2_REQUEST_29_FOR(src_ecu) \
+    (0x18DA00F1u | (((uint32_t)(src_ecu) & 0xFFu) << 8))
+
 /* ── Encoded (service, pid) tuples ──────────────────────────────────────
  *
  * Polled-PID storage encodes service + PID into a single uint32 so the
@@ -119,7 +132,15 @@ typedef struct {
  * use 0x7E0 to address the engine ECU specifically (avoids NRCs from
  * other ECUs that don't handle this PID).
  *
- * `category` is a free-form UI grouping hint. NULL = ungrouped. */
+ * `category` is a free-form UI grouping hint. NULL = ungrouped.
+ *
+ * `resp_len` is the ACTUAL number of data bytes the ECU returns for this
+ * PID per SAE J1979, when that differs from the decode span. The Mode 01
+ * multi-PID response walker advances by 1 + resp_len per PID; a wrong
+ * value desyncs the walk and every PID after this one in a batched
+ * response decodes garbage or is dropped (e.g. PID 0x14 returns 2 bytes
+ * — voltage + trim — while we only decode byte A). 0 = decode span IS
+ * the full response (the common case). */
 typedef struct {
     uint16_t     pid;             /* 8-bit for Mode 01/21; 16-bit for Mode 22 */
     const char  *signal_name;
@@ -136,11 +157,32 @@ typedef struct {
     const obd2_subfield_t *sub_fields; /* packed-decode sub-fields; NULL → single-value */
     uint8_t      sub_field_count;
     uint32_t     request_id;      /* 0 → use OBD2_REQUEST_ID_BROADCAST */
+    uint8_t      resp_len;        /* actual response data bytes; 0 = same as decode span */
 } obd2_pid_def_t;
 
 /* Helper: resolve the effective service byte (translates 0 → 0x01). */
 static inline uint8_t obd2_def_service(const obd2_pid_def_t *def) {
     return (def && def->service) ? def->service : 0x01;
+}
+
+/* Helper: effective response DATA length for this PID (bytes after the
+ * PID echo). resp_len when set; otherwise the packed sub-field span
+ * (max byte_offset + bytes); otherwise the single-value byte count.
+ * This is what the multi-PID walker consumes and what the bench sim
+ * emits, so both stay in lockstep with the real ECU's framing. */
+static inline uint8_t obd2_def_resp_len(const obd2_pid_def_t *def) {
+    if (!def) return 0;
+    if (def->resp_len) return def->resp_len;
+    if (def->sub_fields && def->sub_field_count > 0) {
+        uint16_t span = 0;
+        for (uint8_t i = 0; i < def->sub_field_count; i++) {
+            uint16_t end = (uint16_t)def->sub_fields[i].byte_offset +
+                           (uint16_t)def->sub_fields[i].bytes;
+            if (end > span) span = end;
+        }
+        return (span > 0xFF) ? 0xFF : (uint8_t)span;
+    }
+    return def->bytes;
 }
 
 /* Static PID table — see obd2_pids.c */
@@ -236,7 +278,7 @@ typedef void (*obd2_test_cb_t)(bool ok,
                                 uint32_t elapsed_ms,
                                 void *user);
 
-void obd2_test_pid(uint8_t service, uint8_t pid, uint32_t request_id,
+void obd2_test_pid(uint8_t service, uint16_t pid, uint32_t request_id,
                    uint8_t data_offset, uint8_t data_bytes,
                    float scale, float offset, bool is_signed,
                    obd2_test_cb_t cb, void *user);

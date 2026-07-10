@@ -15,6 +15,13 @@ esp_err_t config_store_load_dimmer(brightness_dimmer_config_t *cfg);
 esp_err_t config_store_save_bitrate(uint8_t bitrate);
 esp_err_t config_store_load_bitrate(uint8_t *bitrate);
 
+/* ── OBD2 addressing mode (0 = 11-bit standard, 1 = 29-bit extended) ──────
+ * Persisted when the OBD2 auto-search scan locks onto a car that only
+ * answers 29-bit ISO 15765-4 (many Hondas, some GM) so polling still works
+ * after a reboot without a rescan. */
+esp_err_t config_store_save_obd_extended(uint8_t extended);
+esp_err_t config_store_load_obd_extended(uint8_t *extended);
+
 /* ── WiFi credentials ──────────────────────────────────────────────────── */
 typedef struct {
 	char ssid[33];
