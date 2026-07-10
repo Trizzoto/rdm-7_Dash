@@ -718,7 +718,8 @@ static void _pathbar_draw_band(lv_draw_ctx_t *ctx, pathbar_data_t *pd,
     if (f <= 0.0f || total <= 0.0f) return;
     float fill = f * total;
     lv_color_t bright = pd->lit_color;
-    lv_color_t dim    = lv_color_mix(bright, lv_color_black(), 66);
+    /* ~74% of bright — subtle ramp; see widget_arc.c _arc_fade_draw_cb. */
+    lv_color_t dim    = lv_color_mix(bright, lv_color_black(), 189);
     float rl = (pd->redline < pd->val_max && pd->val_max > pd->val_min)
              ? (pd->redline - pd->val_min) / (pd->val_max - pd->val_min) : 1.0f;
     float rlpx = rl * total;                          /* exact redline arc-length */

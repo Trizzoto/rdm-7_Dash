@@ -8819,7 +8819,7 @@
                  * preview matches the firmware (widget_arc.c _arc_fade_draw_cb).
                  * When off, a single solid fill like the native indicator. */
                 if (c.fade_fill){
-                    const dim = _pvDarken(fillCol, 0.26);
+                    const dim = _pvDarken(fillCol, 0.74);
                     const segs = Math.max(2, Math.ceil(Math.abs(aV - start) / 7));
                     const dseg = (aV - start) / segs;
                     for (let i = 0; i < segs; i++){
@@ -8900,7 +8900,7 @@
             let s = `<rect x="${left.toFixed(1)}" y="${top.toFixed(1)}" width="${w.w}" height="${w.h}" rx="${rad}" fill="${_pvColor(c.bar_bg_color, '#2E2F2E')}"${bw > 0 ? ` stroke="${_pvColor(c.bar_border_color, '#2E2F2E')}" stroke-width="${bw}"` : ''}/>`;
             if (fw > 0.5){
                 /* positional fade (dim at empty end → bright at the fill end) + bright tip */
-                const dim = _pvDarken(fillCol, 0.26), gid = 'bg_' + (w.id || 'bar');
+                const dim = _pvDarken(fillCol, 0.74), gid = 'bg_' + (w.id || 'bar');
                 const x1g = dir === 1 ? left + w.w : left, x2g = dir === 1 ? left : left + w.w;
                 s += `<linearGradient id="${gid}" gradientUnits="userSpaceOnUse" x1="${x1g}" y1="0" x2="${x2g}" y2="0"><stop offset="0%" stop-color="${dim}"/><stop offset="100%" stop-color="${fillCol}"/></linearGradient>`;
                 s += `<rect x="${fx.toFixed(1)}" y="${(top + bw).toFixed(1)}" width="${fw.toFixed(1)}" height="${(w.h - 2 * bw).toFixed(1)}" rx="${_pvNum(c.indicator_radius, 5)}" fill="url(#${gid})"/>`;

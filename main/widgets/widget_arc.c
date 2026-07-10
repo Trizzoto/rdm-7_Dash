@@ -1010,9 +1010,11 @@ static void _arc_fade_draw_cb(lv_event_t *e) {
     if (ind_span <= 0.5f) return;
 
     lv_color_t bright = lv_obj_get_style_arc_color(obj, LV_PART_INDICATOR);
-    /* dim = 26% of bright — matches the studio preview (_pvDarken(col, 0.26))
-     * so the dim→bright ramp reads the same on the panel as in the editor. */
-    lv_color_t dim    = lv_color_mix(bright, lv_color_black(), 66);
+    /* dim = ~74% of bright — a SUBTLE positional ramp. The 26% "match the
+     * studio mockup" intensity (16fae50) read as a glow smeared across the
+     * whole sweep next to the real panel; the editor's ground truth is now
+     * the pixel-exact WASM render, so the panel look wins. */
+    lv_color_t dim    = lv_color_mix(bright, lv_color_black(), 189);
 
     lv_draw_arc_dsc_t dsc;
     lv_draw_arc_dsc_init(&dsc);
