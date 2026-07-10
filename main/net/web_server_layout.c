@@ -214,6 +214,14 @@ static esp_err_t layout_raw_handler(httpd_req_t *req) {
 	memcpy(layout_name, name_val, name_len);
 	layout_name[name_len] = '\0';
 
+	/* Decode %XX before validating — a name with a space ("RD Cluster")
+	 * arrives as "RD%20Cluster" and never matches the file on LittleFS,
+	 * which broke every editor flow that re-fetches a space-named layout
+	 * after switching to it. Decode first so the traversal check below
+	 * sees the real bytes (%2e%2e can't sneak past as dots-in-waiting). */
+	web_server_url_decode(layout_name);
+	name_len = strlen(layout_name);
+
 	/* Reject path traversal: slash, backslash, or ".." */
 	for (size_t i = 0; i < name_len; i++) {
 		if (layout_name[i] == '/' || layout_name[i] == '\\') {
