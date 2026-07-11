@@ -163,6 +163,11 @@ static esp_err_t _signal_values_handler(httpd_req_t *req) {
 		cJSON_AddStringToObject(obj, "name", sig->name);
 		cJSON_AddNumberToObject(obj, "value", sig->current_value);
 		cJSON_AddBoolToObject(obj, "stale", sig->is_stale);
+		/* Never-received vs received-then-stale. A widget bound to a signal
+		 * that has NEVER updated renders its initial "--" state; current_value
+		 * is just the registry's 0 placeholder. Mirrors (desktop WASM preview)
+		 * must not inject that 0 — it repaints "--" widgets as "0.0". */
+		cJSON_AddBoolToObject(obj, "seen", sig->last_update_ms != 0);
 		cJSON_AddNumberToObject(obj, "can_id", sig->can_id);
 		/* Provenance — lets the web side classify channel sources and the
 		 * Custom Signals filter exclude OBD2/INTERNAL rows without name
