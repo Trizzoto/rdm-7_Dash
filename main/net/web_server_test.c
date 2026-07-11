@@ -13,6 +13,7 @@
 #include "cJSON.h"
 #include "can/can_manager.h"
 #include "can/can_bus_test.h"
+#include "can/can_id_tracker.h"
 #include "widgets/signal.h"
 #include "widgets/signal_sim.h"
 #include "widgets/widget_registry.h"
@@ -564,6 +565,47 @@ static esp_err_t _can_scan_status_handler(httpd_req_t *req) {
 	return _send_json(req, root);
 }
 
+/* ── GET /api/can/monitor ────────────────────────────────────────────────
+ *
+ * Live bus monitor: dump the per-ID tracker (the same table behind the
+ * on-device CAN list screen) as JSON. This is the read primitive for the
+ * desktop CAN Bus Analyzer — the dash acts as the WiFi↔CAN gateway, no
+ * dongle. The tracker is fed on the LVGL task; like /api/signals/values we
+ * read WITHOUT the LVGL lock: every field is word-sized or an 8-byte array,
+ * and a torn read shows one momentarily-mixed frame in a monitor UI — far
+ * better than stalling either task. Rate is computed CLIENT-side from
+ * rx_count deltas between polls (finer than the tracker's 1 s Hz window,
+ * and avoids mutating tracker state from the httpd task). */
+static esp_err_t _can_monitor_handler(httpd_req_t *req) {
+	cJSON *root = cJSON_CreateObject();
+	cJSON *arr  = cJSON_AddArrayToObject(root, "ids");
+	int64_t now = esp_timer_get_time();
+	uint16_t n  = can_id_tracker_count();
+	for (uint16_t i = 0; i < n; i++) {
+		const can_id_entry_t *t = can_id_tracker_get(i);
+		if (!t) break;
+		cJSON *e = cJSON_CreateObject();
+		cJSON_AddNumberToObject(e, "id", t->can_id);
+		if (t->extended) cJSON_AddBoolToObject(e, "ext", true);
+		cJSON_AddNumberToObject(e, "dlc", t->dlc);
+		char hex[17];
+		for (int b = 0; b < t->dlc && b < 8; b++)
+			snprintf(hex + b * 2, 3, "%02X", t->data[b]);
+		hex[(t->dlc > 8 ? 8 : t->dlc) * 2] = '\0';
+		cJSON_AddStringToObject(e, "data", hex);
+		cJSON_AddNumberToObject(e, "count", t->rx_count);
+		cJSON_AddNumberToObject(e, "age_ms",
+		                        (double)((now - t->last_seen_us) / 1000));
+		cJSON_AddItemToArray(arr, e);
+	}
+	cJSON_AddNumberToObject(root, "capacity", CAN_ID_TRACKER_MAX_IDS);
+	return _send_json(req, root);
+}
+
+static const httpd_uri_t can_monitor_uri = {
+	.uri = "/api/can/monitor", .method = HTTP_GET,
+	.handler = _can_monitor_handler, .user_ctx = NULL};
+
 static const httpd_uri_t can_scan_start_uri = {
 	.uri = "/api/can/scan/start", .method = HTTP_POST,
 	.handler = _can_scan_start_handler, .user_ctx = NULL};
@@ -600,4 +642,5 @@ void web_server_test_register(httpd_handle_t server) {
 	REGISTER_URI(server, &perf_bigframe_uri);
 	REGISTER_URI(server, &can_scan_start_uri);
 	REGISTER_URI(server, &can_scan_status_uri);
+	REGISTER_URI(server, &can_monitor_uri);
 }
