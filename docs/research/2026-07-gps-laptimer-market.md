@@ -71,3 +71,66 @@ What club racers actually use: delta-T vs reference lap, GPS track map with sect
 - **Track DB**: seed with the top ~100 AU/NZ + popular US/EU circuits (self-curated coordinates), then take the RaceChrono route — community submissions synced via the marketplace. Avoid deriving from AiM (proprietary) or wholesale OSM import (ODbL share-alike).
 - **Analysis story**: don't build i2. Build the VBOX Circuit Tools of this tier — cross-platform, auto-synced laps, delta-T plot, track map, two-lap overlay, CSV export — inside the existing desktop studio. Windows-only/clunky/licensed software is the most repeated complaint in this market; "free, modern, cross-platform analysis included" is a marketing line none of AiM/MoTeC can say.
 - **Credibility details**: publish real numbers (25 Hz, constellations, ±0.02 s lap precision), never downgrade specs silently, and make firmware updates un-brickable — AiM's WiFi-update horror stories and VBOX's silent 10 Hz cut are reputational openings for a brand positioning itself as a peer to Haltech/AiM/MoTeC.
+
+## 8. Feature deep-dive (2026-07-11 refresh) — what the software actually does
+
+Three parallel research passes on AiM Solo 2/DL + Garmin Catalyst, RaceBox +
+Harry's LapTimer/RaceChrono/TrackAddict, and the pro-analysis tier
+(VBOX Circuit Tools, MoTeC i2, RaceRender). Feature-level findings, mapped to
+what RDM Studio now ships vs. what's still open.
+
+**On-device / real-time (dash + node) — the table stakes:**
+
+| Feature | Who | RDM status |
+|---|---|---|
+| Predictive live delta vs best | everyone | ✅ shipped (Simulate) |
+| Sector/split times | everyone (2–3 splits) | ✅ shipped |
+| **Theoretical best** (quickest sector spliced from any lap) | AiM, VBOX, TrackAddict | ✅ **added v0.4.3** (OPT in timer bar + Analyse) |
+| **Optimal lap** (best *driven* segments, not just sectors) | Garmin "True Optimal Lap" (patented) | open — richer than theoretical best |
+| **Real-time coaching cues** (voice: "brake earlier", braking point in ft) | Garmin Catalyst — its whole moat | open — we have the data; text cues on the dash are feasible |
+| Lap-consistency score | Garmin | open |
+| Shift LEDs / race-page widget | AiM, Alfano, MoTeC | partial — dash widgets exist, no dedicated race page yet |
+
+**Desktop analysis — where incumbents are weakest and RDM can win:**
+
+| Feature | Benchmark | RDM status |
+|---|---|---|
+| **Delta-T trace** (cumulative time lost/gained, two laps) | Circuit Tools opens on it; i2 "time-variance" | ✅ **added v0.4.3** |
+| **Racing line coloured by channel** (speed/gear) | all | ✅ speed colouring shipped |
+| Two-lap line overlay (reference ghost) | Circuit Tools "Overhead Car View" | ✅ reference ghost shipped |
+| **Channel graphs vs distance, overlaid on reference** | i2 benchmark (RPM/throttle/brake/steer) | ✅ speed/throttle-brake/RPM shipped |
+| **g-g / friction circle** (Lat-G × Long-G) | i2 idiom | ✅ shipped |
+| Scrub cursor linking graph ↔ map ↔ readout | i2, Circuit Tools | ✅ shipped |
+| Sector deltas + coaching call-out ("−1.0s in S3") | Garmin auto "top-3 opportunities" | ✅ shipped (auto worst-sector call-out) |
+| CSV / data export | all | ✅ shipped |
+| **Video overlay + data gauges** (auto-synced to GPS timestamp) | RaceRender, Harry's, RaceChrono | open — heaviest lift; GPS-timestamp auto-sync is the differentiator (all incumbents do *manual* offset alignment) |
+| Math channels | i2 Pro | open (channel-math exists on the dash already — reuse) |
+| Cloud session sharing / social leaderboards | RaceBox has leaderboards; nobody has slick sharing | open (marketplace is the natural home) |
+
+**The two structural moats (unchanged, now demonstrated):**
+
+1. **GPS + CAN fusion, free and pre-labelled.** VBOX HD2 is the only incumbent
+   fusing GPS with vehicle CAN (up to 80 ch), but it needs hand-mapped CAN
+   IDs/DBC and is a bolt-on box. The RDM-7 dash is *already* the CAN gateway
+   with decoded, named channels — so throttle/RPM/brake overlay against track
+   position with zero config. The Analyse workbench shows exactly this.
+2. **Free, modern, cross-platform analysis included.** The single most-repeated
+   complaint across AiM Race Studio 3, MoTeC i2 and TrackAddict is the
+   software: Windows-only, node-locked licences (i2 Pro reissue ≈ $100 on a
+   hardware change), codec breakage, "sold my PC over it" learning curves.
+   RDM Studio's Analyse mode is the "VBOX Circuit Tools of this tier" — a line
+   none of AiM/MoTeC/Garmin can print.
+
+**Pricing context (fresh):** RaceBox Micro/Mini/Mini-S **$129/$219/$289**;
+apps one-time — TrackAddict Pro **$8.99**, RaceChrono Pro **$19.99**, Harry's
+Petrolhead **$19.99**/Grand-Prix **$27.99**; AiM Solo 2 **$399–499**, Solo 2 DL
+**$649**; Garmin Catalyst 2 **$1,199 / A$1,999**. Analysis software is either a
+$9–28 app or bundled-but-Windows-locked — "free + cross-platform + GPS-CAN
+fusion" splits that field.
+
+**Priority order for the node era** (once hardware ships): (1) real recorded
+sessions auto-downloaded off the node over WiFi replacing the demo data; (2)
+Garmin-style real-time coaching cues on the dash (text, then audio); (3) video
+overlay with GPS-timestamp auto-sync; (4) marketplace session sharing +
+community leaderboards. Delta-T, theoretical best, speed-map, channel graphs,
+g-g and coaching call-outs are **done in the desktop workbench today**.
