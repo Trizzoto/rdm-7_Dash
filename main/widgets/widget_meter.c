@@ -43,6 +43,22 @@ static const char *TAG = "widget_meter";
 static bool s_meter_bake_suppressed = false;
 void widget_meter_set_bake_suppressed(bool suppressed) { s_meter_bake_suppressed = suppressed; }
 
+/* Per-rebuild static-tick bake budget. Even on the normal load path (where
+ * baking is wanted for runtime FPS) a layout with several LARGE meters could
+ * bake enough multi-second snapshots back-to-back to starve the LVGL core past
+ * the 15 s task WDT on boot — the same failure the preview path hit, just at
+ * load. Bound it two ways: skip any single meter whose snapshot area is huge,
+ * and stop baking once the cumulative area this rebuild exceeds a budget.
+ * Skipped meters fall through to the dynamic path (correct, just lower FPS).
+ * s_bake_budget_px is reset per full rebuild from dashboard_init(). Sized well
+ * above real layouts (current worst case ≈ 0.25 Mpx across 5 meters) so it only
+ * ever trips on pathological many-large-meter faces. TRUE_COLOR_ALPHA = 3 B/px,
+ * so 200k px ≈ 600 KB and 400k px ≈ 1.2 MB of transient snapshot. */
+#define METER_BAKE_MAX_PX_ONE  200000u   /* ~450×450 — one meter's own cap */
+#define METER_BAKE_BUDGET_PX   400000u   /* cumulative per rebuild */
+static uint32_t s_bake_budget_px = 0;
+void widget_meter_reset_bake_budget(void) { s_bake_budget_px = 0; }
+
 #define METER_DEFAULT_W 140
 #define METER_DEFAULT_H 140
 
@@ -1485,11 +1501,22 @@ static void _meter_flatten_static_ticks(meter_data_t *md, lv_obj_t *parent, bool
 	 * darkish-red bg instead of the half-red they configured. The
 	 * cost is one extra byte per pixel (RGB565 + 8-bit alpha) which
 	 * works out to ~280 KB for a 240×240 meter — still bounded. */
-	lv_img_dsc_t *snap = lv_snapshot_take(m, LV_IMG_CF_TRUE_COLOR_ALPHA);
+	/* Bake budget: a huge single meter, or too much cumulative bake this
+	 * rebuild, would risk the task WDT — skip to the dynamic path instead. */
+	uint32_t bake_px = (uint32_t)lv_obj_get_width(m) * (uint32_t)lv_obj_get_height(m);
+	bool over_budget = (bake_px > METER_BAKE_MAX_PX_ONE) ||
+	                   (s_bake_budget_px + bake_px > METER_BAKE_BUDGET_PX);
+	lv_img_dsc_t *snap = over_budget ? NULL
+	                                 : lv_snapshot_take(m, LV_IMG_CF_TRUE_COLOR_ALPHA);
 	if (!snap) {
-		/* Snapshot can fail under heap pressure. Fall back to the
-		 * dynamic path: just add the needle, leave ticks live. */
-		ESP_LOGW(TAG, "lv_snapshot_take returned NULL — static_ticks falls back to dynamic");
+		/* Over budget, or snapshot failed under heap pressure. Fall back to
+		 * the dynamic path: just add the needle, leave ticks live. */
+		if (over_budget)
+			ESP_LOGW(TAG, "meter %ux%u over bake budget (used %u px) — static_ticks falls back to dynamic",
+			         (unsigned)lv_obj_get_width(m), (unsigned)lv_obj_get_height(m),
+			         (unsigned)s_bake_budget_px);
+		else
+			ESP_LOGW(TAG, "lv_snapshot_take returned NULL — static_ticks falls back to dynamic");
 		uint32_t angle_range = _meter_compute_angle_range(md);
 		lv_meter_indicator_t **out_needle = use_night ? &md->night_needle : &md->needle;
 		lv_meter_scale_t     **out_ns     = use_night ? &md->night_needle_scale : &md->needle_scale;
@@ -1499,6 +1526,7 @@ static void _meter_flatten_static_ticks(meter_data_t *md, lv_obj_t *parent, bool
 		return;
 	}
 
+	s_bake_budget_px += bake_px;   /* charge this successful bake to the budget */
 	if (use_night) md->night_tick_snapshot_dsc = snap;
 	else           md->tick_snapshot_dsc       = snap;
 

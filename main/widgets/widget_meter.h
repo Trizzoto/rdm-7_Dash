@@ -329,6 +329,12 @@ bool widget_meter_bake_overlay(widget_t *meter_w, lv_obj_t *overlay);
  * the baked-face FPS optimisation. */
 void widget_meter_set_bake_suppressed(bool suppressed);
 
+/* Reset the per-rebuild static-tick bake budget. Call once at the start of a
+ * full dashboard (re)build so a layout with many large meters can't bake enough
+ * multi-second snapshots to trip the task watchdog on load — meters past the
+ * budget fall back to the (cheaper) dynamic render. */
+void widget_meter_reset_bake_budget(void);
+
 #ifdef __cplusplus
 }
 #endif

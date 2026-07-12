@@ -292,6 +292,9 @@ void dashboard_init(lv_obj_t *parent) {
 	widget_registry_reset();
 	widget_warning_reset();
 	widget_indicator_reset();
+	/* Fresh static-tick bake budget for this rebuild so many-large-meter
+	 * layouts can't bake enough snapshots to trip the task WDT on load. */
+	widget_meter_reset_bake_budget();
 	/* Drop any night-mode subscribers from the previous layout — the widgets
 	 * they pointed at have been destroyed; new layout will subscribe fresh. */
 	night_mode_clear_subscribers();
