@@ -39,3 +39,14 @@ Usersruuvaworkspace*/
 # scratch convention: throwaway layouts, screenshots, capture scripts,
 # per-cluster WIP). Keep them local; don't clutter the tree.
 tools/_*
+
+# More local cluster-dev scratch that predates the tools/_* convention:
+# per-car reference images, occluder/needle captures, one-off layout JSON and
+# an SVG preview. Kept on disk, out of the product tree.
+tools/altezza/
+tools/apex.json
+tools/aurora_layout.json
+tools/ford_cluster_preview.svg
+# stray reference photo dropped into the embedded-web dir (not referenced by
+# index.html; must never be embedded into firmware)
+main/web/ford_ref.jpg
