@@ -18,6 +18,7 @@
 #include "ui/screens/ui_Screen3.h"
 #include "ui/settings/preset_picker.h"
 #include "storage/config_store.h"
+#include "widgets/widget_meter.h"
 #include <dirent.h>
 #include <sys/stat.h>
 #include <stdlib.h>
@@ -87,12 +88,18 @@ static void _deferred_preview_apply(void *arg) {
 		/* Apply preview to splash screen */
 		splash_screen_apply_preview(root);
 	} else {
-		/* Apply preview to dashboard */
+		/* Apply preview to dashboard. Suppress the per-meter static-tick
+		 * snapshot for the duration: baking every meter on each debounced live
+		 * edit is multi-second + PSRAM-bandwidth-heavy, which starved the LVGL
+		 * core past the 15 s task WDT (→ reboot) and fuzzed the panel. Meters
+		 * render dynamic while editing; the save→load path bakes for runtime. */
+		widget_meter_set_bake_suppressed(true);
 		lv_obj_t *old = lv_disp_get_scr_act(lv_disp_get_default());
 		ui_Screen3_preview_layout(root);
 		lv_scr_load(ui_Screen3);
 		if (old && old != ui_Screen3)
 			lv_obj_del(old);
+		widget_meter_set_bake_suppressed(false);
 	}
 	cJSON_Delete(root);
 }

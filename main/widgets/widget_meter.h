@@ -322,6 +322,13 @@ void widget_meter_autoface(widget_t *w, lv_img_dsc_t *bg, const lv_area_t *bg_di
  *  needle. Safe to call with a currently-hidden overlay. */
 bool widget_meter_bake_overlay(widget_t *meter_w, lv_obj_t *overlay);
 
+/* Suppress the static-tick snapshot (lv_snapshot_take) while true — meters
+ * build in dynamic mode instead. The web live-preview path raises this around
+ * a rebuild so re-baking every meter per edit can't starve the LVGL core past
+ * the task watchdog. Cleared for the normal save→load path so runtime keeps
+ * the baked-face FPS optimisation. */
+void widget_meter_set_bake_suppressed(bool suppressed);
+
 #ifdef __cplusplus
 }
 #endif

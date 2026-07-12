@@ -32,6 +32,17 @@
 
 static const char *TAG = "widget_meter";
 
+/* Live-preview bake suppression. The static-tick snapshot (lv_snapshot_take in
+ * _meter_flatten_static_ticks) is a runtime FPS optimisation, but each one
+ * costs multiple seconds and saturates PSRAM bandwidth. Re-baking every meter
+ * on each debounced live-preview edit (a layout with 5 meters = 5 back-to-back
+ * snapshots, ~10-15 s total) starved the LVGL core past the 15 s task WDT
+ * (→ reboot) and fuzzed the RGB panel mid-bake. The web /api/layout/preview
+ * path raises this flag so meters build DYNAMIC while the user is editing; the
+ * real save→load path leaves it clear and bakes normally for runtime FPS. */
+static bool s_meter_bake_suppressed = false;
+void widget_meter_set_bake_suppressed(bool suppressed) { s_meter_bake_suppressed = suppressed; }
+
 #define METER_DEFAULT_W 140
 #define METER_DEFAULT_H 140
 
@@ -1753,7 +1764,8 @@ static void _meter_create(widget_t *w, lv_obj_t *parent) {
 	lv_meter_scale_t *scale = NULL;
 	lv_meter_indicator_t *needle = NULL;
 	lv_meter_scale_t *needle_scale = NULL;
-	bool defer_needle_day = md->static_ticks && _meter_static_layer_worth_baking(md);
+	bool defer_needle_day = md->static_ticks && _meter_static_layer_worth_baking(md)
+	                        && !s_meter_bake_suppressed;
 	_meter_build_one(md, meter_parent, false, !defer_needle_day,
 	                 &m, &scale, &needle, &needle_scale,
 	                 &md->needle_img_dsc, &md->bg_img_dsc);
@@ -2433,7 +2445,8 @@ static void _meter_build_night_lazy(widget_t *w) {
 	/* Same defer-needle-for-snapshot dance as the day meter — the
 	 * static-tick flatten step runs after we size + position the
 	 * night meter so the snapshot captures the correct dimensions. */
-	bool defer_needle_night = md->static_ticks && _meter_static_layer_worth_baking(md);
+	bool defer_needle_night = md->static_ticks && _meter_static_layer_worth_baking(md)
+	                          && !s_meter_bake_suppressed;
 	_meter_build_one(md, parent, true, !defer_needle_night,
 	                 &nm, &nscale, &nneedle, &nneedle_scale,
 	                 &md->night_needle_img_dsc, &md->night_bg_img_dsc);
