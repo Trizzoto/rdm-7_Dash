@@ -61,7 +61,7 @@ Commits: `7518519` initial sweep (12) · `83baaf3` channel durability (5) · `d1
 
 ### [24] MEDIUM — `main/can/obd2.c:1774`
 - A DTC read completes and clears s_dtc_req.active on the FIRST ECU response to the 0x7DF functional broadcast, silently discarding codes from every other ECU that answers the same request (later 0x43 responses fall through to the return at line 1861).
-- **Status:** DEFERRED (UX tradeoff) — accumulating DTCs from all ECUs until timeout would make every read (incl. the common single-ECU case) wait the full timeout instead of returning on first response. Owner's call.
+- **Status:** FIXED 2026-07-09 (OBD2 overhaul session) — merge-window design sidesteps the UX tradeoff: the read completes 350 ms after the LAST ECU reply (not the full 2 s timeout), merging + deduping codes from every module; an NRC from one ECU no longer fails the read when another answers positively.
 
 ### [12] MEDIUM — `main/net/ota_handler.c:264`
 - ota_free_internal_ram() permanently drops the SoftAP (APSTA → STA) at the start of every OTA attempt and nothing restores AP mode when the update fails — restore_wifi_settings() only restores the power-save mode — so a failed OTA leaves hotspot users cut off until reboot.
