@@ -40,6 +40,14 @@ SCHEMA_TYPE_TO_WF = {
     "can_id":        "WF_TYPE_CAN_ID",
 }
 
+# Field types that exist ONLY in the web editor and have no on-device
+# inspector representation. Skipped from the generated C field tables so the
+# device inspector doesn't render a bogus text box for them. (The gradient
+# editor is a Photoshop-style web control; on-device the rpm_bar uses a
+# hand-written STYLE tab and bar/arc simply omit it, matching pre-schema
+# behaviour.)
+WEB_ONLY_TYPES = {"gradient_stops"}
+
 SCHEMA_CAT_TO_WF = {
     "data":        "WF_CAT_DATA",
     "appearance":  "WF_CAT_APPEARANCE",
@@ -162,6 +170,8 @@ def emit_widget(widget) -> str:
     # Field array.
     field_lines = [f"static const widget_field_t {name}_fields[] = {{"]
     for f in widget['fields']:
+        if f.get('type') in WEB_ONLY_TYPES:
+            continue  # web-editor-only field; no on-device inspector row
         fname = f['name']
         flbl  = f.get('label', fname)
         ftype = f.get('type', 'text')

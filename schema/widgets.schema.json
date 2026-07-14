@@ -70,6 +70,15 @@
           "help": "Colour of the bar below the redline."
         },
         {
+          "name": "grad_stops",
+          "label": "Gradient",
+          "type": "gradient_stops",
+          "default": [],
+          "category": "appearance",
+          "group": "Fill",
+          "help": "Blend the bar through multiple colours from empty to full - e.g. green through yellow to red. The redline and limiter colours still override it."
+        },
+        {
           "name": "fill_dir",
           "label": "Fill Direction",
           "type": "select",
@@ -734,6 +743,15 @@
           "night_overridable": true,
           "group": "Fill",
           "help": "Colour of the bar."
+        },
+        {
+          "name": "grad_stops",
+          "label": "Gradient",
+          "type": "gradient_stops",
+          "default": [],
+          "category": "appearance",
+          "group": "Fill",
+          "help": "Blend the fill through multiple colours from empty to full. The low/high alert colours still override it."
         },
         {
           "name": "bar_image_full",
@@ -2728,6 +2746,15 @@
           "night_overridable": true,
           "group": "Fill",
           "help": "Colour of the filled part."
+        },
+        {
+          "name": "grad_stops",
+          "label": "Gradient",
+          "type": "gradient_stops",
+          "default": [],
+          "category": "appearance",
+          "group": "Fill",
+          "help": "Blend the arc through multiple colours as the reading climbs. The redline and alert colours still override it."
         },
         {
           "name": "bg_arc_color",

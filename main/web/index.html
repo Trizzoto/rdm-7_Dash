@@ -7233,6 +7233,7 @@
                             { name: "limiter_value", label: "Limiter RPM", type: "number", def: 7000, cat: "data", group: "Value", help: "The RPM where your rev limiter kicks in - the bar reacts here." },
                             { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 20, cat: "data", group: "Behaviour", help: "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw value.", min: 0, max: 300, step: 10 },
                             { name: "bar_color", label: "Bar Color", type: "color", def: 0x00FF00, cat: "appearance", group: "Fill", help: "Colour of the bar below the redline.", nightOverridable: true },
+                            { name: "grad_stops", label: "Gradient", type: "gradient_stops", def: [], cat: "appearance", group: "Fill", help: "Blend the bar through multiple colours from empty to full - e.g. green through yellow to red. The redline and limiter colours still override it." },
                             { name: "fill_dir", label: "Fill Direction", type: "select", def: 0, cat: "appearance", group: "Fill", help: "Which way the bar fills (left, right, up or down).",
                               options: [
                                   { v: 0, l: "Left to Right" },
@@ -7345,6 +7346,7 @@
                                   { v: 3, l: "Edges In" }
                               ] },
                             { name: "bar_in_range_color", label: "Bar Color", type: "color", def: 0x00FF00, cat: "appearance", group: "Fill", help: "Colour of the bar.", nightOverridable: true },
+                            { name: "grad_stops", label: "Gradient", type: "gradient_stops", def: [], cat: "appearance", group: "Fill", help: "Blend the fill through multiple colours from empty to full. The low/high alert colours still override it." },
                             { name: "bar_image_full", label: "Fill Image", type: "image_picker", def: "", cat: "appearance", group: "Fill", help: "Use a picture for the filled part instead of a plain colour.", nightOverridable: true },
                             { name: "fill_edge_width", label: "Leading Edge Width", type: "stepper", def: 0, cat: "appearance", group: "Fill", help: "How wide the bright tip at the current reading is (0 = off).", min: 0, max: 20 },
                             { name: "fill_edge_color", label: "Leading Edge Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Fill", help: "Colour of the bright tip that sits at the current reading.", enabledBy: "fill_edge_width" },
@@ -7675,6 +7677,7 @@
                             { name: "arc_width", label: "Arc Width", type: "stepper", def: 10, cat: "appearance", group: "Fill", help: "How thick the coloured (filled) part of the gauge is.", min: 1, max: 50 },
                             { name: "arc_offset", label: "Arc Offset", type: "stepper", def: 0, cat: "appearance", group: "Fill", help: "Moves the ring in or out from the centre. Use it to stack one gauge inside another.", min: 0, max: 120 },
                             { name: "arc_color", label: "Arc Color", type: "color", def: 0x00FF00, cat: "appearance", group: "Fill", help: "Colour of the filled part.", nightOverridable: true },
+                            { name: "grad_stops", label: "Gradient", type: "gradient_stops", def: [], cat: "appearance", group: "Fill", help: "Blend the arc through multiple colours as the reading climbs. The redline and alert colours still override it." },
                             { name: "bg_arc_color", label: "Track Color", type: "color", def: 0x333333, cat: "appearance", group: "Fill", help: "Colour of the empty part behind the fill.", nightOverridable: true },
                             { name: "bg_arc_width", label: "Track Width", type: "stepper", def: 10, cat: "appearance", group: "Fill", help: "How thick the empty background ring is. Make it wider or narrower than the fill for a raised or recessed look.", min: 1, max: 50 },
                             { name: "rounded_ends", label: "Rounded Ends", type: "checkbox", def: false, cat: "appearance", group: "Fill", help: "Give the gauge rounded ends instead of flat-cut ones." },
@@ -8801,9 +8804,16 @@
             const _rlw = _pvNum(c.redline_arc_width, 0), _rth = _pvNum(c.arc_high, mx);
             if (_rlw > 0 && _rth < mx) s += `<path d="${_pvArcD(cx, cy, ring, ua(_rth), ua(mx))}" fill="none" stroke="${_pvColor(c.redline_color, '#FF0000')}" stroke-width="${trackW}" stroke-linecap="${cap}"/>`;
             let fillCol = _pvColor(c.arc_color, '#00FF00');
+            let arcAlert = false;
             if (c.arc_alerts_enabled){
-                if (val >= _pvNum(c.arc_high, mx)) fillCol = _pvColor(c.arc_high_color, '#FF0000');
-                else if (val <= _pvNum(c.arc_low, mn)) fillCol = _pvColor(c.arc_low_color, '#0000FF');
+                if (val >= _pvNum(c.arc_high, mx)){ fillCol = _pvColor(c.arc_high_color, '#FF0000'); arcAlert = true; }
+                else if (val <= _pvNum(c.arc_low, mn)){ fillCol = _pvColor(c.arc_low_color, '#0000FF'); arcAlert = true; }
+            }
+            /* Multi-stop gradient: the arc "walks" the stops by value, same as
+             * the firmware (gradient_stops_sample). Redline/alert still wins. */
+            if (!arcAlert && Array.isArray(c.grad_stops) && c.grad_stops.length >= 2){
+                const gt = _pvClamp((val - mn) / range, 0, 1);
+                fillCol = _pvColor(_gradSampleColor(c.grad_stops, gt) >>> 0);
             }
             if (Math.abs(val - mn) > 1e-6){
                 const aV = ua(val), fd = _pvArcD(cx, cy, ring, start, aV);
@@ -8883,6 +8893,20 @@
             return s;
         }
 
+        /* Multi-stop <linearGradient> def for the offline preview. `stops` are
+         * the editor's {pos:0-100, color:RGB888-int} array. xa maps to stop
+         * pos 0 (the empty end of the fill), xb to pos 100 (the full/current
+         * end) — so the gradient grows with the fill exactly like the firmware
+         * paints it into the indicator rect. Returns '' for <2 stops so the
+         * caller falls back to a solid colour. */
+        function _pvLinGrad(id, stops, xa, xb){
+            if (!Array.isArray(stops) || stops.length < 2) return '';
+            const sorted = stops.slice().sort((a, b) => (a.pos || 0) - (b.pos || 0));
+            const body = sorted.map(st =>
+                `<stop offset="${_pvClamp(_pvNum(st.pos, 0), 0, 100).toFixed(1)}%" stop-color="${_pvColor(st.color, '#00FF00')}"/>`).join('');
+            return `<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${xa.toFixed(1)}" y1="0" x2="${xb.toFixed(1)}" y2="0">${body}</linearGradient>`;
+        }
+
         function _pvBar(w, c){
             const p = devToWeb(w.x, w.y), left = p.x - w.w / 2, top = p.y - w.h / 2;
             const mn = _pvNum(c.bar_min, 0), mx = _pvNum(c.bar_max, 100), range = (mx - mn) || 1;
@@ -8899,10 +8923,21 @@
             else if (dir === 2){ fw = w.w * frac; fx = left + (w.w - fw) / 2; }
             let s = `<rect x="${left.toFixed(1)}" y="${top.toFixed(1)}" width="${w.w}" height="${w.h}" rx="${rad}" fill="${_pvColor(c.bar_bg_color, '#2E2F2E')}"${bw > 0 ? ` stroke="${_pvColor(c.bar_border_color, '#2E2F2E')}" stroke-width="${bw}"` : ''}/>`;
             if (fw > 0.5){
-                /* positional fade (dim at empty end → bright at the fill end) + bright tip */
-                const dim = _pvDarken(fillCol, 0.74), gid = 'bg_' + (w.id || 'bar');
-                const x1g = dir === 1 ? left + w.w : left, x2g = dir === 1 ? left : left + w.w;
-                s += `<linearGradient id="${gid}" gradientUnits="userSpaceOnUse" x1="${x1g}" y1="0" x2="${x2g}" y2="0"><stop offset="0%" stop-color="${dim}"/><stop offset="100%" stop-color="${fillCol}"/></linearGradient>`;
+                const gid = 'bg_' + (w.id || 'bar');
+                /* Multi-stop gradient (grad_stops) when set and no alert is
+                 * overriding the colour; otherwise the positional dim→bright
+                 * fade. Both grow from the empty end to the fill tip. */
+                const barStops = Array.isArray(c.grad_stops) ? c.grad_stops : [];
+                const alertActive = !!c.bar_alerts_enabled &&
+                    (val >= _pvNum(c.bar_high, mx) || val <= _pvNum(c.bar_low, mn));
+                if (barStops.length >= 2 && !alertActive){
+                    const xa = dir === 1 ? fx + fw : fx, xb = dir === 1 ? fx : fx + fw;
+                    s += _pvLinGrad(gid, barStops, xa, xb);
+                } else {
+                    const dim = _pvDarken(fillCol, 0.74);
+                    const x1g = dir === 1 ? left + w.w : left, x2g = dir === 1 ? left : left + w.w;
+                    s += `<linearGradient id="${gid}" gradientUnits="userSpaceOnUse" x1="${x1g}" y1="0" x2="${x2g}" y2="0"><stop offset="0%" stop-color="${dim}"/><stop offset="100%" stop-color="${fillCol}"/></linearGradient>`;
+                }
                 s += `<rect x="${fx.toFixed(1)}" y="${(top + bw).toFixed(1)}" width="${fw.toFixed(1)}" height="${(w.h - 2 * bw).toFixed(1)}" rx="${_pvNum(c.indicator_radius, 5)}" fill="url(#${gid})"/>`;
                 const tipW = Math.min(3, fw), tipX = dir === 1 ? fx : fx + fw - tipW;
                 if (dir !== 2) s += `<rect x="${tipX.toFixed(1)}" y="${(top + bw).toFixed(1)}" width="${tipW.toFixed(1)}" height="${(w.h - 2 * bw).toFixed(1)}" fill="#E6FAFF"/>`;
@@ -9014,11 +9049,102 @@
             return `<rect x="${L.toFixed(1)}" y="${T.toFixed(1)}" width="${w.w}" height="${w.h}" rx="${_pvNum(c.border_radius, 10)}" fill="${fill}" fill-opacity="${opa}"${stroke}/>`;
         }
 
+        /* Faithful port of widget_rpm_bar.c: bar_bg_color track, a fill that
+         * respects fill_dir (0 L→R, 1 R→L, 2 Center→Out, 3 Edges→In) painted
+         * with the multi-stop gradient (grad_stops) or the solid bar_color,
+         * the classic-mode redline zone, and the 500/1000-RPM tick marks +
+         * thousands labels (update_rpm_lines). Everything re-derives from the
+         * live config so changing the fill style / colours updates instantly. */
         function _pvRpmBar(w, c){
-            const p = devToWeb(w.x, w.y), left = p.x - w.w / 2, top = p.y - w.h / 2;
-            const mx = _pvNum(c.rpm_max, 7000), frac = _pvClamp(4500 / mx, 0, 1);
+            const p = devToWeb(w.x, w.y), left = p.x - w.w / 2, top = p.y - w.h / 2, right = left + w.w;
+            const mx = _pvNum(c.rpm_max, 7000) || 1;
+            const redline = _pvNum(c.redline, 6000);
+            const dir = _pvNum(c.fill_dir, 0);
+            const val = _pvScene(w, c, 0, mx), frac = _pvClamp(val / mx, 0, 1);
+            const sx = w.w / 800, sy = w.h / 55;
+
+            /* Fill colour: solid bar_color, or limiter_color once past the
+             * limiter with an effect set (firmware _apply_limiter_effect). A
+             * gradient replaces the solid unless the limiter has fired. */
+            const overLimiter = _pvNum(c.limiter_effect, 0) > 0 && val >= _pvNum(c.limiter_value, mx);
+            const fillCol = overLimiter ? _pvColor(c.limiter_color, '#FF0000') : _pvColor(c.bar_color, '#00FF00');
+            const stops = Array.isArray(c.grad_stops) ? c.grad_stops : [];
+            const gradActive = stops.length >= 2 && !overLimiter;
+
+            /* Track background across the whole bar. */
             let s = `<rect x="${left.toFixed(1)}" y="${top.toFixed(1)}" width="${w.w}" height="${w.h}" rx="3" fill="${_pvColor(c.bar_bg_color, '#F0F0F0')}"/>`;
-            s += `<rect x="${left.toFixed(1)}" y="${top.toFixed(1)}" width="${(w.w * frac).toFixed(1)}" height="${w.h}" rx="3" fill="${_pvColor(c.bar_color, '#00FF00')}"/>`;
+
+            /* Paint one fill rect (gradient grows empty→full, or solid). */
+            let gi = 0;
+            const paint = (x0, w0, xa, xb) => {
+                if (w0 <= 0.5) return '';
+                let ref = fillCol, def = '';
+                if (gradActive){
+                    const id = 'rpmgrad_' + (w.id || 'rpm') + '_' + (gi++);
+                    def = _pvLinGrad(id, stops, xa, xb);
+                    ref = `url(#${id})`;
+                }
+                return def + `<rect x="${x0.toFixed(1)}" y="${top.toFixed(1)}" width="${w0.toFixed(1)}" height="${w.h}" rx="3" fill="${ref}"/>`;
+            };
+            if (dir === 2){                 /* Center → Out */
+                const hw = (w.w / 2) * frac;
+                s += paint(p.x - hw, hw, p.x, p.x - hw);
+                s += paint(p.x, hw, p.x, p.x + hw);
+            } else if (dir === 3){          /* Edges → In */
+                const hw = (w.w / 2) * frac;
+                s += paint(left, hw, left, left + hw);
+                s += paint(right - hw, hw, right, right - hw);
+            } else if (dir === 1){          /* Right → Left */
+                const fw = w.w * frac;
+                s += paint(right - fw, fw, right, right - fw);
+            } else {                        /* Left → Right (classic) */
+                const fw = w.w * frac;
+                s += paint(left, fw, left, left + fw);
+            }
+
+            /* Redline zone — classic L→R bar only (mirror/RTL bake it into art
+             * on the device). Translucent red band over the redline→max region. */
+            if (dir === 0 && redline > 0 && redline < mx){
+                const rlx = left + 18 * sx + (redline / mx) * (765 * sx);
+                if (right - rlx > 0.5)
+                    s += `<rect x="${rlx.toFixed(1)}" y="${(top + w.h * 0.62).toFixed(1)}" width="${(right - rlx).toFixed(1)}" height="${(w.h * 0.3).toFixed(1)}" fill="#FF0000" fill-opacity="0.5"/>`;
+            }
+
+            /* Tick marks + thousands labels (update_rpm_lines). Always drawn
+             * left→right at RPM positions, independent of fill direction. */
+            if (c.show_ticks !== false){
+                const tickCol = _pvColor(c.tick_color, '#000000');
+                const side = _pvNum(c.tick_side, 2);        /* 0 Top, 1 Bottom, 2 Both */
+                const tlen = Math.max(1, _pvNum(c.tick_length, 12));
+                const twid = Math.max(1, _pvNum(c.tick_width, 3));
+                const barX = 18 * sx, span = 765 * sx;
+                const mainH = Math.max(1, tlen * sy);
+                const fpx = Math.max(8, Math.round(17 * sy));
+                const drawTop = side !== 1, drawBottom = side !== 0;
+                const nLines = Math.min(64, Math.floor(mx / 500) + 1);
+                for (let i = 0; i < nLines; i++){
+                    const rpmv = i * 500;
+                    const x = left + barX + (rpmv * span) / mx;
+                    const isMain = (rpmv % 1000) === 0;
+                    const lw = Math.max(1, isMain ? twid * sy : twid * (2 / 3) * sy);
+                    const lh = Math.max(1, isMain ? mainH : tlen * (8 / 12) * sy);
+                    const ax = x - lw / 2;
+                    if (drawTop)
+                        s += `<rect x="${ax.toFixed(1)}" y="${top.toFixed(1)}" width="${lw.toFixed(1)}" height="${lh.toFixed(1)}" fill="${tickCol}"/>`;
+                    if (drawBottom)
+                        s += `<rect x="${ax.toFixed(1)}" y="${(top + w.h - lh).toFixed(1)}" width="${lw.toFixed(1)}" height="${lh.toFixed(1)}" fill="${tickCol}"/>`;
+                    if (isMain){
+                        const ly = drawTop ? top + mainH + fpx * 0.75 : top + w.h - lh - fpx * 0.75;
+                        s += `<text x="${x.toFixed(1)}" y="${ly.toFixed(1)}" fill="${tickCol}" font-family="'Fugaz One','Segoe UI',sans-serif" font-size="${fpx}" text-anchor="middle" dominant-baseline="central">${rpmv / 1000}</text>`;
+                    }
+                }
+            }
+
+            /* Optional numeric RPM readout. */
+            if (c.show_rpm_value){
+                const vf = _pvFontPx(c.rpm_value_font, Math.max(12, Math.round(w.h * 0.5)));
+                s += `<text x="${(left + 20 * sx).toFixed(1)}" y="${p.y.toFixed(1)}" fill="${_pvColor(c.rpm_value_color, '#E8E8E8')}" font-family="${_pvFontFam(c.rpm_value_font)}" font-size="${vf}" text-anchor="middle" dominant-baseline="central">${_pvEsc(_pvFmt(val))}</text>`;
+            }
             return s;
         }
 

@@ -90,6 +90,11 @@ def _js_value(v: Any) -> str:
         return json.dumps(v)
     if isinstance(v, str):
         return _js_string(v)
+    if isinstance(v, list):
+        # JSON arrays are valid JS array literals (used e.g. by the
+        # gradient_stops field default `[]`). Render each element through
+        # _js_value so strings/colors escape correctly.
+        return "[" + ", ".join(_js_value(e) for e in v) + "]"
     raise TypeError(f"Cannot render JS literal for type {type(v).__name__}: {v!r}")
 
 
