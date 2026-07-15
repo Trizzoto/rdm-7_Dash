@@ -4014,6 +4014,7 @@
             </div>
             <div class="dbc-footer">
                 <button class="btn btn-secondary" onclick="closeDbcImportModal()">Cancel</button>
+                <button class="btn btn-secondary" id="dbcChannelsBtn" disabled onclick="doDbcImportAsChannels()" title="Create a channel per signal — bound and decoding, ready for widgets">Import as Channels</button>
                 <button class="btn" id="dbcImportBtn" disabled onclick="doDbcImport()">Import</button>
             </div>
         </div>
@@ -6159,6 +6160,8 @@
             document.getElementById('dbcFileInput').value = '';
             document.getElementById('dbcPreview').textContent = 'Select a .dbc file to preview signals.';
             document.getElementById('dbcImportBtn').disabled = true;
+            const _chBtn = document.getElementById('dbcChannelsBtn');
+            if (_chBtn) { _chBtn.disabled = true; _chBtn.textContent = 'Import as Channels'; }
             _parsedDbcSignals = [];
             /* Attach file change listener */
             document.getElementById('dbcFileInput').onchange = handleDbcFileSelect;
@@ -6192,7 +6195,14 @@
         function updateDbcImportBtnState() {
             const name = document.getElementById('dbcEcuName')?.value?.trim();
             const ver = document.getElementById('dbcVersion')?.value?.trim();
-            document.getElementById('dbcImportBtn').disabled = !name || !ver || _parsedDbcSignals.length === 0;
+            const haveSignals = _parsedDbcSignals.length > 0;
+            document.getElementById('dbcImportBtn').disabled = !name || !ver || !haveSignals;
+            /* "Import as Channels" only needs the file — the ECU name/version
+             * exist to name the PRESET, and channels aren't a preset. Gating it
+             * on them would force people to invent an ECU name to get the thing
+             * they actually came for. */
+            const chBtn = document.getElementById('dbcChannelsBtn');
+            if (chBtn) chBtn.disabled = !haveSignals;
         }
         /* Attach input listeners for DBC import ECU name/version fields */
         (function() {
@@ -6469,16 +6479,16 @@
          * timeout) and flushes channels.json synchronously, so firing 200 at
          * once would stampede the httpd workers and mass-"busy". Slower, but it
          * finishes — and the progress text means the user can see it moving. */
-        async function createChannelsFromSignals() {
-            const err = document.getElementById('paError');
-            err.style.display = 'none';
-            let signals;
-            try { signals = _paCollectSignals(); }
-            catch (e) { err.textContent = e.message; err.style.display = 'block'; return; }
-
-            const btn = document.getElementById('paChannelsBtn');
-            const orig = btn.textContent;
-            btn.disabled = true;
+        /* Shared engine — takes the signal list, POSTs one channel each, reports
+         * honestly. Both entry points funnel here: the preset author's rows AND
+         * the DBC import modal's parsed signals. The DBC modal needs its own
+         * entry because doDbcImport() posts straight to /api/presets/custom/save
+         * and never routes through the preset author, so a "Create Channels"
+         * button only on the author would be unreachable from the Import DBC
+         * card — i.e. the exact flow this was meant to fix. */
+        async function _createChannelsFromList(signals, btn) {
+            const orig = btn ? btn.textContent : '';
+            if (btn) btn.disabled = true;
 
             let made = 0;
             const skipped = [];   /* already exists — expected on a re-import */
@@ -6486,7 +6496,7 @@
 
             for (let i = 0; i < signals.length; i++) {
                 const s = signals[i];
-                btn.textContent = `Creating ${i + 1}/${signals.length}…`;
+                if (btn) btn.textContent = `Creating ${i + 1}/${signals.length}…`;
                 const body = {
                     label: s.label,
                     group: 11,            /* Diagnostic — the honest default; the
@@ -6518,23 +6528,17 @@
                 }
             }
 
-            btn.disabled = false;
-            btn.textContent = orig;
+            if (btn) { btn.disabled = false; btn.textContent = orig; }
 
             /* Report honestly — a partial run is the common case once the 128
              * channel cap bites, and silently claiming success would leave the
              * user hunting for channels that were never made. */
-            if (failed.length) {
-                err.innerHTML = `Created ${made}, skipped ${skipped.length} (already existed), <b>failed ${failed.length}</b>:<br>`
-                    + failed.slice(0, 6).map(_escHTML).join('<br>')
-                    + (failed.length > 6 ? `<br>…and ${failed.length - 6} more` : '');
-                err.style.display = 'block';
-            }
             const parts = [`Created ${made} channel${made === 1 ? '' : 's'}`];
             if (skipped.length) parts.push(`${skipped.length} already existed`);
             if (failed.length) parts.push(`${failed.length} failed`);
-            if (typeof updateStatus === 'function') updateStatus(parts.join(' · '), failed.length > 0);
-            if (typeof showToast === 'function' && !failed.length) showToast(parts.join(' · '));
+            const summary = parts.join(' · ');
+            if (typeof updateStatus === 'function') updateStatus(summary, failed.length > 0);
+            if (typeof showToast === 'function' && !failed.length) showToast(summary);
 
             /* Refresh the channels view if it's open behind this modal. */
             if (made && typeof _fetchChannelsActive === 'function') {
@@ -6543,6 +6547,43 @@
                     if (typeof _refreshChannelsList === 'function') _refreshChannelsList();
                 } catch (_) { /* list just stays stale */ }
             }
+            return { made, skipped, failed, summary };
+        }
+
+        /* Preset-author entry: build channels from the editable rows. */
+        async function createChannelsFromSignals() {
+            const err = document.getElementById('paError');
+            err.style.display = 'none';
+            let signals;
+            try { signals = _paCollectSignals(); }
+            catch (e) { err.textContent = e.message; err.style.display = 'block'; return; }
+
+            const res = await _createChannelsFromList(signals, document.getElementById('paChannelsBtn'));
+            if (res && res.failed.length) {
+                err.innerHTML = `Created ${res.made}, skipped ${res.skipped.length} (already existed), <b>failed ${res.failed.length}</b>:<br>`
+                    + res.failed.slice(0, 6).map(_escHTML).join('<br>')
+                    + (res.failed.length > 6 ? `<br>…and ${res.failed.length - 6} more` : '');
+                err.style.display = 'block';
+            }
+        }
+
+        /* DBC-import entry: build channels straight from the parsed .dbc, with
+         * no preset in between. This is the path that actually matters — "Import
+         * DBC" is the card people use, and until now it could only ever produce
+         * a preset, leaving every signal still to be hand-bound. Deliberately
+         * separate from the Import button rather than replacing it: a preset is
+         * still the right output when you want a reusable ECU definition to pick
+         * sources from, whereas channels are what widgets bind to. */
+        async function doDbcImportAsChannels() {
+            if (!_parsedDbcSignals || !_parsedDbcSignals.length) return;
+            const res = await _createChannelsFromList(
+                _parsedDbcSignals, document.getElementById('dbcChannelsBtn'));
+            const prev = document.getElementById('dbcPreview');
+            if (prev && res) {
+                prev.textContent = res.summary
+                    + (res.failed.length ? '\n' + res.failed.slice(0, 6).join('\n') : '');
+            }
+            if (res && !res.failed.length) closeDbcImportModal();
         }
 
         async function savePresetAuthor() {
@@ -20426,9 +20467,15 @@
         /* Accept "0x1F4", "1F4h", "500" — people copy IDs out of DBCs and
          * datasheets in every format. Returns NaN when unparseable. */
         function _chParseCanId(raw) {
-            const s = String(raw || '').trim().toLowerCase().replace(/h$/, '');
+            let s = String(raw || '').trim().toLowerCase();
+            /* The trailing "h" is the only thing marking "520h" as hex — test for
+             * it before stripping, or the all-digits branch below claims it and
+             * silently binds the channel to 0x208. */
+            const hexSuffix = /h$/.test(s);
+            s = s.replace(/h$/, '');
             if (!s) return NaN;
             if (s.startsWith('0x')) return parseInt(s.slice(2), 16);
+            if (hexSuffix && /^[0-9a-f]+$/.test(s)) return parseInt(s, 16);
             if (/^[0-9]+$/.test(s)) return parseInt(s, 10);
             if (/^[0-9a-f]+$/.test(s)) return parseInt(s, 16);
             return NaN;
