@@ -1068,6 +1068,18 @@ static cJSON *channel_to_json(const channel_t *c) {
 	if (!def || strcmp(c->label, def->label) != 0)
 		cJSON_AddStringToObject(j, "label", c->label);
 
+	/* group/card come from the canonical def on reload for a canonical
+	 * channel, but a custom channel has no def to restore them from. Without
+	 * persisting them the load path's placeholder (CHGRP_DIAGNOSTIC /
+	 * CHCARD_SCALAR) stuck permanently, so a custom "Turbo Speed" filed under
+	 * Engine silently migrated to Diagnostic on the next boot. Additive and
+	 * optional — an older channels.json without these keys still loads and
+	 * just keeps the placeholder, so no schema bump. */
+	if (!def) {
+		cJSON_AddNumberToObject(j, "group", (int)c->group);
+		cJSON_AddNumberToObject(j, "card", (int)c->card);
+	}
+
 	if (c->signal_name[0] != '\0')
 		cJSON_AddStringToObject(j, "signal", c->signal_name);
 
@@ -1150,6 +1162,18 @@ static bool channel_from_json(channel_t *c, cJSON *j) {
 	cJSON *it;
 	it = cJSON_GetObjectItemCaseSensitive(j, "label");
 	if (cJSON_IsString(it) && it->valuestring) safe_strcpy(c->label, it->valuestring, sizeof(c->label));
+
+	/* Custom channels only — canonical ones take group/card from their def,
+	 * so these keys are absent for them (channel_to_json). Range-checked:
+	 * a hand-edited or corrupt file must not index past the enum. */
+	it = cJSON_GetObjectItemCaseSensitive(j, "group");
+	if (cJSON_IsNumber(it) && it->valueint >= 0 && it->valueint < CHGRP__COUNT)
+		c->group = (channel_group_t)it->valueint;
+
+	it = cJSON_GetObjectItemCaseSensitive(j, "card");
+	if (cJSON_IsNumber(it) && it->valueint >= CHCARD_SCALAR &&
+	    it->valueint <= CHCARD_BOOLEAN)
+		c->card = (channel_cardinality_t)it->valueint;
 
 	it = cJSON_GetObjectItemCaseSensitive(j, "signal");
 	if (cJSON_IsString(it) && it->valuestring) safe_strcpy(c->signal_name, it->valuestring, sizeof(c->signal_name));

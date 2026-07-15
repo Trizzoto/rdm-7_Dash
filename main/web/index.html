@@ -1777,6 +1777,46 @@
             padding: 10px 12px;
             border-bottom: 1px solid var(--border);
         }
+        /* Primary action, first thing in the pane — a custom channel is the one
+         * thing you can't find by searching, so it can't live below ~90
+         * canonical rows. */
+        .ch2-new-btn {
+            width: 100%; box-sizing: border-box;
+            padding: 7px 10px;
+            font-size: 13px; font-weight: 600;
+        }
+        /* New-channel form: same two-up grid as the decode editor. */
+        .ch2-newform { padding: 14px 16px; overflow-y: auto; }
+        .ch2-newform-grid {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+        }
+        .ch2-newform-grid .span2 { grid-column: 1 / -1; }
+        .ch2-newform h4 {
+            margin: 16px 0 8px; font-size: 12px; font-weight: 600;
+            color: var(--text-muted); text-transform: uppercase;
+            letter-spacing: .04em;
+        }
+        .ch2-newform h4:first-child { margin-top: 0; }
+        /* Live decode readout — the "is my bit offset right?" answer. */
+        .ch2-probe {
+            margin-top: 10px; padding: 10px 12px;
+            background: var(--bg); border: 1px solid var(--border);
+            border-radius: 4px; font-size: 12px;
+        }
+        .ch2-probe-bytes {
+            font-family: monospace; font-size: 13px; letter-spacing: .06em;
+            color: var(--text); word-break: break-all;
+        }
+        .ch2-probe-bytes .hit { color: var(--accent, #4ea1ff); font-weight: 700; }
+        .ch2-probe-val {
+            font-size: 20px; font-weight: 700; color: var(--text);
+            margin-top: 6px;
+        }
+        .ch2-probe-miss { color: var(--text-muted); font-style: italic; }
+        .ch2-newform-actions {
+            display: flex; gap: 8px; margin-top: 18px;
+            padding-top: 14px; border-top: 1px solid var(--border);
+        }
         .ch2-list-tools input[type="search"] {
             width: 100%; box-sizing: border-box;
             padding: 6px 10px;
@@ -4545,6 +4585,7 @@
             <div class="ch2-body">
                 <div class="ch2-list-pane">
                     <div class="ch2-list-tools">
+                        <button class="btn btn-primary ch2-new-btn" onclick="_chOpenNew()" title="Create a channel from a custom CAN signal">+ New channel</button>
                         <input id="chSearch" type="search" placeholder="Search channels, signals, groups" oninput="_refreshChannelsList()">
                         <div class="ch2-filter" id="chFilter">
                             <button class="ch2-filter-btn active" data-f="all" onclick="_setChFilter('all')">All</button>
@@ -19990,7 +20031,18 @@
             });
             _chCache.forEach(c => {
                 if (!_chCanonical.find(d => d.id === c.id)) {
-                    merged.push({...c, is_active: true, is_canonical: false, group: 99});
+                    /* Use the channel's OWN group. This used to hardcode 99
+                     * ("Custom"), which buried every user-made channel in a
+                     * single bucket BELOW ~90 canonical rows across 13 groups —
+                     * the one channel you built yourself was the hardest to
+                     * find. The firmware sends a real group and now persists it
+                     * for custom channels too, so a "Turbo Speed" filed under
+                     * Engine shows up under Engine. Fall back to 99 only when a
+                     * channel genuinely has no group. */
+                    merged.push({
+                        ...c, is_active: true, is_canonical: false,
+                        group: (c.group != null) ? c.group : 99,
+                    });
                 }
             });
 
@@ -20176,9 +20228,377 @@
             }) || null;
         }
 
+        /* ─── New custom channel ───────────────────────────────────────────
+         *
+         * Until POST /api/channels/create existed there was NO way to make a
+         * custom channel from the editor — activate/update/bind-source all 404
+         * a non-canonical id — so people hijacked a canonical channel and lived
+         * with an "oil_temp" that really carried turbo speed. This form is the
+         * front end for that endpoint: one screen, one POST, name + decode
+         * together, with a live readout of the actual bus so you can see the
+         * decode land before you commit it.
+         *
+         * Draft state is module-scope (not in the DOM) so the live probe can
+         * re-decode on every poll without reading inputs back out. */
+        let _chNewMode = false;
+        let _chNewDraft = null;
+        let _chNewProbeTimer = null;
+        /* Last frame seen for the entered ID, so keystrokes re-decode instantly
+         * from cache instead of each firing its own request. */
+        let _chNewProbeFrame = null;
+        let _chNewProbeBusy = false;
+
+        function _chNewDefaults() {
+            return {
+                label: '', group: 0, units: '', decimals: 0,
+                min: 0, max: 100,
+                can_id: 0, bit_start: 0, bit_length: 16,
+                scale: 1, offset: 0, is_signed: false, endian: 1,
+            };
+        }
+
+        function _chOpenNew() {
+            _chNewMode = true;
+            _chNewDraft = _chNewDefaults();
+            _chSelectedId = null;
+            _refreshChannelsList();
+            _renderChannelDetail();
+        }
+
+        function _chCancelNew() {
+            _chNewMode = false;
+            _chNewDraft = null;
+            _chStopNewProbe();
+            _renderChannelDetail();
+        }
+
+        /* Field writer for the form. `probeOnly` fields (decode geometry) just
+         * re-run the probe; identity fields need no re-render at all, so typing
+         * never fights the cursor. */
+        function _chNewSet(key, val) {
+            if (!_chNewDraft) return;
+            _chNewDraft[key] = val;
+            _chNewProbeRender();   /* instant, off the cached frame — no fetch */
+        }
+
+        /* Accept "0x1F4", "1F4h", "500" — people copy IDs out of DBCs and
+         * datasheets in every format. Returns NaN when unparseable. */
+        function _chParseCanId(raw) {
+            const s = String(raw || '').trim().toLowerCase().replace(/h$/, '');
+            if (!s) return NaN;
+            if (s.startsWith('0x')) return parseInt(s.slice(2), 16);
+            if (/^[0-9]+$/.test(s)) return parseInt(s, 10);
+            if (/^[0-9a-f]+$/.test(s)) return parseInt(s, 16);
+            return NaN;
+        }
+
+        function _chNewSetCanId(el) {
+            const v = _chParseCanId(el.value);
+            _chNewDraft.can_id = isNaN(v) ? 0 : v;
+            /* Echo back canonical hex so the user sees what we understood. */
+            if (!isNaN(v)) el.value = '0x' + v.toString(16).toUpperCase().padStart(3, '0');
+            /* The cached frame belongs to the OLD id — drop it and re-poll now
+             * rather than showing the previous id's bytes for up to 700 ms. */
+            _chNewProbeFrame = null;
+            _chNewProbeRender();
+            _chScheduleNewProbe(0);
+        }
+
+        /* Decode a bit-field out of an 8-byte frame, mirroring the firmware's
+         * can_extract_bits: bit_start counts from byte0/bit0, little-endian
+         * (Intel) walks bytes low→high, big-endian (Motorola) high→low. Kept
+         * deliberately simple — it only has to agree with the firmware for the
+         * shapes the form can express. */
+        function _chDecodeBits(bytes, bitStart, bitLen, isSigned, littleEndian) {
+            if (!bytes || !bytes.length || bitLen < 1 || bitLen > 32) return null;
+            let raw = 0;
+            for (let i = 0; i < bitLen; i++) {
+                const bit = bitStart + i;
+                const byteIdx = littleEndian ? (bit >> 3) : (bytes.length - 1 - (bit >> 3));
+                if (byteIdx < 0 || byteIdx >= bytes.length) return null;
+                const bitInByte = bit & 7;
+                const b = (bytes[byteIdx] >> bitInByte) & 1;
+                raw |= (b << i);
+            }
+            if (isSigned && bitLen < 32) {
+                const signBit = 1 << (bitLen - 1);
+                if (raw & signBit) raw -= (1 << bitLen);
+            }
+            return raw;
+        }
+
+        function _chStopNewProbe() {
+            if (_chNewProbeTimer) { clearTimeout(_chNewProbeTimer); _chNewProbeTimer = null; }
+            _chNewProbeFrame = null;
+            _chNewProbeBusy = false;
+        }
+
+        /* Fetch loop for the probe. Deliberately a self-rescheduling timeout
+         * with an in-flight guard rather than setInterval: on this dash
+         * /api/can/monitor round-trips in ~1.5 s over WiFi, so a 500 ms
+         * setInterval stacked ~3 requests deep, saturated the httpd worker
+         * sockets and roughly TRIPLED latency for every other request —
+         * measured 0.75-1.5 s idle vs 2.3-4 s while polling. Waiting for each
+         * response before scheduling the next keeps exactly one request in
+         * flight regardless of how slow the link gets. */
+        function _chScheduleNewProbe(delay = 700) {
+            if (_chNewProbeTimer) clearTimeout(_chNewProbeTimer);
+            _chNewProbeTimer = setTimeout(_chNewProbePoll, delay);
+        }
+
+        async function _chNewProbePoll() {
+            _chNewProbeTimer = null;
+            if (!_chNewMode || !_chNewDraft) return;
+            if (_chNewProbeBusy) { _chScheduleNewProbe(); return; }
+            /* No ID yet — nothing to ask the bus about, so don't ask. */
+            if (!_chNewDraft.can_id) { _chNewProbeRender(); _chScheduleNewProbe(); return; }
+
+            _chNewProbeBusy = true;
+            try {
+                const r = await fetch('/api/can/monitor');
+                const j = await r.json();
+                const want = Number(_chNewDraft.can_id);
+                _chNewProbeFrame = (j.ids || []).find(e => Number(e.id) === want) || null;
+            } catch (e) {
+                _chNewProbeFrame = null;   /* offline / no device */
+            } finally {
+                _chNewProbeBusy = false;
+            }
+            _chNewProbeRender();
+            if (_chNewMode) _chScheduleNewProbe();
+        }
+
+        /* Show what's actually on the bus for the entered ID. This is the point
+         * of the redesign: a wrong bit_start and a CAN ID that simply isn't
+         * present look IDENTICAL in the old editor (both render "—"), so people
+         * guess. Here you see the raw bytes, which ones your bit window covers,
+         * and the decoded number.
+         *
+         * PURE render off the cached frame — every keystroke calls this, so it
+         * must not touch the network (it used to, which meant typing "16" into
+         * Bit length fired two more requests on top of the poll). */
+        function _chNewProbeRender() {
+            if (!_chNewMode || !_chNewDraft) return;
+            const box = document.getElementById('chNewProbe');
+            if (!box) return;
+            const d = _chNewDraft;
+            if (!d.can_id) {
+                box.innerHTML = `<div class="ch2-probe-miss">Enter a CAN ID to watch the bus.</div>`;
+                return;
+            }
+            const entry = _chNewProbeFrame;
+            const idHex = '0x' + Number(d.can_id).toString(16).toUpperCase().padStart(3, '0');
+            if (!entry) {
+                box.innerHTML = `<div class="ch2-probe-miss">${idHex} not seen on the bus yet.</div>`;
+                return;
+            }
+            const bytes = [];
+            for (let i = 0; i + 1 < entry.data.length; i += 2)
+                bytes.push(parseInt(entry.data.substr(i, 2), 16));
+
+            /* Highlight the bytes the bit window actually touches. */
+            const firstByte = d.bit_start >> 3;
+            const lastByte = (d.bit_start + d.bit_length - 1) >> 3;
+            const hex = bytes.map((b, i) => {
+                const inWin = d.endian === 1
+                    ? (i >= firstByte && i <= lastByte)
+                    : (i >= bytes.length - 1 - lastByte && i <= bytes.length - 1 - firstByte);
+                const h = b.toString(16).toUpperCase().padStart(2, '0');
+                return inWin ? `<span class="hit">${h}</span>` : h;
+            }).join(' ');
+
+            const raw = _chDecodeBits(bytes, d.bit_start, d.bit_length, d.is_signed, d.endian === 1);
+            const val = (raw === null) ? null : (raw * (d.scale || 1) + (d.offset || 0));
+            const dec = Math.max(0, Math.min(3, d.decimals | 0));
+            box.innerHTML =
+                `<div class="ch2-probe-bytes">${idHex} &nbsp; ${hex}</div>`
+                + (val === null
+                    ? `<div class="ch2-probe-miss" style="margin-top:6px;">Bit window runs past this frame (${bytes.length} bytes).</div>`
+                    : `<div class="ch2-probe-val">${val.toFixed(dec)} <span style="font-size:13px; color:var(--text-muted);">${_escHTML(d.units || '')}</span></div>`)
+                + `<div style="color:var(--text-ghost); margin-top:4px;">seen ${entry.age_ms | 0} ms ago · ${bytes.length} bytes · ${entry.count} frames</div>`;
+        }
+
+        function _renderChNewForm(wrap) {
+            const d = _chNewDraft;
+            const groupOpts = Object.keys(_CH_GROUP_SHORT)
+                .filter(g => Number(g) !== 99)
+                .map(g => `<option value="${g}" ${Number(g) === d.group ? 'selected' : ''}>${_CH_GROUP_SHORT[g]}</option>`)
+                .join('');
+            wrap.innerHTML = `
+                <div class="ch2-newform">
+                    <div class="ch2-detail-title" style="margin-bottom:2px;">New channel</div>
+                    <div class="ch2-detail-meta" style="margin-bottom:14px;">
+                        A custom CAN signal, bound to a channel your widgets can use.
+                    </div>
+
+                    <h4>Channel</h4>
+                    <div class="ch2-newform-grid">
+                        <div class="ch2-num span2">
+                            <span class="ch2-num-label">Name</span>
+                            <input type="text" id="chNewLabel" placeholder="e.g. Turbo Speed" spellcheck="false"
+                                   value="${_escAttr(d.label)}" oninput="_chNewDraft.label = this.value;">
+                        </div>
+                        <div class="ch2-num">
+                            <span class="ch2-num-label">Group</span>
+                            <select onchange="_chNewSet('group', Number(this.value))">${groupOpts}</select>
+                        </div>
+                        <div class="ch2-num">
+                            <span class="ch2-num-label">Units</span>
+                            <input type="text" placeholder="e.g. rpm" spellcheck="false"
+                                   value="${_escAttr(d.units)}" oninput="_chNewSet('units', this.value)">
+                        </div>
+                        <div class="ch2-num">
+                            <span class="ch2-num-label">Decimals</span>
+                            <input type="number" min="0" max="3" value="${d.decimals}"
+                                   onchange="_chNewSet('decimals', Number(this.value))">
+                        </div>
+                        <div class="ch2-num">
+                            <span class="ch2-num-label">Range</span>
+                            <div style="display:flex; gap:4px;">
+                                <input type="number" step="any" value="${d.min}" title="Min"
+                                       onchange="_chNewSet('min', Number(this.value))">
+                                <input type="number" step="any" value="${d.max}" title="Max"
+                                       onchange="_chNewSet('max', Number(this.value))">
+                            </div>
+                        </div>
+                    </div>
+
+                    <h4>CAN decode</h4>
+                    <div class="ch2-newform-grid">
+                        <div class="ch2-num">
+                            <span class="ch2-num-label">CAN ID</span>
+                            <input type="text" placeholder="0x1F4 or 500" spellcheck="false" style="font-family:monospace;"
+                                   value="${d.can_id ? '0x' + d.can_id.toString(16).toUpperCase().padStart(3,'0') : ''}"
+                                   onchange="_chNewSetCanId(this)">
+                        </div>
+                        <div class="ch2-num">
+                            <span class="ch2-num-label">Endian</span>
+                            <select onchange="_chNewSet('endian', Number(this.value))">
+                                <option value="1" ${d.endian === 1 ? 'selected' : ''}>Little (Intel)</option>
+                                <option value="0" ${d.endian === 0 ? 'selected' : ''}>Big (Motorola)</option>
+                            </select>
+                        </div>
+                        <div class="ch2-num">
+                            <span class="ch2-num-label">Bit start</span>
+                            <input type="number" min="0" max="63" value="${d.bit_start}"
+                                   oninput="_chNewSet('bit_start', Number(this.value))">
+                        </div>
+                        <div class="ch2-num">
+                            <span class="ch2-num-label">Bit length</span>
+                            <input type="number" min="1" max="32" value="${d.bit_length}"
+                                   oninput="_chNewSet('bit_length', Number(this.value))">
+                        </div>
+                        <div class="ch2-num">
+                            <span class="ch2-num-label">Scale</span>
+                            <input type="number" step="any" value="${d.scale}"
+                                   oninput="_chNewSet('scale', Number(this.value))">
+                        </div>
+                        <div class="ch2-num">
+                            <span class="ch2-num-label">Offset</span>
+                            <input type="number" step="any" value="${d.offset}"
+                                   oninput="_chNewSet('offset', Number(this.value))">
+                        </div>
+                        <div class="ch2-num span2">
+                            <span class="ch2-num-label">Signed</span>
+                            <select onchange="_chNewSet('is_signed', this.value === '1')">
+                                <option value="0" ${!d.is_signed ? 'selected' : ''}>Unsigned</option>
+                                <option value="1" ${d.is_signed ? 'selected' : ''}>Signed</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="ch2-probe" id="chNewProbe">
+                        <div class="ch2-probe-miss">Enter a CAN ID to watch the bus.</div>
+                    </div>
+
+                    <div class="ch2-newform-actions">
+                        <button class="btn btn-primary" id="chNewCreateBtn" onclick="_chCreateSubmit()">Create channel</button>
+                        <button class="btn btn-secondary" onclick="_chCancelNew()">Cancel</button>
+                    </div>
+                </div>`;
+
+            _chStopNewProbe();
+            _chNewProbeRender();
+            _chScheduleNewProbe(0);   /* first poll immediately, then paced */
+        }
+
+        async function _chCreateSubmit() {
+            const d = _chNewDraft;
+            if (!d) return;
+            const label = (document.getElementById('chNewLabel')?.value || '').trim();
+            if (!label) { showToast('Give the channel a name first', 'error'); return; }
+            d.label = label;
+
+            const btn = document.getElementById('chNewCreateBtn');
+            if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
+            /* Stop the bus poll before the POST. The create takes the LVGL lock
+             * and flushes channels.json synchronously; letting the probe keep
+             * firing means the create queues behind it on an httpd that only
+             * has a few worker sockets. */
+            _chStopNewProbe();
+            let newId = null;
+
+            const body = {
+                label: d.label, group: d.group, units: d.units,
+                decimals: d.decimals, min: d.min, max: d.max,
+            };
+            /* can_id 0 means "no decode" to the firmware, so only send the
+             * block when there's a real ID — otherwise we'd persist a decode
+             * that silently evaporates on the next reload. */
+            if (d.can_id) {
+                body.decode = {
+                    can_id: d.can_id, bit_start: d.bit_start, bit_length: d.bit_length,
+                    scale: d.scale, offset: d.offset, is_signed: d.is_signed,
+                    endian: d.endian, unit: d.units,
+                };
+            }
+
+            try {
+                const r = await fetch('/api/channels/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                if (!r.ok) {
+                    /* Surface the firmware's reason — "already exists", "limit
+                     * reached" — instead of a generic failure. The old decode
+                     * writes swallowed errors in .catch(()=>{}) and left the
+                     * user staring at values that never saved. */
+                    const reason = (await r.text().catch(() => '')) || `HTTP ${r.status}`;
+                    throw new Error(reason);
+                }
+                const j = await r.json();
+                newId = j.channel?.id || null;
+            } catch (e) {
+                showToast('Could not create channel: ' + (e.message || e), 'error');
+                if (btn) { btn.disabled = false; btn.textContent = 'Create channel'; }
+                if (_chNewMode) _chScheduleNewProbe();   /* form still up — resume the bus view */
+                return;
+            }
+
+            /* Past here the channel EXISTS on the device. Refresh failures below
+             * must not be reported as "could not create" — they're a stale list,
+             * not a lost channel. Kept out of the try above for exactly that
+             * reason: /api/channels takes ~1 s here (110 channels), and folding
+             * it into the create's error path would blame the create for a slow
+             * or dropped refresh. */
+            showToast(`Created "${d.label}"`);
+            _chNewMode = false;
+            _chNewDraft = null;
+            _chStopNewProbe();
+            try {
+                await _fetchChannelsActive();
+            } catch (e) { /* list just stays stale until the next refresh */ }
+            if (newId) _chSelectedId = newId;
+            _refreshChannelsList();
+            _renderChannelDetail();
+        }
+
         function _renderChannelDetail() {
             const wrap = document.getElementById('chDetail');
             if (!wrap) return;
+            if (_chNewMode) { _renderChNewForm(wrap); return; }
+            _chStopNewProbe();
             const c = _chCache.find(x => x.id === _chSelectedId);
             if (!c) {
                 wrap.innerHTML = `<div class="ch2-detail-empty">${_chCache.length ? 'Pick a channel from the list.' : ''}</div>`;

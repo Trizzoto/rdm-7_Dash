@@ -385,6 +385,155 @@ static esp_err_t send_channel_ok(httpd_req_t *req, channel_t *c) {
 	return web_server_send_json(req, root);
 }
 
+/* Build the "custom_" channel id for a derived signal name, lowercased and
+ * capped to the 32-char id buffer. Mirrors the rule in
+ * channel_source_apply.c::_ensure_channel_for_signal so an id minted here and
+ * one minted by the layout-import path agree for the same signal. */
+static void _custom_id_for_signal(const char *sname, char *out, size_t sz) {
+	size_t j = 0;
+	for (const char *p = "custom_"; *p && j < sz - 1; p++) out[j++] = *p;
+	for (size_t k = 0; sname[k] && j < sz - 1; k++) {
+		char c = sname[k];
+		out[j++] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+	}
+	out[j] = '\0';
+}
+
+/* POST /api/channels/create — mint a custom channel, optionally with its CAN
+ * decode, in ONE call.
+ *
+ *   { "label": "Turbo Speed", "group": 3, "units": "rpm", "decimals": 0,
+ *     "min": 0, "max": 200000,
+ *     "decode": { "can_id": 1234, "bit_start": 0, "bit_length": 16,
+ *                 "scale": 1, "offset": 0, "is_signed": false, "endian": 1 } }
+ *
+ * Only "label" is required. The id ("custom_turbo_speed") and signal name
+ * ("TURBO_SPEED") are derived from it, so the caller never invents either.
+ *
+ * This closes a real gap rather than adding sugar: channel_manager_create_custom
+ * has always worked and is used by the on-device wizard, but NOTHING in main/net
+ * ever called it — activate/update/bind-source all 404 a non-canonical id. So
+ * the web editor had no way to make a custom channel at all, and users had to
+ * hijack a canonical one (an "oil_temp" that really carries turbo speed) and
+ * live with the wrong label and group forever.
+ *
+ * Ordering matters: set_signal BEFORE set_decode, because set_decode only
+ * upserts the runtime signal when can_id != 0 AND the channel already has a
+ * signal_name. Reversed, the decode would store but never decode live. */
+static esp_err_t channels_create_handler(httpd_req_t *req) {
+	char buf[768];
+	if (recv_json_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
+
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+		return ESP_FAIL;
+	}
+
+	cJSON *jlabel = cJSON_GetObjectItemCaseSensitive(root, "label");
+	if (!cJSON_IsString(jlabel) || jlabel->valuestring[0] == '\0') {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing label");
+		return ESP_FAIL;
+	}
+
+	char sname[32];
+	_derive_signal_name(jlabel->valuestring, sname, sizeof(sname));
+	if (sname[0] == '\0') {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+		                    "Label has no letters or digits");
+		return ESP_FAIL;
+	}
+	char cid[32];
+	_custom_id_for_signal(sname, cid, sizeof(cid));
+
+	cJSON *jgroup    = cJSON_GetObjectItemCaseSensitive(root, "group");
+	cJSON *junits    = cJSON_GetObjectItemCaseSensitive(root, "units");
+	cJSON *jdecimals = cJSON_GetObjectItemCaseSensitive(root, "decimals");
+	cJSON *jmin      = cJSON_GetObjectItemCaseSensitive(root, "min");
+	cJSON *jmax      = cJSON_GetObjectItemCaseSensitive(root, "max");
+
+	channel_group_t group = CHGRP_DIAGNOSTIC;
+	if (cJSON_IsNumber(jgroup) && jgroup->valueint >= 0 &&
+	    jgroup->valueint < CHGRP__COUNT)
+		group = (channel_group_t)jgroup->valueint;
+
+	const char *units = cJSON_IsString(junits) ? junits->valuestring : "";
+	uint8_t decimals = 0;
+	if (cJSON_IsNumber(jdecimals)) {
+		int d = jdecimals->valueint;
+		decimals = (uint8_t)(d < 0 ? 0 : (d > 3 ? 3 : d));
+	}
+	float cmin = cJSON_IsNumber(jmin) ? (float)jmin->valuedouble : 0.0f;
+	float cmax = cJSON_IsNumber(jmax) ? (float)jmax->valuedouble : 100.0f;
+
+	cJSON *jd = cJSON_GetObjectItemCaseSensitive(root, "decode");
+	bool have_decode = cJSON_IsObject(jd);
+
+	if (!rdm_lvgl_lock(500)) {
+		cJSON_Delete(root);
+		return web_server_send_busy(req);
+	}
+
+	/* esp_http_server's httpd_err_code_t has no 409 — the codebase sends a 400
+	 * with a human-readable reason for "already exists" (web_server_layout.c
+	 * duplicate-layout path). Match that. */
+	if (channel_manager_get(cid)) {
+		rdm_lvgl_unlock();
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+		                    "A channel with that name already exists");
+		return ESP_FAIL;
+	}
+
+	channel_t *c = channel_manager_create_custom(
+	    cid, jlabel->valuestring, group, CHCARD_SCALAR,
+	    units, units, decimals, cmin, cmax);
+	if (!c) {
+		rdm_lvgl_unlock();
+		cJSON_Delete(root);
+		/* create_custom only fails on a bad prefix (we always pass custom_),
+		 * a duplicate (checked above), or the CHM_MAX cap — so at this point
+		 * it's the cap. No 507 in httpd_err_code_t; 500 + reason. */
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+		                    "Channel limit reached (128 max)");
+		return ESP_FAIL;
+	}
+
+	channel_manager_set_signal(c, sname);
+
+	if (have_decode) {
+		cJSON *jcan  = cJSON_GetObjectItemCaseSensitive(jd, "can_id");
+		cJSON *jbs   = cJSON_GetObjectItemCaseSensitive(jd, "bit_start");
+		cJSON *jbl   = cJSON_GetObjectItemCaseSensitive(jd, "bit_length");
+		cJSON *jsc   = cJSON_GetObjectItemCaseSensitive(jd, "scale");
+		cJSON *joff  = cJSON_GetObjectItemCaseSensitive(jd, "offset");
+		cJSON *jsg   = cJSON_GetObjectItemCaseSensitive(jd, "is_signed");
+		cJSON *jen   = cJSON_GetObjectItemCaseSensitive(jd, "endian");
+		cJSON *junit = cJSON_GetObjectItemCaseSensitive(jd, "unit");
+
+		channel_manager_set_decode(
+		    c,
+		    cJSON_IsNumber(jcan) ? (uint32_t)jcan->valuedouble : 0,
+		    cJSON_IsNumber(jbs)  ? (uint8_t)jbs->valueint : 0,
+		    cJSON_IsNumber(jbl)  ? (uint8_t)jbl->valueint : 16,
+		    cJSON_IsNumber(jsc)  ? (float)jsc->valuedouble : 1.0f,
+		    cJSON_IsNumber(joff) ? (float)joff->valuedouble : 0.0f,
+		    cJSON_IsBool(jsg)    ? cJSON_IsTrue(jsg) : false,
+		    cJSON_IsNumber(jen)  ? (uint8_t)jen->valueint : 1,
+		    cJSON_IsString(junit) ? junit->valuestring : units,
+		    true /* persist_now — a create is a single high-value edit */);
+	}
+
+	rdm_lvgl_unlock();
+	cJSON_Delete(root);
+
+	ESP_LOGI(TAG, "Created custom channel '%s' (signal '%s')%s",
+	         cid, sname, have_decode ? " with decode" : "");
+	return send_channel_ok(req, c);
+}
+
 /* POST /api/channels/activate — body `{ "id": "rpm" }`.
  * Idempotent — re-activating an active channel returns its current state. */
 static esp_err_t channels_activate_handler(httpd_req_t *req) {
@@ -1334,6 +1483,13 @@ static const httpd_uri_t channels_canonical_uri = {
 	.user_ctx = NULL
 };
 
+static const httpd_uri_t channels_create_uri = {
+	.uri = "/api/channels/create",
+	.method = HTTP_POST,
+	.handler = channels_create_handler,
+	.user_ctx = NULL
+};
+
 static const httpd_uri_t channels_activate_uri = {
 	.uri = "/api/channels/activate",
 	.method = HTTP_POST,
@@ -1359,6 +1515,7 @@ void web_server_channels_register(httpd_handle_t server) {
 	if (!s_channels_list_mux) s_channels_list_mux = xSemaphoreCreateMutex();
 	REGISTER_URI(server, &channels_list_uri);
 	REGISTER_URI(server, &channels_canonical_uri);
+	REGISTER_URI(server, &channels_create_uri);
 	REGISTER_URI(server, &channels_activate_uri);
 	REGISTER_URI(server, &channels_update_uri);
 	REGISTER_URI(server, &channels_delete_uri);
