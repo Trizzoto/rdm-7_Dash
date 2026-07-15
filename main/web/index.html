@@ -4043,10 +4043,11 @@
                     <button type="button" class="pa-add-row" onclick="_paAddRow()"><svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add signal</button>
                 </div>
                 <div class="dbc-preview pa-error" id="paError" style="display:none;"></div>
-                <div class="pa-hint">Saved to a per-device preset file (<code>/lfs/presets</code>) and shown in the source picker alongside the built-in ECUs. Standard 11-bit CAN IDs only.</div>
+                <div class="pa-hint">Saved to a per-device preset file (<code>/lfs/presets</code>) and shown in the source picker alongside the built-in ECUs. 11-bit and 29-bit extended CAN IDs.</div>
             </div>
             <div class="dbc-footer">
                 <button class="btn btn-secondary" onclick="closePresetAuthorModal()">Cancel</button>
+                <button class="btn btn-secondary" id="paChannelsBtn" onclick="createChannelsFromSignals()" title="Create a channel per signal, bound and decoding — no source picking needed">Create Channels</button>
                 <button class="btn" id="paSaveBtn" onclick="savePresetAuthor()">Save Preset</button>
             </div>
         </div>
@@ -6214,22 +6215,24 @@
                 const boMatch = line.match(/^BO_\s+(\d+)\s+(\w+)\s*:/);
                 if (boMatch) {
                     const rawId = parseInt(boMatch[1]);
-                    /* Skip extended frames entirely — bit 31 set marks them
-                     * in DBC. Previously we masked off bit 31 and kept the
-                     * lower 31 bits, which silently aliased extended IDs
-                     * onto whatever standard ID happened to share their
-                     * lower 11 bits — corrupting the imported preset. The
-                     * firmware filter is standard-only anyway. */
-                    if (rawId & 0x80000000) {
-                        currentMsgId = null;
-                        continue;
-                    }
-                    /* Skip plain extended (>0x7FF) too — same reason. */
-                    if (rawId > 0x7FF) {
-                        currentMsgId = null;
-                        continue;
-                    }
-                    currentMsgId = rawId;
+                    /* DBC marks an extended (29-bit) message by setting bit 31
+                     * of the id; the real id is the low 29 bits. We used to drop
+                     * these messages entirely, on the stated grounds that "the
+                     * firmware filter is standard-only anyway" — that is no
+                     * longer true and hasn't been for a while: can_manager.c
+                     * falls back to TWAI_FILTER_CONFIG_ACCEPT_ALL as soon as any
+                     * signal has can_id > 0x7FF, precisely because "software
+                     * dispatch already matches on the full ID". Verified on the
+                     * bench: a channel on 0x18FECA00 decodes an injected 29-bit
+                     * frame correctly and the id tracker reports ext:true.
+                     *
+                     * The original fear was real but is addressed by masking
+                     * correctly: keep the low 29 bits (not 31), so an extended
+                     * id can never alias onto the standard id sharing its low
+                     * 11 bits. Dropping a J1939/OBD-style DBC's messages on the
+                     * floor silently produced an empty import instead. */
+                    currentMsgId = (rawId & 0x80000000) ? (rawId & 0x1FFFFFFF) : rawId;
+                    if (currentMsgId > 0x1FFFFFFF) { currentMsgId = null; continue; }
                     currentMsgName = boMatch[2];
                     continue;
                 }
@@ -6266,7 +6269,13 @@
                             offset: offset,
                             endianess: byteOrder,
                             is_signed: isSigned,
-                            decimals: decimals
+                            decimals: decimals,
+                            /* The DBC's unit ("rpm", "degC"...) was matched and
+                             * then dropped. Presets don't carry units, but a
+                             * channel does — keep it so Create Channels can
+                             * fill it in instead of making the user retype it
+                             * for every signal. */
+                            unit: (sgMatch[10] || '').trim()
                         });
                     }
                     /* If line is not indented and not empty, end current message context */
@@ -6397,6 +6406,9 @@
             if (!rows) return;
             const div = document.createElement('div');
             div.className = 'pa-row';
+            /* Unit rides along as data — presets ignore it, Create Channels
+             * reads it. Avoids adding a 10th column to this row. */
+            if (sig.unit) div.dataset.unit = sig.unit;
             const esc = s => (s == null ? '' : String(s)).replace(/"/g, '&quot;');
             const canHex = (sig.can_id == null) ? '' :
                 (typeof sig.can_id === 'string' ? sig.can_id : Number(sig.can_id).toString(16).toUpperCase());
@@ -6423,7 +6435,10 @@
                 if (seen.has(label.toUpperCase())) throw new Error('Duplicate label: ' + label);
                 seen.add(label.toUpperCase());
                 const canId = parseInt(q('pa-canid').value.trim().replace(/^0x/i, ''), 16);
-                if (isNaN(canId) || canId < 0 || canId > 0x7FF) throw new Error(label + ': CAN ID must be 0x000–0x7FF.');
+                /* 29-bit extended IDs are supported end-to-end (software
+                 * dispatch matches the full ID) — the old 0x7FF cap silently
+                 * rejected every J1939 / extended-frame DBC. */
+                if (isNaN(canId) || canId < 0 || canId > 0x1FFFFFFF) throw new Error(label + ': CAN ID must be 0x000–0x1FFFFFFF.');
                 const bs = Number(q('pa-bs').value), bl = Number(q('pa-bl').value);
                 if (!(bs >= 0 && bs <= 63)) throw new Error(label + ': bit start must be 0–63.');
                 if (!(bl >= 1 && bl <= 64)) throw new Error(label + ': bit length must be 1–64.');
@@ -6435,11 +6450,101 @@
                 let decimals = 0; const a = Math.abs(scale);
                 if (a > 0 && a < 0.01) decimals = 3; else if (a < 0.1) decimals = 2; else if (a < 1) decimals = 1;
                 out.push({ label, can_id: canId.toString(16).toUpperCase(), bit_start: bs, bit_length: bl,
-                           scale, offset, endianess, is_signed, decimals });
+                           scale, offset, endianess, is_signed, decimals,
+                           unit: row.dataset.unit || '' });
             }
             if (!out.length) throw new Error('Add at least one signal.');
             return out;
         }
+        /* Create one channel per authored/imported signal, bound and decoding.
+         *
+         * This closes the DBC dead-end: openDbcImportModal parses a .dbc into
+         * these rows, but every existing path from here wrote ONLY a preset
+         * (/api/presets/custom/save). A 200-signal DBC therefore produced ZERO
+         * channels — you still had to open Channels and hand-bind each signal
+         * through the 3-column source picker, one at a time. The decode is
+         * already sitting in the rows; this just posts it.
+         *
+         * Sequential, not Promise.all: each create takes the LVGL lock (500 ms
+         * timeout) and flushes channels.json synchronously, so firing 200 at
+         * once would stampede the httpd workers and mass-"busy". Slower, but it
+         * finishes — and the progress text means the user can see it moving. */
+        async function createChannelsFromSignals() {
+            const err = document.getElementById('paError');
+            err.style.display = 'none';
+            let signals;
+            try { signals = _paCollectSignals(); }
+            catch (e) { err.textContent = e.message; err.style.display = 'block'; return; }
+
+            const btn = document.getElementById('paChannelsBtn');
+            const orig = btn.textContent;
+            btn.disabled = true;
+
+            let made = 0;
+            const skipped = [];   /* already exists — expected on a re-import */
+            const failed = [];
+
+            for (let i = 0; i < signals.length; i++) {
+                const s = signals[i];
+                btn.textContent = `Creating ${i + 1}/${signals.length}…`;
+                const body = {
+                    label: s.label,
+                    group: 11,            /* Diagnostic — the honest default; the
+                                             DBC doesn't say what it belongs to */
+                    units: s.unit || '',
+                    decimals: s.decimals | 0,
+                    decode: {
+                        can_id: parseInt(s.can_id, 16),
+                        bit_start: s.bit_start,
+                        bit_length: s.bit_length,
+                        scale: s.scale,
+                        offset: s.offset,
+                        is_signed: !!s.is_signed,
+                        endian: s.endianess,
+                        unit: s.unit || '',
+                    },
+                };
+                try {
+                    const r = await fetch('/api/channels/create', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body),
+                    });
+                    if (r.ok) { made++; continue; }
+                    const reason = (await r.text().catch(() => '')) || `HTTP ${r.status}`;
+                    if (/already exists/i.test(reason)) skipped.push(s.label);
+                    else failed.push(`${s.label}: ${reason.slice(0, 60)}`);
+                } catch (e) {
+                    failed.push(`${s.label}: ${e.message || e}`);
+                }
+            }
+
+            btn.disabled = false;
+            btn.textContent = orig;
+
+            /* Report honestly — a partial run is the common case once the 128
+             * channel cap bites, and silently claiming success would leave the
+             * user hunting for channels that were never made. */
+            if (failed.length) {
+                err.innerHTML = `Created ${made}, skipped ${skipped.length} (already existed), <b>failed ${failed.length}</b>:<br>`
+                    + failed.slice(0, 6).map(_escHTML).join('<br>')
+                    + (failed.length > 6 ? `<br>…and ${failed.length - 6} more` : '');
+                err.style.display = 'block';
+            }
+            const parts = [`Created ${made} channel${made === 1 ? '' : 's'}`];
+            if (skipped.length) parts.push(`${skipped.length} already existed`);
+            if (failed.length) parts.push(`${failed.length} failed`);
+            if (typeof updateStatus === 'function') updateStatus(parts.join(' · '), failed.length > 0);
+            if (typeof showToast === 'function' && !failed.length) showToast(parts.join(' · '));
+
+            /* Refresh the channels view if it's open behind this modal. */
+            if (made && typeof _fetchChannelsActive === 'function') {
+                try {
+                    await _fetchChannelsActive();
+                    if (typeof _refreshChannelsList === 'function') _refreshChannelsList();
+                } catch (_) { /* list just stays stale */ }
+            }
+        }
+
         async function savePresetAuthor() {
             const ecu = document.getElementById('paEcuName').value.trim();
             const version = document.getElementById('paVersion').value.trim();
@@ -14393,7 +14498,7 @@
                     }
                     canIdCell = `<td class="col-canid" title="Internal signal (no CAN bus)"><span class="sig-live-value" data-sig-name="${s.name}" style="font-family:monospace; color:${valColor}; font-size:11px;">${valText}</span></td>`;
                 } else {
-                    canIdCell = `<td class="col-canid"><input type="text" value="0x${s.can_id.toString(16).toUpperCase().padStart(3,'0')}" onchange="updateSignalCanId(${i},this)" title="Hex CAN ID (0x000-0x7FF)" spellcheck="false" style="font-family:monospace;"></td>`;
+                    canIdCell = `<td class="col-canid"><input type="text" value="0x${s.can_id.toString(16).toUpperCase().padStart(3,'0')}" onchange="updateSignalCanId(${i},this)" title="Hex CAN ID (0x000-0x7FF standard, up to 0x1FFFFFFF extended)" spellcheck="false" style="font-family:monospace;"></td>`;
                 }
 
                 return `<tr>` +
@@ -14448,9 +14553,9 @@
             } else {
                 val = parseInt(raw, 16); /* treat bare input as hex too */
             }
-            if (isNaN(val) || val < 0 || val > 0x7FF) {
+            if (isNaN(val) || val < 0 || val > 0x1FFFFFFF) {
                 inputEl.classList.add('invalid');
-                updateStatus('CAN ID must be 0x000-0x7FF', true);
+                updateStatus('CAN ID must be 0x000-0x1FFFFFFF (11-bit or 29-bit)', true);
                 return;
             }
             inputEl.classList.remove('invalid');
@@ -20272,6 +20377,43 @@
             _renderChannelDetail();
         }
 
+        /* Open the new-channel form pre-filled from an existing channel.
+         * Configuring EGT cylinders 1-8 used to mean running the entire flow
+         * eight times, re-typing the same CAN ID / scale / units and only
+         * changing the bit offset. Works off ANY channel, canonical included —
+         * duplicating "oil_temp" to make a second temperature on a different
+         * bit offset is exactly the case that used to force people to hijack a
+         * canonical channel. The label gets a " copy" suffix because the id is
+         * derived from it and a bare duplicate would 400 on the name clash. */
+        function _chDuplicate(id) {
+            const src = _chCache.find(c => c.id === id);
+            if (!src) { showToast('Channel not found', 'error'); return; }
+            const dec = src.decode || {};
+            _chNewMode = true;
+            _chNewDraft = {
+                ...(_chNewDefaults()),
+                label: (src.label || src.id) + ' copy',
+                group: (src.group != null) ? src.group : 11,
+                units: src.units_display || src.units_native || '',
+                decimals: src.decimals | 0,
+                min: (src.min != null) ? src.min : 0,
+                max: (src.max != null) ? src.max : 100,
+                can_id: dec.can_id | 0,
+                bit_start: dec.bit_start | 0,
+                bit_length: (dec.bit_length | 0) || 16,
+                scale: (dec.scale != null) ? dec.scale : 1,
+                offset: (dec.offset != null) ? dec.offset : 0,
+                is_signed: !!dec.is_signed,
+                endian: (dec.endian != null) ? Number(dec.endian) : 1,
+            };
+            _chSelectedId = null;
+            _refreshChannelsList();
+            _renderChannelDetail();
+            /* Select the label so the first keystroke renames the copy. */
+            const el = document.getElementById('chNewLabel');
+            if (el) { el.focus(); el.select(); }
+        }
+
         /* Field writer for the form. `probeOnly` fields (decode geometry) just
          * re-run the probe; identity fields need no re-render at all, so typing
          * never fights the cursor. */
@@ -20624,6 +20766,7 @@
                 ${_renderMoreSection(c, def)}
 
                 <div class="ch2-detail-footer">
+                    <button class="ch2-link-btn" onclick="_chDuplicate('${_escJs(c.id)}')" title="Start a new channel pre-filled from this one">Duplicate</button>
                     ${def && c.is_canonical ? `<button class="ch2-link-btn" onclick="_chResetDefaults('${c.id}')">Reset to defaults</button>` : ''}
                     ${!c.is_canonical ? `<button class="ch2-link-btn danger" onclick="_chDelete('${c.id}')">Delete</button>` : ''}
                 </div>
@@ -21792,9 +21935,9 @@
             let val;
             if (raw.toLowerCase().startsWith('0x')) val = parseInt(raw, 16);
             else val = parseInt(raw, 16); /* treat bare input as hex */
-            if (isNaN(val) || val < 0 || val > 0x7FF) {
+            if (isNaN(val) || val < 0 || val > 0x1FFFFFFF) {
                 inputEl.classList.add('invalid');
-                if (typeof updateStatus === 'function') updateStatus('CAN ID must be 0x000-0x7FF', true);
+                if (typeof updateStatus === 'function') updateStatus('CAN ID must be 0x000-0x1FFFFFFF (11-bit or 29-bit)', true);
                 return;
             }
             inputEl.classList.remove('invalid');
