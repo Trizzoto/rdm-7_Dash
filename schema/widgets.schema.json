@@ -1297,6 +1297,32 @@
           "help": "Line the text up left, centre or right."
         },
         {
+          "name": "flash_mode",
+          "label": "Alert Type",
+          "type": "select",
+          "default": 0,
+          "category": "appearance",
+          "options": [
+            { "value": 0, "label": "Solid" },
+            { "value": 1, "label": "Flashing" }
+          ],
+          "group": "Behaviour",
+          "help": "Stay lit while the signal is on, or flash on and off."
+        },
+        {
+          "name": "flash_speed",
+          "label": "Flash Speed (ms)",
+          "type": "stepper",
+          "default": 200,
+          "category": "appearance",
+          "min": 50,
+          "max": 1000,
+          "step": 50,
+          "group": "Behaviour",
+          "help": "How fast it flashes (smaller = faster), in milliseconds.",
+          "enabled_by": "flash_mode=1"
+        },
+        {
           "name": "is_momentary",
           "label": "Momentary",
           "type": "checkbox",

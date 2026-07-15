@@ -7424,6 +7424,12 @@
                                   { v: 1, l: "Center" },
                                   { v: 2, l: "Right" }
                               ] },
+                            { name: "flash_mode", label: "Alert Type", type: "select", def: 0, cat: "appearance", group: "Behaviour", help: "Stay lit while the signal is on, or flash on and off.",
+                              options: [
+                                  { v: 0, l: "Solid" },
+                                  { v: 1, l: "Flashing" }
+                              ] },
+                            { name: "flash_speed", label: "Flash Speed (ms)", type: "stepper", def: 200, cat: "appearance", group: "Behaviour", help: "How fast it flashes (smaller = faster), in milliseconds.", min: 50, max: 1000, step: 50, enabledBy: "flash_mode=1" },
                             { name: "is_momentary", label: "Momentary", type: "checkbox", def: true, cat: "appearance", group: "Behaviour", help: "Only stay on while the signal is active, instead of latching on." },
                             { name: "invert_toggle", label: "Invert State", type: "checkbox", def: false, cat: "appearance", group: "Behaviour", help: "Flip it - the warning shows when the signal is OFF." }
                         ]

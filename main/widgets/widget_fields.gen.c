@@ -1037,6 +1037,11 @@ static const widget_field_option_t warning_label_text_align_opts[] = {
     { 2, "Right" },
 };
 
+static const widget_field_option_t warning_flash_mode_opts[] = {
+    { 0, "Solid" },
+    { 1, "Flashing" },
+};
+
 static const widget_field_t warning_fields[] = {
     {
         .name = "label", .label = "Label",
@@ -1186,6 +1191,26 @@ static const widget_field_t warning_fields[] = {
         .default_str = NULL,
         .options = warning_label_text_align_opts, .option_count = 3,
         .enabled_by = "show_label", .group = "Text", .inline_key = NULL,
+        .night_overridable = false,
+    },
+    {
+        .name = "flash_mode", .label = "Alert Type",
+        .type = WF_TYPE_SELECT, .category = WF_CAT_APPEARANCE,
+        .min_int = 0, .max_int = 0, .step_int = 0,
+        .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
+        .default_str = NULL,
+        .options = warning_flash_mode_opts, .option_count = 2,
+        .enabled_by = NULL, .group = "Behaviour", .inline_key = NULL,
+        .night_overridable = false,
+    },
+    {
+        .name = "flash_speed", .label = "Flash Speed (ms)",
+        .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
+        .min_int = 50, .max_int = 1000, .step_int = 50,
+        .default_int = 200, .default_float = 200.000000f, .default_color = 0x000000,
+        .default_str = NULL,
+        .options = NULL, .option_count = 0,
+        .enabled_by = "flash_mode=1", .group = "Behaviour", .inline_key = NULL,
         .night_overridable = false,
     },
     {
