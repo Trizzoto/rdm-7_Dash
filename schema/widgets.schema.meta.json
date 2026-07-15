@@ -105,7 +105,8 @@
             "select",
             "font",
             "image_picker",
-            "can_id"
+            "can_id",
+            "gradient_stops"
           ]
         },
         "default": {
