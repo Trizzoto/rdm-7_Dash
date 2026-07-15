@@ -1122,8 +1122,8 @@
       "display_name": "Alert Light",
       "singleton": false,
       "default_size": {
-        "w": 25,
-        "h": 25
+        "w": 20,
+        "h": 20
       },
       "default_position": null,
       "constraints": {
