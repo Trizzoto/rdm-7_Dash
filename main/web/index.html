@@ -1817,6 +1817,18 @@
             display: flex; gap: 8px; margin-top: 18px;
             padding-top: 14px; border-top: 1px solid var(--border);
         }
+        /* New-source form lives inside the picker overlay, reusing the
+         * new-channel form's grid + probe styling. */
+        .ch2-src-toolbar { display: flex; gap: 8px; align-items: center; }
+        .ch2-src-toolbar .ch2-picker-search { flex: 1; margin: 0; }
+        .ch2-src-new-btn { white-space: nowrap; padding: 7px 12px; font-weight: 600; }
+        .ch2-srcform { padding: 14px 16px; overflow-y: auto; flex: 1; min-height: 0; }
+        .ch2-srcform h4 {
+            margin: 16px 0 8px; font-size: 12px; font-weight: 600;
+            color: var(--text-muted); text-transform: uppercase;
+            letter-spacing: .04em;
+        }
+        .ch2-srcform h4:first-child { margin-top: 0; }
         .ch2-list-tools input[type="search"] {
             width: 100%; box-sizing: border-box;
             padding: 6px 10px;
@@ -4634,8 +4646,11 @@
                 </div>
                 <button class="close-btn" onclick="_closeSignalPicker()" style="font-size:18px;">&times;</button>
             </div>
-            <div class="ch2-picker-body-cols">
-                <input id="chSigPickerSearch" class="ch2-picker-search" type="search" placeholder="Filter by ECU, version, or signal name" oninput="_renderSrcPickerColumns()">
+            <div class="ch2-picker-body-cols" id="chSrcBrowse">
+                <div class="ch2-src-toolbar">
+                    <input id="chSigPickerSearch" class="ch2-picker-search" type="search" placeholder="Filter by ECU, version, or signal name" oninput="_renderSrcPickerColumns()">
+                    <button class="btn ch2-src-new-btn" onclick="_srcOpenNew()" title="Define a CAN signal — as a new ECU or added to an existing one">+ New source</button>
+                </div>
                 <div class="preset-columns ch2-src-cols">
                     <div class="preset-col">
                         <div class="preset-col-header">ECU</div>
@@ -4651,7 +4666,8 @@
                     </div>
                 </div>
             </div>
-            <div class="preset-selection-bar">
+            <div class="ch2-srcform" id="chSrcNewForm" style="display:none;"></div>
+            <div class="preset-selection-bar" id="chSrcSelBar">
                 <span id="chSrcSelText" class="selection-text">Select an ECU, version, then signal</span>
                 <button class="btn" id="chSrcApplyBtn" disabled onclick="_applySrcPickerSelection()">Use as source</button>
             </div>
@@ -20352,6 +20368,15 @@
          * from cache instead of each firing its own request. */
         let _chNewProbeFrame = null;
         let _chNewProbeBusy = false;
+        /* The probe was written against this form's globals (_chNewDraft →
+         * #chNewProbe). The new-source form needs the identical readout for its
+         * OWN draft and its OWN box, so the poll/render run off this context
+         * instead of reaching for those globals. `owner` exists so each form
+         * only ever tears down its own probe — the source picker floats above
+         * the channels modal, and a _renderChannelDetail() refresh underneath it
+         * must not kill the source form's probe.
+         *   { owner: 'new-channel' | 'new-source', draft, boxId } */
+        let _chProbeCtx = null;
 
         function _chNewDefaults() {
             return {
@@ -20374,6 +20399,7 @@
             _chNewMode = false;
             _chNewDraft = null;
             _chStopNewProbe();
+            _chProbeCtx = null;
             _renderChannelDetail();
         }
 
@@ -20426,9 +20452,15 @@
         /* Accept "0x1F4", "1F4h", "500" — people copy IDs out of DBCs and
          * datasheets in every format. Returns NaN when unparseable. */
         function _chParseCanId(raw) {
-            const s = String(raw || '').trim().toLowerCase().replace(/h$/, '');
+            let s = String(raw || '').trim().toLowerCase();
+            /* The trailing "h" is the only thing marking "520h" as hex — test for
+             * it before stripping, or the all-digits branch below claims it and
+             * silently binds the channel to 0x208. */
+            const hexSuffix = /h$/.test(s);
+            s = s.replace(/h$/, '');
             if (!s) return NaN;
             if (s.startsWith('0x')) return parseInt(s.slice(2), 16);
+            if (hexSuffix && /^[0-9a-f]+$/.test(s)) return parseInt(s, 16);
             if (/^[0-9]+$/.test(s)) return parseInt(s, 10);
             if (/^[0-9a-f]+$/.test(s)) return parseInt(s, 16);
             return NaN;
@@ -20490,16 +20522,16 @@
 
         async function _chNewProbePoll() {
             _chNewProbeTimer = null;
-            if (!_chNewMode || !_chNewDraft) return;
+            if (!_chProbeCtx || !_chProbeCtx.draft) return;
             if (_chNewProbeBusy) { _chScheduleNewProbe(); return; }
             /* No ID yet — nothing to ask the bus about, so don't ask. */
-            if (!_chNewDraft.can_id) { _chNewProbeRender(); _chScheduleNewProbe(); return; }
+            if (!_chProbeCtx.draft.can_id) { _chNewProbeRender(); _chScheduleNewProbe(); return; }
 
             _chNewProbeBusy = true;
             try {
                 const r = await fetch('/api/can/monitor');
                 const j = await r.json();
-                const want = Number(_chNewDraft.can_id);
+                const want = Number(_chProbeCtx.draft.can_id);
                 _chNewProbeFrame = (j.ids || []).find(e => Number(e.id) === want) || null;
             } catch (e) {
                 _chNewProbeFrame = null;   /* offline / no device */
@@ -20507,7 +20539,7 @@
                 _chNewProbeBusy = false;
             }
             _chNewProbeRender();
-            if (_chNewMode) _chScheduleNewProbe();
+            if (_chProbeCtx) _chScheduleNewProbe();
         }
 
         /* Show what's actually on the bus for the entered ID. This is the point
@@ -20520,10 +20552,10 @@
          * must not touch the network (it used to, which meant typing "16" into
          * Bit length fired two more requests on top of the poll). */
         function _chNewProbeRender() {
-            if (!_chNewMode || !_chNewDraft) return;
-            const box = document.getElementById('chNewProbe');
+            if (!_chProbeCtx || !_chProbeCtx.draft) return;
+            const box = document.getElementById(_chProbeCtx.boxId);
             if (!box) return;
-            const d = _chNewDraft;
+            const d = _chProbeCtx.draft;
             if (!d.can_id) {
                 box.innerHTML = `<div class="ch2-probe-miss">Enter a CAN ID to watch the bus.</div>`;
                 return;
@@ -20660,6 +20692,7 @@
                 </div>`;
 
             _chStopNewProbe();
+            _chProbeCtx = { owner: 'new-channel', draft: _chNewDraft, boxId: 'chNewProbe' };
             _chNewProbeRender();
             _chScheduleNewProbe(0);   /* first poll immediately, then paced */
         }
@@ -20740,7 +20773,12 @@
             const wrap = document.getElementById('chDetail');
             if (!wrap) return;
             if (_chNewMode) { _renderChNewForm(wrap); return; }
-            _chStopNewProbe();
+            /* Only tear down OUR probe. The source picker sits above this modal
+             * and owns its own; a refresh under it must leave that one alone. */
+            if (_chProbeCtx && _chProbeCtx.owner === 'new-channel') {
+                _chStopNewProbe();
+                _chProbeCtx = null;
+            }
             const c = _chCache.find(x => x.id === _chSelectedId);
             if (!c) {
                 wrap.innerHTML = `<div class="ch2-detail-empty">${_chCache.length ? 'Pick a channel from the list.' : ''}</div>`;
@@ -20985,6 +21023,132 @@
         let _sourceOptionsCache = null;
         let _sourcePickerRowMap = {};
 
+        /* Mirror of the firmware's _derive_signal_name / label_to_signal_name:
+         * uppercase, RUNS of non-alnum collapse to a single "_", trim the ends.
+         * Must agree with the C rule or a source authored here would bind to a
+         * different signal name than the same label applied on-device. */
+        function _labelToSignalName(label) {
+            return String(label || '')
+                .replace(/[^A-Za-z0-9]+/g, '_')
+                .replace(/^_+|_+$/g, '')
+                .toUpperCase();
+        }
+
+        /* ── User-made ECU presets as real makes ────────────────────────
+         *
+         * /api/channels/source-options only knows the COMPILE-TIME
+         * preconfig_items[] table (preset_picker.c declares it `const`), plus
+         * two virtual makes: OBD2, and a "Custom" bucket built from CAN signals
+         * already in the runtime registry. User-authored ECU presets live on
+         * LittleFS behind /api/presets/custom — a surface source-options never
+         * reads. So without this merge, an ECU you just created is invisible in
+         * the very picker you'd pick it from.
+         *
+         * Merging client-side satisfies both asks with no firmware change:
+         *   - a preset named "MyECU" → a brand-new make appears
+         *   - a signal saved under an existing make → shows up UNDER that make,
+         *     because makes are matched by name here exactly as the firmware
+         *     groups preconfig rows by (ecu, version)
+         *
+         * Rows are tagged kind:'custom_preset'. They deliberately do NOT bind
+         * via source_type:'ecu_preset' — the firmware resolves that through
+         * _find_preconfig() against the const table, so it would never find
+         * them. _bindCustomPresetRow materialises them instead. */
+        function _mergeCustomPresetsIntoSources(cache) {
+            if (!cache || !Array.isArray(cache.makes)) return;
+            const rows = Array.isArray(customPresets) ? customPresets : [];
+            rows.forEach(p => {
+                if (!p || !p.ecu || !p.version) return;
+                let make = cache.makes.find(m => m.make === p.ecu);
+                if (!make) {
+                    make = { make: p.ecu, is_active: false, versions: [] };
+                    cache.makes.push(make);
+                }
+                if (!Array.isArray(make.versions)) make.versions = [];
+                let ver = make.versions.find(v => v.version === p.version);
+                if (!ver) {
+                    ver = { version: p.version, display: p.version, is_active: false, signals: [] };
+                    make.versions.push(ver);
+                }
+                if (!Array.isArray(ver.signals)) ver.signals = [];
+                /* An ECU with no signals still earns its make/version row — the
+                 * firmware's list handler emits an `_empty` placeholder for
+                 * exactly this, so a freshly-named ECU doesn't vanish until its
+                 * first signal exists. */
+                if (p._empty || !p.label) return;
+                const canId = (typeof p.can_id === 'string')
+                    ? (parseInt(p.can_id, 16) || 0) : (p.can_id | 0);
+                const row = {
+                    kind: 'custom_preset',
+                    label: p.label,
+                    signal_name: _labelToSignalName(p.label),
+                    ecu: p.ecu, version: p.version,
+                    can_id: canId,
+                    bit_start: p.bit_start | 0,
+                    bit_length: (p.bit_length | 0) || 16,
+                    scale: (p.scale != null) ? p.scale : 1,
+                    offset: (p.offset != null) ? p.offset : 0,
+                    endianess: (p.endianess != null) ? Number(p.endianess) : 1,
+                    is_signed: !!p.is_signed,
+                    unit: p.unit || '',
+                    is_current: false,
+                };
+                /* The user's own row wins over a built-in of the same label —
+                 * they saved it deliberately, and silently dropping it would be
+                 * worse than shadowing a preset entry. */
+                const dup = ver.signals.findIndex(s => (s.label || '') === row.label);
+                if (dup >= 0) ver.signals[dup] = row; else ver.signals.push(row);
+            });
+        }
+
+        /* Bind a custom-preset row by materialising it: the firmware can't
+         * resolve it as an ecu_preset (const table), but it CAN take a plain
+         * custom signal — which is exactly what "+ Add CAN signal" has always
+         * done. Same three steps: register the signal live, point the channel
+         * at it, then hand the channel its decode (ADR 0005 — the channel owns
+         * decode, not the layout). */
+        async function _bindCustomPresetRow(channelId, row) {
+            if (!channelId || !row) return false;
+            const name = row.signal_name || _labelToSignalName(row.label);
+            if (!name) { showToast('That source has no usable name', 'error'); return false; }
+            if (!Array.isArray(currentLayout.signals)) currentLayout.signals = [];
+            /* Unit comes from the CHANNEL, never the preset row — presets don't
+             * store units by design, so trusting the row here silently bound an
+             * empty unit whenever a source was re-picked from the list rather
+             * than freshly created. Mirrors _chAddCanSignal. */
+            const tgt = (_chCache || []).find(c => c.id === channelId);
+            const sig = {
+                name: name,
+                can_id: row.can_id | 0,
+                bit_start: row.bit_start | 0,
+                bit_length: (row.bit_length | 0) || 16,
+                scale: (row.scale != null) ? row.scale : 1,
+                offset: (row.offset != null) ? row.offset : 0,
+                is_signed: !!row.is_signed,
+                is_little_endian: Number(row.endianess) !== 0,
+                unit: (tgt && (tgt.units_native || tgt.units_display)) || '',
+                is_custom: true,
+            };
+            const at = currentLayout.signals.findIndex(s => s.name === name);
+            if (at >= 0) currentLayout.signals[at] = sig; else currentLayout.signals.push(sig);
+            _pushSignalDecodeLive(sig);
+            try {
+                const r = await fetch('/api/channels/bind-source', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ channel_id: channelId, source_type: 'custom', signal_name: name })
+                });
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            } catch (e) {
+                showToast('Could not bind source: ' + (e.message || e), 'error');
+                return false;
+            }
+            const ch = (_chCache || []).find(c => c.id === channelId);
+            if (ch) ch.signal = name;
+            await _chSyncChannelDecode(channelId, sig);
+            if (typeof pushHistory === 'function') pushHistory();
+            return true;
+        }
+
         async function _openSignalPicker(channelId) {
             _sigPickerForChannel = channelId;
             _sourceOptionsCache = null;
@@ -21009,6 +21173,12 @@
                 const r = await fetch('/api/channels/source-options?id=' + encodeURIComponent(channelId));
                 if (!r.ok) throw new Error('fetch failed');
                 _sourceOptionsCache = await r.json();
+
+                /* Refresh the preset cache before merging: a source created
+                 * from this very picker moments ago would otherwise be missing
+                 * from customPresets and vanish from the list it just joined. */
+                try { if (typeof fetchPresets === 'function') await fetchPresets(); } catch (_) {}
+                _mergeCustomPresetsIntoSources(_sourceOptionsCache);
 
                 /* Default to the currently-active ECU preset + select the
                  * channel's bound signal within it so it's already
@@ -21059,7 +21229,310 @@
             setTimeout(() => search?.focus(), 60);
         }
 
+        /* ── New source form ────────────────────────────────────────────
+         *
+         * The picker could only ever offer what was already compiled in or
+         * already on the bus. If your ECU wasn't a built-in preset, this modal
+         * was a dead end: you had to back out, find "+ Add CAN signal" buried in
+         * the channel's More section, and type a decode with no readout. This
+         * form closes that loop — name the source, enter the CAN ID, watch the
+         * real bytes land, and file it under a new ECU or an existing one.
+         *
+         * The virtual makes are not valid targets: OBD2 decodes by polling and
+         * RDM-7 is internal, so neither takes a CAN bit-decode. */
+        const _SRC_VIRTUAL_MAKES = ['OBD2', 'RDM-7'];
+        const _SRC_NEW_SENTINEL = '__new__';
+        let _srcNewMode = false;
+        let _srcNewDraft = null;
+
+        function _srcNewDefaults() {
+            /* Key names match what the probe reads (endian 1=little, units) so
+             * the readout is shared verbatim with the new-channel form. */
+            return {
+                ecu: '', ecuNew: '', version: '', versionNew: '',
+                label: '', units: '', decimals: 0,
+                can_id: 0, bit_start: 0, bit_length: 16,
+                scale: 1, offset: 0, is_signed: false, endian: 1,
+            };
+        }
+
+        function _srcOpenNew() {
+            _srcNewMode = true;
+            _srcNewDraft = _srcNewDefaults();
+            /* Units/decimals are NOT asked for: the channel already owns them
+             * (presets deliberately don't carry units — see the DBC import note
+             * and _chAddCanSignal, which seeds a signal's unit FROM the
+             * channel). Seed them here purely so the probe's readout is labelled
+             * in the units you'll actually see on the dash. */
+            const tgt = (_chCache || []).find(c => c.id === _sigPickerForChannel);
+            if (tgt) {
+                _srcNewDraft.units = tgt.units_display || tgt.units_native || '';
+                _srcNewDraft.decimals = tgt.decimals | 0;
+            }
+            /* Default to the ECU the user is already looking at — usually the
+             * one they want to extend. */
+            const cur = _srcPickerSel.make;
+            if (cur && !_SRC_VIRTUAL_MAKES.includes(cur)) {
+                _srcNewDraft.ecu = cur;
+                _srcNewDraft.version = _srcPickerSel.version || '';
+            } else {
+                _srcNewDraft.ecu = _SRC_NEW_SENTINEL;
+                _srcNewDraft.version = _SRC_NEW_SENTINEL;
+                _srcNewDraft.versionNew = '1';
+            }
+            document.getElementById('chSrcBrowse').style.display = 'none';
+            document.getElementById('chSrcSelBar').style.display = 'none';
+            document.getElementById('chSrcNewForm').style.display = '';
+            _renderSrcNewForm();
+        }
+
+        function _srcCancelNew() {
+            _srcNewMode = false;
+            _srcNewDraft = null;
+            _chStopNewProbe();
+            _chProbeCtx = null;
+            document.getElementById('chSrcNewForm').style.display = 'none';
+            document.getElementById('chSrcBrowse').style.display = '';
+            document.getElementById('chSrcSelBar').style.display = '';
+        }
+
+        function _srcNewSet(key, val) {
+            if (!_srcNewDraft) return;
+            _srcNewDraft[key] = val;
+            _chNewProbeRender();   /* cached frame — no fetch */
+        }
+
+        /* ECU / version pickers re-render the form (the version list depends on
+         * the ECU, and choosing "New…" swaps in a text input), unlike the decode
+         * fields which must never re-render mid-keystroke. */
+        function _srcNewSetEcu(val) {
+            if (!_srcNewDraft) return;
+            _srcNewDraft.ecu = val;
+            _srcNewDraft.version = (val === _SRC_NEW_SENTINEL) ? _SRC_NEW_SENTINEL : '';
+            if (val === _SRC_NEW_SENTINEL && !_srcNewDraft.versionNew) _srcNewDraft.versionNew = '1';
+            _renderSrcNewForm();
+        }
+
+        function _srcNewSetVersion(val) {
+            if (!_srcNewDraft) return;
+            _srcNewDraft.version = val;
+            _renderSrcNewForm();
+        }
+
+        function _srcNewSetCanId(el) {
+            if (!_srcNewDraft) return;
+            const v = _chParseCanId(el.value);
+            _srcNewDraft.can_id = isNaN(v) ? 0 : v;
+            if (!isNaN(v)) el.value = '0x' + v.toString(16).toUpperCase().padStart(3, '0');
+            _chNewProbeFrame = null;   /* cached frame belongs to the old id */
+            _chNewProbeRender();
+            _chScheduleNewProbe(0);
+        }
+
+        /* Existing makes worth offering as a target: everything real the picker
+         * knows about (built-in presets AND already-merged custom ones), minus
+         * the virtual buckets. */
+        function _srcExistingMakes() {
+            return ((_sourceOptionsCache && _sourceOptionsCache.makes) || [])
+                .map(m => m.make)
+                .filter(m => m && !_SRC_VIRTUAL_MAKES.includes(m))
+                .sort((a, b) => a.localeCompare(b));
+        }
+
+        function _srcVersionsFor(make) {
+            const m = ((_sourceOptionsCache && _sourceOptionsCache.makes) || [])
+                .find(x => x.make === make);
+            return ((m && m.versions) || []).map(v => v.version).filter(Boolean)
+                .sort((a, b) => a.localeCompare(b));
+        }
+
+        function _renderSrcNewForm() {
+            const wrap = document.getElementById('chSrcNewForm');
+            if (!wrap || !_srcNewDraft) return;
+            const d = _srcNewDraft;
+            const ecuIsNew = d.ecu === _SRC_NEW_SENTINEL;
+            const verIsNew = d.version === _SRC_NEW_SENTINEL;
+
+            const ecuOpts = _srcExistingMakes()
+                .map(m => `<option value="${_escAttr(m)}" ${m === d.ecu ? 'selected' : ''}>${_escHTML(m)}</option>`)
+                .join('');
+            const verOpts = (ecuIsNew ? [] : _srcVersionsFor(d.ecu))
+                .map(v => `<option value="${_escAttr(v)}" ${v === d.version ? 'selected' : ''}>${_escHTML(v)}</option>`)
+                .join('');
+
+            wrap.innerHTML = `
+                <div class="ch2-detail-title" style="margin-bottom:2px;">New source</div>
+                <div class="ch2-detail-meta" style="margin-bottom:14px;">
+                    A CAN signal you define. File it under a new ECU or add it to one that already exists.
+                </div>
+
+                <h4>Where it lives</h4>
+                <div class="ch2-newform-grid">
+                    <div class="ch2-num">
+                        <span class="ch2-num-label">ECU</span>
+                        <select onchange="_srcNewSetEcu(this.value)">
+                            ${ecuOpts}
+                            <option value="${_SRC_NEW_SENTINEL}" ${ecuIsNew ? 'selected' : ''}>+ New ECU…</option>
+                        </select>
+                    </div>
+                    <div class="ch2-num">
+                        <span class="ch2-num-label">${ecuIsNew ? 'New ECU name' : 'Version'}</span>
+                        ${ecuIsNew
+                            ? `<input type="text" id="chSrcNewEcuName" placeholder="e.g. MyECU" spellcheck="false"
+                                      value="${_escAttr(d.ecuNew)}" oninput="_srcNewDraft.ecuNew = this.value;">`
+                            : `<select onchange="_srcNewSetVersion(this.value)">
+                                 <option value="" ${!d.version ? 'selected' : ''}>Pick a version…</option>
+                                 ${verOpts}
+                                 <option value="${_SRC_NEW_SENTINEL}" ${verIsNew ? 'selected' : ''}>+ New version…</option>
+                               </select>`}
+                    </div>
+                    ${(ecuIsNew || verIsNew) ? `
+                    <div class="ch2-num span2">
+                        <span class="ch2-num-label">Version name</span>
+                        <input type="text" placeholder="e.g. 1" spellcheck="false"
+                               value="${_escAttr(d.versionNew)}" oninput="_srcNewDraft.versionNew = this.value;">
+                    </div>` : ''}
+                    <div class="ch2-num span2">
+                        <span class="ch2-num-label">Signal name</span>
+                        <input type="text" id="chSrcNewLabel" placeholder="e.g. Turbo Speed" spellcheck="false"
+                               value="${_escAttr(d.label)}" oninput="_srcNewDraft.label = this.value;">
+                    </div>
+                </div>
+
+                <h4>CAN decode</h4>
+                <div class="ch2-newform-grid">
+                    <div class="ch2-num">
+                        <span class="ch2-num-label">CAN ID</span>
+                        <input type="text" placeholder="0x1F4 or 500" spellcheck="false" style="font-family:monospace;"
+                               value="${d.can_id ? '0x' + d.can_id.toString(16).toUpperCase().padStart(3,'0') : ''}"
+                               onchange="_srcNewSetCanId(this)">
+                    </div>
+                    <div class="ch2-num">
+                        <span class="ch2-num-label">Endian</span>
+                        <select onchange="_srcNewSet('endian', Number(this.value))">
+                            <option value="1" ${d.endian === 1 ? 'selected' : ''}>Little (Intel)</option>
+                            <option value="0" ${d.endian === 0 ? 'selected' : ''}>Big (Motorola)</option>
+                        </select>
+                    </div>
+                    <div class="ch2-num">
+                        <span class="ch2-num-label">Bit start</span>
+                        <input type="number" min="0" max="63" value="${d.bit_start}"
+                               oninput="_srcNewSet('bit_start', Number(this.value))">
+                    </div>
+                    <div class="ch2-num">
+                        <span class="ch2-num-label">Bit length</span>
+                        <input type="number" min="1" max="32" value="${d.bit_length}"
+                               oninput="_srcNewSet('bit_length', Number(this.value))">
+                    </div>
+                    <div class="ch2-num">
+                        <span class="ch2-num-label">Scale</span>
+                        <input type="number" step="any" value="${d.scale}"
+                               oninput="_srcNewSet('scale', Number(this.value))">
+                    </div>
+                    <div class="ch2-num">
+                        <span class="ch2-num-label">Offset</span>
+                        <input type="number" step="any" value="${d.offset}"
+                               oninput="_srcNewSet('offset', Number(this.value))">
+                    </div>
+                    <div class="ch2-num span2">
+                        <span class="ch2-num-label">Signed</span>
+                        <select onchange="_srcNewSet('is_signed', this.value === '1')">
+                            <option value="0" ${!d.is_signed ? 'selected' : ''}>Unsigned</option>
+                            <option value="1" ${d.is_signed ? 'selected' : ''}>Signed</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="ch2-probe" id="chSrcNewProbe">
+                    <div class="ch2-probe-miss">Enter a CAN ID to watch the bus.</div>
+                </div>
+
+                <div class="ch2-newform-actions">
+                    <button class="btn" id="chSrcNewCreateBtn" onclick="_srcCreateSubmit()">Create &amp; use</button>
+                    <button class="btn btn-secondary" onclick="_srcCancelNew()">Cancel</button>
+                </div>`;
+
+            _chStopNewProbe();
+            _chProbeCtx = { owner: 'new-source', draft: _srcNewDraft, boxId: 'chSrcNewProbe' };
+            _chNewProbeRender();
+            _chScheduleNewProbe(0);
+        }
+
+        async function _srcCreateSubmit() {
+            const d = _srcNewDraft;
+            if (!d || !_sigPickerForChannel) return;
+            const ecu = (d.ecu === _SRC_NEW_SENTINEL) ? (d.ecuNew || '').trim() : d.ecu;
+            const version = (d.ecu === _SRC_NEW_SENTINEL || d.version === _SRC_NEW_SENTINEL)
+                ? (d.versionNew || '').trim() : d.version;
+            const label = (document.getElementById('chSrcNewLabel')?.value || '').trim();
+
+            if (!ecu)     { showToast('Name the ECU first', 'error'); return; }
+            if (!version) { showToast('Give the version a name', 'error'); return; }
+            if (!label)   { showToast('Give the source a name first', 'error'); return; }
+            /* Every non-alnum char collapses to "_", so a label like "!!!"
+             * derives to an EMPTY name rather than a falsy one — test for a real
+             * character, not for emptiness. */
+            const sigName = _labelToSignalName(label);
+            if (!sigName) { showToast('Name needs at least one letter or number', 'error'); return; }
+            if (!d.can_id) { showToast('Enter the CAN ID this signal arrives on', 'error'); return; }
+
+            const btn = document.getElementById('chSrcNewCreateBtn');
+            if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
+            /* Stop the bus poll before writing — the preset save and the bind
+             * both take the LVGL lock, and this httpd has few worker sockets. */
+            _chStopNewProbe();
+
+            const sig = {
+                name: sigName, can_id: d.can_id | 0,
+                bit_start: d.bit_start | 0, bit_length: (d.bit_length | 0) || 16,
+                scale: d.scale, offset: d.offset,
+                is_signed: !!d.is_signed, endian: Number(d.endian),
+                unit: d.units || '',
+            };
+            /* Persist to the preset FIRST so the source survives as a reusable
+             * row even if the bind below fails — it's the durable artifact. */
+            await _upsertCustomPreset(Object.assign({}, sig, { label: label }), ecu, version);
+
+            const ok = await _bindCustomPresetRow(_sigPickerForChannel, {
+                kind: 'custom_preset', label: label, signal_name: sigName,
+                ecu: ecu, version: version,
+                can_id: d.can_id | 0, bit_start: d.bit_start | 0,
+                bit_length: (d.bit_length | 0) || 16,
+                scale: d.scale, offset: d.offset,
+                is_signed: !!d.is_signed, endianess: Number(d.endian),
+            });
+            if (!ok) {
+                if (btn) { btn.disabled = false; btn.textContent = 'Create & use'; }
+                if (_srcNewMode) _chScheduleNewProbe();
+                return;
+            }
+
+            showToast(`Created "${sigName}" under ${ecu}`);
+            _srcNewMode = false;
+            _srcNewDraft = null;
+            _chStopNewProbe();
+            _chProbeCtx = null;
+            try { await _fetchChannelsActive(); } catch (_) {}
+            _closeSignalPicker();
+            _renderChannelDetail();
+            _refreshChannelsList();
+        }
+
         function _closeSignalPicker() {
+            /* Leave new-source mode and kill its poll — a live probe behind a
+             * closed overlay is an invisible drain on the dash. */
+            if (_srcNewMode) {
+                _srcNewMode = false;
+                _srcNewDraft = null;
+                _chStopNewProbe();
+                _chProbeCtx = null;
+                const f = document.getElementById('chSrcNewForm');
+                const b = document.getElementById('chSrcBrowse');
+                const s = document.getElementById('chSrcSelBar');
+                if (f) f.style.display = 'none';
+                if (b) b.style.display = '';
+                if (s) s.style.display = '';
+            }
             document.getElementById('chSignalPicker').classList.remove('open');
             _sigPickerForChannel = null;
             _sourceOptionsCache = null;
@@ -21157,6 +21630,11 @@
                     const detailParts = [];
                     if (s.kind === 'ecu' && s.can_id) {
                         detailParts.push(`CAN 0x${Number(s.can_id).toString(16).toUpperCase()}`);
+                    } else if (s.kind === 'custom_preset') {
+                        /* Yours, not a built-in — say so, and show the ID you
+                         * gave it so it's checkable at a glance. */
+                        if (s.can_id) detailParts.push(`CAN 0x${Number(s.can_id).toString(16).toUpperCase()}`);
+                        detailParts.push('custom');
                     } else if (s.kind === 'obd2') {
                         detailParts.push(`Mode 0x${Number(s.service).toString(16).padStart(2,'0').toUpperCase()} · PID 0x${Number(s.pid).toString(16).padStart(2,'0').toUpperCase()}`);
                         if (s.polled) detailParts.push('polled');
@@ -21241,6 +21719,18 @@
         async function _applySrcPickerSelection() {
             const s = _srcPickerSel;
             if (!s.sig || !_sigPickerForChannel) return;
+            /* A user-authored preset row can't round-trip through
+             * source_type:'ecu_preset' (the firmware resolves those against the
+             * const preconfig table), so it takes the materialise path. */
+            if (s.sig.kind === 'custom_preset') {
+                const ok = await _bindCustomPresetRow(_sigPickerForChannel, s.sig);
+                if (!ok) return;
+                try { await _fetchChannelsActive(); } catch (_) {}
+                _closeSignalPicker();
+                _renderChannelDetail();
+                _refreshChannelsList();
+                return;
+            }
             const body = { channel_id: _sigPickerForChannel };
             if (s.sig.kind === 'ecu') {
                 body.source_type = 'ecu_preset';
@@ -21889,10 +22379,14 @@
          * string, endianess 0/1), de-dupes by label, and re-fetches presets.
          * Fire-and-forget — preset persistence is best-effort, identical to
          * saveCustomSignal's error posture. */
-        async function _upsertCustomPreset(sig) {
+        /* ecu/version default to the "Custom"/"1" catch-all so the one-tap
+         * "+ Add CAN signal" path keeps its old behaviour; the new-source form
+         * passes a real ECU + version so a user-named ECU (or a signal added to
+         * an existing one) lands in that preset instead of the catch-all. */
+        async function _upsertCustomPreset(sig, ecu, version) {
             if (!sig || !sig.name) return;
             try {
-                const ECU = 'Custom', VER = '1';
+                const ECU = ecu || 'Custom', VER = version || '1';
                 const canIdInt = (typeof sig.can_id === 'string')
                     ? (parseInt(sig.can_id, 16) || 0)
                     : (sig.can_id || 0);
@@ -21900,7 +22394,11 @@
                     ? Number(sig.endian)
                     : (sig.is_little_endian === false ? 0 : 1);
                 const newEntry = {
-                    label: sig.name,
+                    /* Prefer the human label when the caller has one — built-in
+                     * preset rows read "ENGINE RPM", not "ENGINE_RPM", and the
+                     * name derives back from it losslessly. "+ Add CAN signal"
+                     * passes no label, so it keeps falling back to the name. */
+                    label: sig.label || sig.name,
                     can_id: (canIdInt | 0).toString(16).toUpperCase(),
                     bit_start: sig.bit_start | 0,
                     bit_length: sig.bit_length | 0 || 16,
