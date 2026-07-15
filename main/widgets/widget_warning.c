@@ -1284,7 +1284,7 @@ static void _warning_to_json(widget_t *w, cJSON *out) {
 			cJSON_AddNumberToObject(cfg, "label_color", (int)wd->label_color.full);
 		if (wd->label_font[0] != '\0')
 			cJSON_AddStringToObject(cfg, "label_font", wd->label_font);
-		if (wd->label_y_offset != 0)
+		if (wd->label_y_offset != 11)
 			cJSON_AddNumberToObject(cfg, "label_y_offset", wd->label_y_offset);
 		if (wd->label_text_align != 1)
 			cJSON_AddNumberToObject(cfg, "label_text_align", wd->label_text_align);
@@ -1854,7 +1854,7 @@ widget_t *widget_warning_create_instance(uint8_t slot) {
 	wd->show_label = true;
 	wd->label_color = THEME_COLOR_TEXT_PRIMARY;
 	wd->label_font[0] = '\0';           /* empty = THEME_FONT_TINY */
-	wd->label_y_offset = 0;
+	wd->label_y_offset = 11;            /* standard: caption sits below the lamp */
 	wd->label_text_align = 1;           /* Center */
 	wd->image_name[0] = '\0';
 	wd->image_scale = 100;              /* native size */
@@ -1871,8 +1871,8 @@ widget_t *widget_warning_create_instance(uint8_t slot) {
 	w->slot = s;
 	w->x = 0;
 	w->y = 0;
-	w->w = 25;
-	w->h = 25;
+	w->w = 20;
+	w->h = 20;
 	w->type_data = wd;
 	snprintf(w->id, sizeof(w->id), "warning_%u", s);
 

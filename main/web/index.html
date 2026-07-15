@@ -7402,7 +7402,7 @@
                     "warning": {
                         displayName: "Alert Light", defW: 20, defH: 20,
                         fields: [
-                            { name: "label", label: "Label", type: "text", def: "", cat: "data", group: "Value", help: "Text shown on the tile." },
+                            { name: "label", label: "Label", type: "textarea", def: "", cat: "data", group: "Value", help: "Text shown on the tile. Press Enter for a new line." },
                             { name: "active_color", label: "Active Color", type: "color", def: 0xFF0000, cat: "appearance", group: "Fill", help: "Tile colour when the warning is on.", nightOverridable: true },
                             { name: "active_opa", label: "Active Opacity", type: "stepper", def: 255, cat: "appearance", group: "Fill", help: "How solid the tile is when on (0-255).", min: 0, max: 255 },
                             { name: "inactive_color", label: "Inactive Color", type: "color", def: 0x292C29, cat: "appearance", group: "Fill", help: "Tile colour when off.", nightOverridable: true },
@@ -7417,7 +7417,7 @@
                             { name: "show_label", label: "Show Label", type: "checkbox", def: true, cat: "appearance", group: "Text", help: "Show the text on the tile." },
                             { name: "label_color", label: "Label Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Text", help: "Text colour.", enabledBy: "show_label", nightOverridable: true },
                             { name: "label_font", label: "Label Font", type: "font", def: "", cat: "appearance", group: "Text", help: "Text style and size.", enabledBy: "show_label" },
-                            { name: "label_y_offset", label: "Label Y Offset", type: "stepper", def: 0, cat: "appearance", group: "Text", help: "Nudge the text up or down.", min: -100, max: 100, enabledBy: "show_label" },
+                            { name: "label_y_offset", label: "Label Y Offset", type: "stepper", def: 11, cat: "appearance", group: "Text", help: "Nudge the text up or down.", min: -100, max: 100, enabledBy: "show_label" },
                             { name: "label_text_align", label: "Text Align", type: "select", def: 1, cat: "appearance", group: "Text", help: "Line the text up left, centre or right.", enabledBy: "show_label",
                               options: [
                                   { v: 0, l: "Left" },

@@ -1136,11 +1136,11 @@
         {
           "name": "label",
           "label": "Label",
-          "type": "text",
+          "type": "textarea",
           "default": "",
           "category": "data",
           "group": "Value",
-          "help": "Text shown on the tile."
+          "help": "Text shown on the tile. Press Enter for a new line."
         },
         {
           "name": "active_color",
@@ -1273,7 +1273,7 @@
           "name": "label_y_offset",
           "label": "Label Y Offset",
           "type": "stepper",
-          "default": 0,
+          "default": 11,
           "category": "appearance",
           "min": -100,
           "max": 100,

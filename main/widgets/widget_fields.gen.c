@@ -1045,7 +1045,7 @@ static const widget_field_option_t warning_flash_mode_opts[] = {
 static const widget_field_t warning_fields[] = {
     {
         .name = "label", .label = "Label",
-        .type = WF_TYPE_TEXT, .category = WF_CAT_DATA,
+        .type = WF_TYPE_TEXTAREA, .category = WF_CAT_DATA,
         .min_int = 0, .max_int = 0, .step_int = 0,
         .default_int = 0, .default_float = 0.0f, .default_color = 0x000000,
         .default_str = NULL,
@@ -1177,7 +1177,7 @@ static const widget_field_t warning_fields[] = {
         .name = "label_y_offset", .label = "Label Y Offset",
         .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
         .min_int = -100, .max_int = 100, .step_int = 0,
-        .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
+        .default_int = 11, .default_float = 11.000000f, .default_color = 0x000000,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
         .enabled_by = "show_label", .group = "Text", .inline_key = NULL,
