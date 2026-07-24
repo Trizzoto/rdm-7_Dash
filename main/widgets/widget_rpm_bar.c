@@ -948,9 +948,9 @@ void create_rpm_bar_gauge(lv_obj_t *container) {
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	if (fill_dir != 0) lv_obj_add_flag(rpm_redline_zone, LV_OBJ_FLAG_HIDDEN);
 
-	/* (The optional numeric RPM readout that used to live on the bar was
-	 * removed — the dashboard never creates ui_RPM_Value, so the bar shows no
-	 * number.) */
+	/* The optional numeric RPM readout is not built here — _rpm_bar_create()
+	 * calls _rpm_bar_sync_value_label() once the container is sized, so the
+	 * create and live-edit paths share one code path. */
 }
 
 /* Create-or-update the numeric RPM readout to match the current rd fields.
@@ -1428,6 +1428,14 @@ static void _rpm_bar_create(widget_t *w, lv_obj_t *parent) {
 
 	/* Subscribe to signal if bound */
 	rpm_bar_data_t *rbd = (rpm_bar_data_t *)w->type_data;
+
+	/* Build the numeric readout when the loaded layout asks for it. The label
+	 * is created lazily by _rpm_bar_sync_value_label(), which the inspector
+	 * also calls on live edits; without this call a saved show_rpm_value
+	 * renders nothing until the user toggles it again. Must run after
+	 * _rpm_bar_resize() — the readout is positioned from s_container_w. */
+	_rpm_bar_sync_value_label(rbd);
+
 	if (rbd && rbd->signal_index >= 0)
 		signal_subscribe(rbd->signal_index, _rpm_bar_on_signal, w);
 

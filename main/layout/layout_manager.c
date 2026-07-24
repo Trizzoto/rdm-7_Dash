@@ -22,6 +22,7 @@
 #include "widget_line.h"
 #include "widget_banner.h"
 #include "widget_pathbar.h"
+#include "widget_anim.h"
 #include "widget_rules.h"
 
 #include "signal.h"
@@ -160,6 +161,8 @@ static widget_type_t _type_from_str(const char *s) {
 		return WIDGET_BANNER;
 	if (strcmp(s, "pathbar") == 0)
 		return WIDGET_PATHBAR;
+	if (strcmp(s, "anim") == 0)
+		return WIDGET_ANIM;
 	return WIDGET_TYPE_COUNT;
 }
 
@@ -231,6 +234,11 @@ static widget_t *_factory(widget_type_t type, cJSON *widget_json) {
 	case WIDGET_PATHBAR:
 		w = widget_pathbar_create_instance(slot);
 		break;
+#if RDM_WIDGET_ANIM_ENABLED
+	case WIDGET_ANIM:
+		w = widget_anim_create_instance(slot);
+		break;
+#endif
 	default:
 		return NULL;
 	}

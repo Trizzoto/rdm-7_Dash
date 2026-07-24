@@ -237,6 +237,34 @@ UI presentation order in the channel picker:
 | `lap_number` | Lap Number | 3 | count | count | 0 | 0–999 | `—` | `0xFFFFFF` | |
 | `lap_delta_best` | Lap Delta vs Best | 3 | s | s | 2 | -60–60 | `—` | `0xFFD000` | Negative = ahead. |
 | `sector_time_current` | Sector Time | 3 | s | s | 3 | 0–999 | `—` | `0xFFD000` | |
+| `sector_number` | Sector | 3 | count | count | 0 | 0–9 | `—` | `0xFFFFFF` | 1-based. 0 before the first line crossing. |
+| `lap_time_theoretical` | Theoretical Best | 3 | s | s | 3 | 0–9999 | `—` | `0x40C040` | Sum of best sectors. 0 until every sector has a best. |
+
+All of these are fed by the on-dash lap engine (`main/lap/`), driven by an
+RDM GPS puck on the CAN bus. See ADR-0008.
+
+## Position & GPS
+
+Broadcast by an RDM GPS puck (or any CAN GPS mapped onto these channels).
+`lap_engine_bind_gps_channels()` activates all eight and applies the CAN decode
+in one call — no DBC import, no manual bit fiddling.
+
+**Precision caveat**: channel values are `float`, so `gps_latitude` /
+`gps_longitude` carry roughly 1.7 m of quantisation. Fine for display and
+logging; not fine for lap timing, which resolves ~1.1 m at 200 km/h. The lap
+engine therefore decodes the CAN frame itself into a `double` and never reads
+these two channels. See ADR-0008.
+
+| ID | Label | Tier | Native | Display | Dec | Range | Thresholds | Color | Notes |
+|---|---|---|---|---|---|---|---|---|---|
+| `gps_latitude` | Latitude | 3 | deg | deg | 3 | -90–90 | `—` | `0x40C0FF` | Display/logging only — see caveat above. |
+| `gps_longitude` | Longitude | 3 | deg | deg | 3 | -180–180 | `—` | `0x40C0FF` | Display/logging only — see caveat above. |
+| `gps_speed` | GPS Speed | 2 | km/h | km/h | 1 | 0–300 | `—` | `0x40C0FF` | Doppler ground speed — immune to wheelspin and tyre wear. |
+| `gps_altitude` | Altitude | 3 | m | m | 1 | -100–3000 | `—` | `0x40C0FF` | Above mean sea level. |
+| `gps_heading` | Heading | 3 | deg | deg | 0 | 0–360 | `—` | `0x40C0FF` | Course over ground. Meaningless at a standstill. |
+| `gps_satellites` | GPS Satellites | 3 | count | count | 0 | 0–40 | `—` | `0x40C0FF` | |
+| `gps_fix_type` | GPS Fix | 3 | — | — | 0 | 0–5 | `—` | `0x40C0FF` | Enum: 0 none, 1 DR, 2 2D, 3 3D, 4 GNSS+DR, 5 time-only. |
+| `gps_accuracy` | GPS Accuracy | 3 | m | m | 2 | 0–25 | `—` | `0x40C0FF` | Horizontal accuracy estimate. Pegs at 655.35 m when unknown. |
 
 ## Body & Lights
 
@@ -355,7 +383,10 @@ typedef struct {
 
 1. **8 EGT channels or 12?** Currently `egt_cyl_1` through `_8`. I-6 and V-12 builds want 12. Cheap to add (~400 bytes).
 2. **Pressure display unit defaults**: I picked bar for oil/fuel/boost, kPa for MAP/exhaust back pressure, psi for tires. The mix follows racing convention but is inconsistent. Want it homogenized?
-3. **Lap timing channels at Tier 3** — assumes the dash will support lap timing eventually. Drop if out of scope for now.
+3. ~~**Lap timing channels at Tier 3** — assumes the dash will support lap timing eventually. Drop if out of scope for now.~~
+   **Resolved 2026-07-20**: keep them. The dash now has a lap engine
+   (`main/lap/`) that feeds all six, plus `sector_number` and
+   `lap_time_theoretical`. Driven by the RDM GPS puck over CAN. See ADR-0008.
 4. **Should I tag OBD2-universal channels** with a flag so the "Generic OBD2" preset auto-populates just those without the user picking?
 5. **Missing channels** — race-heavy users sometimes want: coolant flow rate, oil cooler delta-T, fuel pressure differential, individual TPMS battery voltages, individual cylinder knock. Left out as edge-case (use `custom_`). Anything else?
 6. **Bool channel thresholds**: I wrote `>0` for things like `check_engine` and `oil_level_low` so they trigger HIGH_WARN immediately when the sensor goes true. Confirm that's the right semantic — a bool warning should fire on the "on" state, not need a numeric threshold setup per-channel.

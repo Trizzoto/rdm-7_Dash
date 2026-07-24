@@ -1,11 +1,18 @@
 name: Widget schema check
 
-# Validates schema/widgets.schema.json and confirms main/web/index.html
-# matches what codegen would emit from it. Catches schema-vs-HTML drift
-# before it lands on master.
+# Two guards over schema/widgets.schema.json:
 #
-# Exits 1 if drift is detected — the offending PR sees a red check and
-# can re-run codegen (`python tools/codegen_widget_inspector.py`) to fix.
+#   1. check_widget_codegen.py       — schema <-> codegen-output sync.
+#      Confirms main/web/index.html and widget_fields.gen.c match what codegen
+#      would emit from the current schema.
+#
+#   2. check_widget_field_coverage.py — firmware <-> schema coverage.
+#      Catches fields implemented in the firmware C but never added to the
+#      schema. Guard 1 is blind to these: there is nothing to be out of sync
+#      WITH, so the field silently vanishes from the editor on the next codegen
+#      run while still working on-device. That class has bitten 6 times.
+#
+# Exits 1 if either fires — the offending PR sees a red check.
 
 on:
   push:
@@ -15,11 +22,12 @@ on:
       - 'release/**'
     paths:
       - 'main/web/index.html'
-      - 'main/widgets/widget_fields.gen.c'
+      - 'main/widgets/widget_*.c'
       - 'schema/widgets.schema.json'
       - 'schema/widgets.schema.meta.json'
       - 'tools/codegen_*.py'
       - 'tools/check_widget_codegen.py'
+      - 'tools/check_widget_field_coverage.py'
       - 'tools/validate_widget_schema.py'
       - 'tools/requirements.txt'
 
@@ -28,11 +36,12 @@ on:
       - master
     paths:
       - 'main/web/index.html'
-      - 'main/widgets/widget_fields.gen.c'
+      - 'main/widgets/widget_*.c'
       - 'schema/widgets.schema.json'
       - 'schema/widgets.schema.meta.json'
       - 'tools/codegen_*.py'
       - 'tools/check_widget_codegen.py'
+      - 'tools/check_widget_field_coverage.py'
       - 'tools/validate_widget_schema.py'
       - 'tools/requirements.txt'
 
@@ -59,14 +68,42 @@ jobs:
           pip install -r tools/requirements.txt
 
       - name: Validate schema + check codegen drift
+        id: codegen
         run: python tools/check_widget_codegen.py
 
-      - name: Summarise on failure
-        if: failure()
+      # Runs even if the codegen check failed: the two guards are independent,
+      # so reporting both in one run saves a round trip.
+      - name: Check firmware field coverage
+        id: coverage
+        if: ${{ !cancelled() }}
+        run: python tools/check_widget_field_coverage.py
+
+      - name: Summarise codegen failure
+        if: ${{ !cancelled() && steps.codegen.outcome == 'failure' }}
         run: |
           echo "::error::Schema validation OR codegen drift failed."
-          echo "::error::To fix locally:"
+          echo "::error::To fix locally, regenerate BOTH codegen outputs:"
           echo "::error::  python tools/validate_widget_schema.py"
+          echo "::error::  python tools/codegen_widget_defs.py main/web/index.html"
           echo "::error::  python tools/codegen_widget_inspector.py"
           echo "::error::Then commit the regenerated widget_fields.gen.c"
           echo "::error::and the updated main/web/index.html."
+
+      - name: Summarise field-coverage failure
+        if: ${{ !cancelled() && steps.coverage.outcome == 'failure' }}
+        run: |
+          echo "::error::Field-coverage check failed -- read the step log above first,"
+          echo "::error::it distinguishes the two cases:"
+          echo "::error::"
+          echo "::error::* COVERAGE GAP (exit 1): field(s) exist in the firmware but not"
+          echo "::error::  the schema -- they work on-device but are INVISIBLE in the"
+          echo "::error::  editor (the codegen-wiped-field bug class). Fix in"
+          echo "::error::  schema/widgets.schema.json (NOT the WIDGET_DEFS block of"
+          echo "::error::  main/web/index.html -- that is codegen output), then run:"
+          echo "::error::    python tools/codegen_widget_defs.py main/web/index.html"
+          echo "::error::    python tools/codegen_widget_inspector.py"
+          echo "::error::  If a field is intentionally not exposed, add it to ALLOWLIST"
+          echo "::error::  in tools/check_widget_field_coverage.py with the reason."
+          echo "::error::"
+          echo "::error::* SETUP ERROR (exit 2): e.g. 'no source for schema widget' means"
+          echo "::error::  a widget_*.c was renamed -- update the check so it stays covered."

@@ -63,6 +63,11 @@ typedef enum {
 	CHGRP_BODY_LIGHTS,
 	CHGRP_DIAGNOSTIC,
 	CHGRP_DASH_SYSTEM,  /* RDM-7 dash internals: fps, free heap, wifi rssi… */
+	/* NOTE: these values are PERSISTED NUMERICALLY in channels.json
+	 * (channel_manager.c writes `"group": <int>`). Only ever APPEND here —
+	 * inserting a group in the middle silently regroups every channel on
+	 * every device already in the field. */
+	CHGRP_POSITION,     /* GPS position/motion from an RDM GPS or any CAN GPS */
 	CHGRP__COUNT
 } channel_group_t;
 

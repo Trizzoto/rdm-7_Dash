@@ -425,6 +425,48 @@ void update_warning_ui(void *param) {
 	update_warning_ui_immediate(warning_idx);
 }
 
+/* ── Effective-value resolution ─────────────────────────────────────────────
+ * update_warning_ui_immediate is the ONLY function that paints the lamp, and
+ * it re-runs on every signal change. So anything that wants to alter the look
+ * (night mode, a conditional rule) must record its intent on warning_data_t
+ * and let this resolve it — painting directly from another function is futile,
+ * because the next signal tick repaints from these values and wins.
+ *
+ * Precedence: rule override > night override > configured base.
+ * A rule is a deliberate, user-authored condition, so it outranks night mode.
+ *
+ * With no rules and no night overrides every _resolve_* here returns the base
+ * field, which is exactly what this function used to read directly. */
+
+static lv_color_t _warn_eff_active_color(const warning_data_t *wd) {
+	if (wd->ov_active_color_set) return wd->ov_active_color;
+	return NIGHT_PICK_COLOR(night_mode_is_active(), wd->night, active_color,
+	                        wd->active_color);
+}
+
+static lv_color_t _warn_eff_inactive_color(const warning_data_t *wd) {
+	if (wd->ov_inactive_color_set) return wd->ov_inactive_color;
+	return NIGHT_PICK_COLOR(night_mode_is_active(), wd->night, inactive_color,
+	                        wd->inactive_color);
+}
+
+static uint8_t _warn_eff_flash_mode(const warning_data_t *wd) {
+	return wd->ov_flash_mode_set ? wd->ov_flash_mode : wd->flash_mode;
+}
+
+static uint16_t _warn_eff_flash_speed(const warning_data_t *wd) {
+	uint16_t ms = wd->ov_flash_speed_set ? wd->ov_flash_speed_ms : wd->flash_speed_ms;
+	return ms ? ms : 200;   /* 0 = never configured; 200 is the factory rate */
+}
+
+/* Lit or not. Base is the signal-driven state (any non-zero value, possibly
+ * inverted — see _warning_on_signal); a rule may force it off or on, which is
+ * what lets a lamp bound to an analog channel stay dark below a threshold. */
+static bool _warn_eff_state(const warning_data_t *wd) {
+	if (wd->ov_lamp != 0) return (wd->ov_lamp == 2);
+	return wd->current_state;
+}
+
 /* Immediate warning update */
 void update_warning_ui_immediate(uint8_t warning_idx) {
 	if (warning_idx >= 8)
@@ -434,9 +476,9 @@ void update_warning_ui_immediate(uint8_t warning_idx) {
 		return;
 	}
 	warning_data_t *wd = _lookup_warning_data(warning_idx);
-	bool state = wd ? wd->current_state : false;
-	lv_color_t active = wd ? wd->active_color : THEME_COLOR_RED;
-	lv_color_t inactive = wd ? wd->inactive_color : THEME_COLOR_INACTIVE;
+	bool state = wd ? _warn_eff_state(wd) : false;
+	lv_color_t active = wd ? _warn_eff_active_color(wd) : THEME_COLOR_RED;
+	lv_color_t inactive = wd ? _warn_eff_inactive_color(wd) : THEME_COLOR_INACTIVE;
 	uint8_t active_opa = wd ? wd->active_opa : 255;
 	uint8_t inactive_opa = wd ? wd->inactive_opa : 180;
 
@@ -445,8 +487,8 @@ void update_warning_ui_immediate(uint8_t warning_idx) {
 	 * itself lives on the warning instance and is (re)created here so it
 	 * automatically starts when the signal activates and stops when it
 	 * deactivates or flash_mode is turned off. */
-	uint16_t flash_ms = (wd && wd->flash_mode == 1 && state)
-		? (wd->flash_speed_ms ? wd->flash_speed_ms : 200) : 0;
+	uint16_t flash_ms = (wd && _warn_eff_flash_mode(wd) == 1 && state)
+		? _warn_eff_flash_speed(wd) : 0;
 	_warn_ensure_flash_timer(wd, flash_ms);
 
 	bool render_active = state;
@@ -1500,56 +1542,88 @@ static void _warning_apply_overrides(widget_t *w, const rule_override_t *ov, uin
 	if (!wd) return;
 	uint8_t slot = wd->slot;
 
-	/* Start from base warning_data_t values (restore defaults) */
-	lv_color_t active_color   = wd->active_color;
-	lv_color_t inactive_color = wd->inactive_color;
-	lv_color_t bdr_color      = wd->border_color;
-	uint8_t    bdr_width      = wd->border_width;
-	lv_color_t lbl_color      = wd->label_color;
+	/* Clear every recorded override first, then re-record only what the
+	 * currently-active rules ask for. The engine calls us with count==0 when
+	 * the last active rule deactivates, so this clear IS the base-restore
+	 * path — don't make it conditional on count. */
+	wd->ov_active_color_set   = false;
+	wd->ov_inactive_color_set = false;
+	wd->ov_flash_mode_set     = false;
+	wd->ov_flash_speed_set    = false;
+	wd->ov_lamp               = 0;
+	wd->ov_border_color_set   = false;
+	wd->ov_border_width_set   = false;
+	wd->ov_label_color_set    = false;
 
-	/* Apply active overrides on top */
+	/* Border width/colour and label colour are painted directly here (not via
+	 * update_warning_ui_immediate). _warning_apply_night_mode paints the same
+	 * objects, so to honour rule > night > base: seed from the NIGHT-aware base
+	 * (not the raw day value), and record ov_*_set for each field a rule
+	 * overrides so the night path can yield to it. */
+	bool night = night_mode_is_active();
+	lv_color_t bdr_color = NIGHT_PICK_COLOR(night, wd->night, border_color, wd->border_color);
+	uint8_t    bdr_width = wd->border_width;
+	lv_color_t lbl_color = NIGHT_PICK_COLOR(night, wd->night, label_color, wd->label_color);
+
 	for (uint8_t i = 0; i < count; i++) {
 		const rule_override_t *o = &ov[i];
 		if (strcmp(o->field_name, "active_color") == 0 && o->value_type == RULE_VAL_COLOR) {
-			lv_color_t c; c.full = (uint16_t)o->value.color;
-			active_color = c;
+			wd->ov_active_color.full = (uint16_t)o->value.color;
+			wd->ov_active_color_set  = true;
 		} else if (strcmp(o->field_name, "inactive_color") == 0 && o->value_type == RULE_VAL_COLOR) {
-			lv_color_t c; c.full = (uint16_t)o->value.color;
-			inactive_color = c;
-		} else if (strcmp(o->field_name, "border_color") == 0 && o->value_type == RULE_VAL_COLOR) {
+			wd->ov_inactive_color.full = (uint16_t)o->value.color;
+			wd->ov_inactive_color_set  = true;
+		} else if (strcmp(o->field_name, "flash_mode") == 0 && o->value_type == RULE_VAL_NUMBER) {
+			wd->ov_flash_mode     = (o->value.num == 1.0f) ? 1 : 0;
+			wd->ov_flash_mode_set = true;
+		} else if (strcmp(o->field_name, "flash_speed") == 0 && o->value_type == RULE_VAL_NUMBER) {
+			/* Clamp to the schema's 50..1000 range: a rogue 0 would mean
+			 * "no flash timer" and a tiny value would thrash LVGL. */
+			float ms = o->value.num;
+			if (ms < 50.0f)   ms = 50.0f;
+			if (ms > 1000.0f) ms = 1000.0f;
+			wd->ov_flash_speed_ms  = (uint16_t)ms;
+			wd->ov_flash_speed_set = true;
+		} else if (strcmp(o->field_name, "lamp_on") == 0 && o->value_type == RULE_VAL_BOOL) {
+			wd->ov_lamp = o->value.flag ? 2 : 1;
+		} else if ((strcmp(o->field_name, "border_color_style") == 0 ||
+		            strcmp(o->field_name, "border_color") == 0) &&
+		           o->value_type == RULE_VAL_COLOR) {
+			/* The schema/editor calls this field "border_color_style" (it maps
+			 * to wd->border_color); only matching the bare "border_color" here
+			 * meant every border-colour rule authored in the editor silently
+			 * did nothing. Accept both — hand-written layout JSON uses the
+			 * short name. */
 			bdr_color.full = (uint16_t)o->value.color;
+			wd->ov_border_color_set = true;
 		} else if (strcmp(o->field_name, "border_width") == 0 && o->value_type == RULE_VAL_NUMBER) {
 			bdr_width = (uint8_t)o->value.num;
+			wd->ov_border_width_set = true;
 		} else if (strcmp(o->field_name, "label_color") == 0 && o->value_type == RULE_VAL_COLOR) {
 			lbl_color.full = (uint16_t)o->value.color;
+			wd->ov_label_color_set = true;
 		}
 	}
 
-	/* Apply color based on current on/off state */
-	lv_color_t cur_color = wd->current_state ? active_color : inactive_color;
-	uint8_t cur_opa = wd->current_state ? wd->active_opa : wd->inactive_opa;
-
-	if (wd->img_obj != NULL) {
-		/* Image mode */
-		lv_obj_set_style_img_recolor(w->root, cur_color, LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_img_recolor_opa(w->root, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_img_opa(w->root, cur_opa, LV_PART_MAIN | LV_STATE_DEFAULT);
-	} else {
-		/* Circle mode */
-		lv_obj_set_style_bg_color(w->root, cur_color, LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_bg_opa(w->root, cur_opa, LV_PART_MAIN | LV_STATE_DEFAULT);
-	}
-
-	/* Apply border styles (circle mode only) */
-	if (wd->img_obj == NULL) {
-		lv_obj_set_style_border_color(w->root, bdr_color, LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_border_width(w->root, bdr_width, LV_PART_MAIN | LV_STATE_DEFAULT);
+	/* Apply border styles to the visible lamp circle (circle mode only). NOT
+	 * w->root — that is the oversized transparent touch overlay, so painting a
+	 * border there drew a phantom rectangle around empty space while the lamp
+	 * itself stayed unchanged. Matches _warning_apply_night_mode / the inspector. */
+	if (wd->img_obj == NULL && slot < 8 && warning_circles[slot] &&
+	    lv_obj_is_valid(warning_circles[slot])) {
+		lv_obj_set_style_border_color(warning_circles[slot], bdr_color,
+			LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_width(warning_circles[slot], bdr_width,
+			LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
 
 	/* Apply label color if label exists */
 	if (slot < 8 && warning_labels[slot] && lv_obj_is_valid(warning_labels[slot])) {
 		lv_obj_set_style_text_color(warning_labels[slot], lbl_color, LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
+
+	/* Single paint path — resolves the overrides just recorded. */
+	update_warning_ui_immediate(slot);
 }
 
 /* Re-apply colors and (when configured) swap day↔night image based on
@@ -1564,14 +1638,8 @@ static void _warning_apply_night_mode(widget_t *w, bool active) {
 	if (!wd) return;
 	uint8_t slot = wd->slot;
 
-	lv_color_t active_c   = NIGHT_PICK_COLOR(active, wd->night, active_color,   wd->active_color);
-	lv_color_t inactive_c = NIGHT_PICK_COLOR(active, wd->night, inactive_color, wd->inactive_color);
 	lv_color_t bdr_c      = NIGHT_PICK_COLOR(active, wd->night, border_color,  wd->border_color);
 	lv_color_t lbl_c      = NIGHT_PICK_COLOR(active, wd->night, label_color,   wd->label_color);
-
-	/* Which color is currently shown depends on state */
-	lv_color_t cur = wd->current_state ? active_c : inactive_c;
-	uint8_t cur_opa = wd->current_state ? wd->active_opa : wd->inactive_opa;
 
 	/* Day↔night image visibility swap (only when both objects exist) */
 	bool day_valid = (slot < 8) && warning_circles[slot] && lv_obj_is_valid(warning_circles[slot]);
@@ -1586,41 +1654,28 @@ static void _warning_apply_night_mode(widget_t *w, bool active) {
 		}
 	}
 
-	if (slot < 8 && warning_circles[slot] && lv_obj_is_valid(warning_circles[slot])) {
-		if (wd->img_obj != NULL) {
-			/* Image mode — apply to both day and night images so they stay in
-			 * sync. The hidden one doesn't render but is ready for swap. */
-			lv_obj_set_style_img_recolor(warning_circles[slot], cur,
-				LV_PART_MAIN | LV_STATE_DEFAULT);
-			lv_obj_set_style_img_recolor_opa(warning_circles[slot], LV_OPA_COVER,
-				LV_PART_MAIN | LV_STATE_DEFAULT);
-			lv_obj_set_style_img_opa(warning_circles[slot], cur_opa,
-				LV_PART_MAIN | LV_STATE_DEFAULT);
-			if (night_valid) {
-				lv_obj_set_style_img_recolor(wd->night_img_obj, cur,
-					LV_PART_MAIN | LV_STATE_DEFAULT);
-				lv_obj_set_style_img_recolor_opa(wd->night_img_obj, LV_OPA_COVER,
-					LV_PART_MAIN | LV_STATE_DEFAULT);
-				lv_obj_set_style_img_opa(wd->night_img_obj, cur_opa,
-					LV_PART_MAIN | LV_STATE_DEFAULT);
-			}
-		} else {
-			/* Circle mode */
-			lv_obj_set_style_bg_color(warning_circles[slot], cur,
-				LV_PART_MAIN | LV_STATE_DEFAULT);
-			lv_obj_set_style_bg_opa(warning_circles[slot], cur_opa,
-				LV_PART_MAIN | LV_STATE_DEFAULT);
-			if (wd->border_width > 0) {
-				lv_obj_set_style_border_color(warning_circles[slot], bdr_c,
-					LV_PART_MAIN | LV_STATE_DEFAULT);
-			}
-		}
+	/* Border colour: paint the night-aware base UNLESS a rule is currently
+	 * overriding it — rule outranks night, and _warning_apply_overrides already
+	 * painted the rule's colour night-aware. Without this yield, a night toggle
+	 * would stomp an active border rule until the next rule-mask change. */
+	if (slot < 8 && warning_circles[slot] && lv_obj_is_valid(warning_circles[slot]) &&
+	    wd->img_obj == NULL && wd->border_width > 0 &&
+	    !wd->ov_border_color_set && !wd->ov_border_width_set) {
+		lv_obj_set_style_border_color(warning_circles[slot], bdr_c,
+			LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
 
-	if (slot < 8 && warning_labels[slot] && lv_obj_is_valid(warning_labels[slot])) {
+	/* Same precedence for the label: an active label_color rule wins over night. */
+	if (slot < 8 && warning_labels[slot] && lv_obj_is_valid(warning_labels[slot]) &&
+	    !wd->ov_label_color_set) {
 		lv_obj_set_style_text_color(warning_labels[slot], lbl_c,
 			LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
+
+	/* Lamp colour (day or night, both image objects kept in sync) is resolved
+	 * and painted by update_warning_ui_immediate — see _warn_eff_active_color.
+	 * Painting it here too would only be undone by the next signal tick. */
+	update_warning_ui_immediate(slot);
 }
 
 /* night_mode_subscribe callback shim — extracts widget_t* from user_data. */

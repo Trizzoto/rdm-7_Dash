@@ -165,6 +165,7 @@ FIELD_KEY_ORDER = [
     "options",
     "enabledBy", "inline",
     "nightOverridable", "nightKey",
+    "ruleOnly",
 ]
 
 
@@ -211,6 +212,10 @@ def _render_field(field: Dict[str, Any]) -> List[str]:
         rendered["nightOverridable"] = "true"
     if "night_key" in field:
         rendered["nightKey"] = _js_string(field["night_key"])
+    # rule_only: the field is offered as a conditional-rule target but is not a
+    # static setting, so the inspector's normal field loop must skip it.
+    if field.get("rule_only") is True:
+        rendered["ruleOnly"] = "true"
 
     # Options: either inline simple expression (raw or short) or multi-line.
     options_lines: Optional[List[str]] = None
@@ -339,6 +344,8 @@ def _render_widget(widget: Dict[str, Any], is_last: bool) -> List[str]:
             header_parts.append(f'defY: {_js_value(pos["y"])}')
     if widget.get("singleton") is True:
         header_parts.append("singleton: true")
+    if widget.get("hidden") is True:
+        header_parts.append("hidden: true")
     out.append(f"{INDENT_FIELDS_ARR}{', '.join(header_parts)},")
 
     # fields:

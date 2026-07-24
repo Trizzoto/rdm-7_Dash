@@ -45,6 +45,7 @@
 #include "system/night_mode.h"
 #include "system/remote_touch.h"
 #include "data/channel_manager.h"
+#include "lap/lap_engine.h"
 #include "ui/screens/ui_wifi.h"
 
 
@@ -830,6 +831,14 @@ void app_main(void) {
    * registered. */
   if (channel_manager_init() != ESP_OK) {
     ESP_LOGW(TAG, "channel_manager_init reported non-OK — dash will continue with empty channel table");
+  }
+
+  /* Lap engine: activates the lap channels and loads the saved track. Must
+   * come after channel_manager_init (it activates channels) and before
+   * can_init (frames start arriving). Inert on a dash with no GPS on the
+   * bus — no track, no fixes, no output. */
+  if (lap_engine_init() != ESP_OK) {
+    ESP_LOGW(TAG, "lap_engine_init reported non-OK — lap timing unavailable");
   }
 
   // EARLY CAN DRIVER INITIALIZATION - Initialize CAN driver early but task

@@ -16,6 +16,8 @@
  * See docs/v2_channel_architecture.md §1.3 for the C API contract.
  */
 
+#include <math.h>
+
 #include "channel_manager.h"
 #include "channel_math.h"
 #include "canonical_channels.h"
@@ -292,6 +294,30 @@ void channel_format_display_value(const channel_t *c, int16_t signal_index,
                                   float native_value, uint8_t decimals,
                                   char *buf, size_t cap) {
 	if (!buf || cap == 0) return;
+	/* Lap/sector times a minute or longer read as M:SS.sss — "1:23.456", not
+	 * "83.456". Guarded three ways so nothing else changes behaviour:
+	 * group (only Lap Timing & Race), unit (seconds), and magnitude (>= 60 —
+	 * which also keeps lap_delta_best, range ±60 s and signed, on the plain
+	 * numeric path where "-1.24" is the right rendering). This makes the
+	 * long-standing note on lap_time_current ("Formatted M:SS.sss in UI")
+	 * actually true. */
+	if (c && c->group == CHGRP_LAP_TIMING && strcmp(c->units_native, "s") == 0 &&
+	    native_value >= 60.0f) {
+		/* Round to display precision BEFORE splitting. Otherwise 119.9997 s
+		 * splits to 1 min + 59.9997 s and the seconds field rounds up to
+		 * "60.000" → "1:60.000" instead of "2:00.000". */
+		float scale = 1.0f;
+		for (uint8_t d = 0; d < decimals; d++) scale *= 10.0f;
+		float rounded = roundf(native_value * scale) / scale;
+		unsigned minutes = (unsigned)(rounded / 60.0f);
+		float secs = rounded - (float)minutes * 60.0f;
+		if (secs < 0.0f) secs = 0.0f;
+		/* %0*.*f width covers "SS" + "." + decimals so seconds zero-pad:
+		 * 1:05.230, never 1:5.23. */
+		int width = decimals > 0 ? (int)decimals + 3 : 2;
+		snprintf(buf, cap, "%u:%0*.*f", minutes, width, decimals, (double)secs);
+		return;
+	}
 	/* Convert only when the channel actually carries a different, convertible
 	 * display unit. unit_convert() is identity for unknown pairs, so the
 	 * strcmp gate is what keeps value→label-mapped channels (gear/mode, which

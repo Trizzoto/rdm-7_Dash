@@ -13,7 +13,12 @@ CFLAGS  ?= -std=c11 -Wall -Wextra -Wno-unused-function -O0 -g
 LDFLAGS ?= -lm
 
 # One test binary per file in the TESTS list. Add new tests here.
-TESTS = test_can_decode test_widget_rules test_layout_migration test_widget_arc_precedence test_obd2_freeze_frame test_obd2_one_shot_decode test_ota_skip_version test_calculated_gear test_web_path_safety test_ecu_preset_match test_widget_fields test_hardening_fixes
+#
+# NOTE: run.ps1 discovers tests by globbing test_*.c, this list is by hand, and
+# the two drifted apart — test_obd2_pid_table and test_widget_warning_precedence
+# existed for a while but only ever ran on Windows. If you add a test, add it
+# here as well as writing the file.
+TESTS = test_can_decode test_widget_rules test_layout_migration test_widget_arc_precedence test_obd2_freeze_frame test_obd2_one_shot_decode test_obd2_pid_table test_ota_skip_version test_calculated_gear test_web_path_safety test_ecu_preset_match test_widget_fields test_widget_warning_precedence test_hardening_fixes test_lap_core
 
 BIN_DIR := build
 BINS    := $(addprefix $(BIN_DIR)/, $(TESTS))
@@ -59,6 +64,22 @@ $(BIN_DIR)/test_layout_migration: test_layout_migration.c unity.c cjson/cJSON.c 
 $(BIN_DIR)/test_widget_fields: test_widget_fields.c unity.c | $(BIN_DIR)
 	$(CC) $(CFLAGS) -Imocks -Icjson -I../../main \
 	    test_widget_fields.c unity.c \
+	    -o $@ $(LDFLAGS)
+
+# obd2_pid_table compiles the real PID table straight out of the firmware.
+$(BIN_DIR)/test_obd2_pid_table: test_obd2_pid_table.c unity.c ../../main/can/obd2_pids.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) \
+	    test_obd2_pid_table.c unity.c ../../main/can/obd2_pids.c \
+	    -o $@ $(LDFLAGS)
+
+# lap_core compiles the firmware source DIRECTLY rather than mirroring its
+# arithmetic in the test the way test_calculated_gear.c has to. That is
+# possible because main/lap/lap_core.c deliberately has no LVGL/FreeRTOS/IDF
+# dependency, and it is the pattern to prefer for new modules — a mirrored
+# test can drift out of lockstep without anything failing.
+$(BIN_DIR)/test_lap_core: test_lap_core.c unity.c ../../main/lap/lap_core.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -I../../main \
+	    test_lap_core.c unity.c ../../main/lap/lap_core.c \
 	    -o $@ $(LDFLAGS)
 
 clean:

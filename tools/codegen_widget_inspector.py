@@ -46,7 +46,7 @@ SCHEMA_TYPE_TO_WF = {
 # editor is a Photoshop-style web control; on-device the rpm_bar uses a
 # hand-written STYLE tab and bar/arc simply omit it, matching pre-schema
 # behaviour.)
-WEB_ONLY_TYPES = {"gradient_stops"}
+WEB_ONLY_TYPES = {"gradient_stops", "anim_frames"}
 
 SCHEMA_CAT_TO_WF = {
     "data":        "WF_CAT_DATA",
@@ -71,6 +71,7 @@ WIDGET_NAME_TO_ENUM = {
     "button":      "WIDGET_BUTTON",
     "shift_light": "WIDGET_SHIFT_LIGHT",
     "line":        "WIDGET_LINE",
+    "anim":        "WIDGET_ANIM",
 }
 
 
@@ -172,6 +173,8 @@ def emit_widget(widget) -> str:
     for f in widget['fields']:
         if f.get('type') in WEB_ONLY_TYPES:
             continue  # web-editor-only field; no on-device inspector row
+        if f.get('rule_only') is True:
+            continue  # only meaningful as a rule override; not a static setting
         fname = f['name']
         flbl  = f.get('label', fname)
         ftype = f.get('type', 'text')

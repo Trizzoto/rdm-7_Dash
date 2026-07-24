@@ -104,6 +104,36 @@
           "help": "Colour of the empty background."
         },
         {
+          "name": "show_rpm_value",
+          "label": "Show RPM Number",
+          "type": "checkbox",
+          "default": false,
+          "category": "appearance",
+          "group": "Text",
+          "help": "Show the RPM as a number on the bar."
+        },
+        {
+          "name": "rpm_value_font",
+          "label": "RPM Number Font",
+          "type": "font",
+          "default": "",
+          "category": "appearance",
+          "enabled_by": "show_rpm_value",
+          "group": "Text",
+          "help": "Text style and size of the RPM number."
+        },
+        {
+          "name": "rpm_value_color",
+          "label": "RPM Number Color",
+          "type": "color",
+          "default": "#E8E8E8",
+          "category": "appearance",
+          "night_overridable": true,
+          "enabled_by": "show_rpm_value",
+          "group": "Text",
+          "help": "Colour of the RPM number."
+        },
+        {
           "name": "limiter_color",
           "label": "Limiter Color",
           "type": "color",
@@ -613,13 +643,23 @@
       },
       "fields": [
         {
+          "name": "show_bar_label",
+          "label": "Show Label",
+          "type": "checkbox",
+          "default": true,
+          "category": "data",
+          "group": "Value",
+          "help": "Show the text label next to the bar. Turn off for a clean value-only bar."
+        },
+        {
           "name": "label",
           "label": "Label",
           "type": "text",
           "default": "",
           "category": "data",
           "group": "Value",
-          "help": "Text shown with the bar."
+          "help": "Text shown with the bar.",
+          "enabled_by": "show_bar_label"
         },
         {
           "name": "bar_min",
@@ -1321,6 +1361,16 @@
           "group": "Behaviour",
           "help": "How fast it flashes (smaller = faster), in milliseconds.",
           "enabled_by": "flash_mode=1"
+        },
+        {
+          "name": "lamp_on",
+          "label": "Lamp Lit",
+          "type": "checkbox",
+          "default": true,
+          "category": "appearance",
+          "rule_only": true,
+          "group": "Behaviour",
+          "help": "Force the light on or off. Normally the light comes on whenever the channel reads anything other than zero — use this in a rule to keep it dark until a reading matters, e.g. off below 90."
         },
         {
           "name": "is_momentary",
@@ -2141,6 +2191,83 @@
           "enabled_by": "show_needle_ball",
           "group": "Needle",
           "help": "Colour of the hub."
+        },
+        {
+          "name": "shadow_enabled",
+          "label": "Needle Shadow",
+          "type": "checkbox",
+          "default": false,
+          "category": "appearance",
+          "group": "Needle",
+          "help": "Drop a soft shadow under the needle to lift it off the dial face."
+        },
+        {
+          "name": "shadow_dynamic",
+          "label": "Dynamic (Sun Overhead)",
+          "type": "checkbox",
+          "default": true,
+          "category": "appearance",
+          "enabled_by": "shadow_enabled",
+          "group": "Needle",
+          "help": "Swing the shadow as the needle moves, as if lit from above. Turn off to keep it at a fixed offset."
+        },
+        {
+          "name": "shadow_offset_x",
+          "label": "Shadow Offset X",
+          "type": "stepper",
+          "default": 3,
+          "category": "appearance",
+          "min": -32,
+          "max": 32,
+          "enabled_by": "shadow_enabled",
+          "group": "Needle",
+          "help": "How far the shadow sits to the side of the needle."
+        },
+        {
+          "name": "shadow_offset_y",
+          "label": "Shadow Offset Y",
+          "type": "stepper",
+          "default": 4,
+          "category": "appearance",
+          "min": -32,
+          "max": 32,
+          "enabled_by": "shadow_enabled",
+          "group": "Needle",
+          "help": "How far the shadow sits below the needle."
+        },
+        {
+          "name": "shadow_opa",
+          "label": "Shadow Opacity",
+          "type": "stepper",
+          "default": 120,
+          "category": "appearance",
+          "min": 0,
+          "max": 255,
+          "enabled_by": "shadow_enabled",
+          "group": "Needle",
+          "help": "How dark the shadow is (255 = solid)."
+        },
+        {
+          "name": "shadow_width_extra",
+          "label": "Shadow Extra Width",
+          "type": "stepper",
+          "default": 2,
+          "category": "appearance",
+          "min": 0,
+          "max": 32,
+          "enabled_by": "shadow_enabled",
+          "group": "Needle",
+          "help": "Make the shadow wider than the needle for a softer look."
+        },
+        {
+          "name": "shadow_color",
+          "label": "Shadow Color",
+          "type": "color",
+          "default": "#000000",
+          "category": "appearance",
+          "enabled_by": "shadow_enabled",
+          "group": "Needle",
+          "help": "Colour of the needle's shadow."
         }
       ]
     },
@@ -2450,6 +2577,17 @@
           "max": 40,
           "group": "Style",
           "help": "Gap between dashes (0 = a solid line)."
+        },
+        {
+          "name": "curvature",
+          "label": "Curvature",
+          "type": "slider",
+          "default": 0,
+          "category": "appearance",
+          "min": -200,
+          "max": 200,
+          "group": "Style",
+          "help": "Bend the line into a curve. 0 is straight; negative and positive bow it opposite ways."
         }
       ]
     },
@@ -4460,6 +4598,118 @@
           "step": 10,
           "group": "Behaviour",
           "help": "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw value."
+        }
+      ]
+    },
+    {
+      "name": "anim",
+      "display_name": "Animation",
+      "singleton": false,
+      "hidden": true,
+      "_doc": "EXPERIMENTAL signal-driven image sequence. Frames are uploaded as\nprefix_0..prefix_N-1 .rdmimg files and pre-loaded into PSRAM; the bound\nchannel picks which frame shows. Firmware module is gated by\nRDM_WIDGET_ANIM_ENABLED — see tools/WIDGET_ANIM_README.md before removing.",
+      "default_size": {
+        "w": 200,
+        "h": 200
+      },
+      "default_position": null,
+      "constraints": {
+        "min_w": 20,
+        "min_h": 20,
+        "max_w": "screen_w",
+        "max_h": "screen_h"
+      },
+      "fields": [
+        {
+          "name": "anim_upload",
+          "label": "Animation",
+          "type": "anim_frames",
+          "default": "",
+          "category": "data",
+          "group": "Frames",
+          "help": "Upload a GIF, short video clip, or a set of still images. The editor slices it into frames, converts them and sends them to the dash."
+        },
+        {
+          "name": "frame_prefix",
+          "label": "Frame Prefix",
+          "type": "text",
+          "default": "",
+          "category": "data",
+          "group": "Frames",
+          "help": "Name prefix of the frame set on the device (frames are stored as prefix_0, prefix_1, ...). Set automatically when you upload an animation."
+        },
+        {
+          "name": "frame_count",
+          "label": "Frames",
+          "type": "stepper",
+          "default": 8,
+          "category": "data",
+          "min": 1,
+          "max": 16,
+          "group": "Frames",
+          "help": "How many frames are in the set. Set automatically by the upload; lower it to trim the end of the animation."
+        },
+        {
+          "name": "mode",
+          "label": "Mode",
+          "type": "select",
+          "default": 0,
+          "category": "data",
+          "options": [
+            { "value": 0, "label": "Follow value (scrub)" },
+            { "value": 1, "label": "Loop above threshold" }
+          ],
+          "group": "Behaviour",
+          "help": "Follow value: the frame tracks the reading across the range, like a needle. Loop: sits on frame 1 until the reading passes the threshold, then plays all frames on repeat."
+        },
+        {
+          "name": "range_min",
+          "label": "Range Min",
+          "type": "number",
+          "default": 0,
+          "category": "data",
+          "group": "Behaviour",
+          "help": "Follow-value mode: the reading that shows the first frame."
+        },
+        {
+          "name": "range_max",
+          "label": "Range Max",
+          "type": "number",
+          "default": 8000,
+          "category": "data",
+          "group": "Behaviour",
+          "help": "Follow-value mode: the reading that shows the last frame."
+        },
+        {
+          "name": "threshold",
+          "label": "Threshold",
+          "type": "number",
+          "default": 6000,
+          "category": "data",
+          "group": "Behaviour",
+          "help": "Loop mode: the animation plays while the reading is at or above this value."
+        },
+        {
+          "name": "loop_fps",
+          "label": "Loop Speed (fps)",
+          "type": "stepper",
+          "default": 12,
+          "category": "data",
+          "min": 1,
+          "max": 30,
+          "group": "Behaviour",
+          "help": "Loop mode: how fast the frames play, in frames per second."
+        },
+        {
+          "name": "hyst_pct",
+          "label": "Hysteresis %",
+          "type": "slider",
+          "default": 2,
+          "category": "data",
+          "min": 0,
+          "max": 10,
+          "step": 1,
+          "group": "Behaviour",
+          "help": "Stops the animation flickering when the reading sits right on a frame boundary or the threshold. Raise it if the frame chatters."
         }
       ]
     }

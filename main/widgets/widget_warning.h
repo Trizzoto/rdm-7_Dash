@@ -64,6 +64,33 @@ typedef struct {
 	 * phase is toggled by _warn_flash_timer_cb. Not serialized. */
 	lv_timer_t   *flash_timer;
 	bool          flash_phase;      /* false = inactive frame, true = active frame */
+	/* ── Rule-override state (runtime only — NOT serialized) ──────────────
+	 * _warning_apply_overrides records here what an ACTIVE rule currently
+	 * overrides; update_warning_ui_immediate resolves base -> night -> rule
+	 * and is the ONLY thing that paints. Overrides must never be written
+	 * into the base fields above (to_json reads those, and the settings UI
+	 * edits them).
+	 * Every member zero/false means "no override". warning_data_t is
+	 * heap_caps_calloc'd, so a widget with no rules resolves to exactly the
+	 * base values and renders identically to before this existed — that is
+	 * what keeps already-deployed customer layouts unchanged. */
+	bool       ov_active_color_set;
+	lv_color_t ov_active_color;
+	bool       ov_inactive_color_set;
+	lv_color_t ov_inactive_color;
+	bool       ov_flash_mode_set;
+	uint8_t    ov_flash_mode;
+	bool       ov_flash_speed_set;
+	uint16_t   ov_flash_speed_ms;
+	uint8_t    ov_lamp;             /* 0 = no override, 1 = force off, 2 = force on */
+	/* Border and label colour are painted directly (not through the single
+	 * update_warning_ui_immediate path). These flags record whether a rule is
+	 * currently overriding each, so _warning_apply_night_mode can yield to an
+	 * active rule and the two writers honour rule > night > base instead of
+	 * whichever ran last. */
+	bool       ov_border_color_set;
+	bool       ov_border_width_set;
+	bool       ov_label_color_set;
 	/* Dual-object night image swap: when night.image_name is set and differs
 	 * from the day image, a sibling lv_img is created with the night image
 	 * source. _warning_apply_night_mode toggles visibility between the two.

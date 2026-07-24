@@ -56,7 +56,9 @@ Full reports in `docs/research/`. The load-bearing findings:
 | 2 | **Keypad support** | Software: configure any Blink PKP (+ vendor rebrands) from the dash/desktop/phone | Free feature; sell Blink units as bundle | Phase 1 |
 | 2b | **RDM Keypad** | RDM-badged Blink rebrand (8 + 12 button) | A$449 / A$549 (40–60% margin per market norms) | After Phase 1 proves demand |
 | 3 | **RDM GPS** | 25 Hz u-blox M9/M10 + IMU CAN puck; lap engine runs **on the dash** | A$199–249 | Phase 2 |
-| 4 | **RDM IO** | 8× analog (12-bit) + 4× K-TC + 4× digital/freq (2 VR) + 4× low-side 2 A PWM + 2× high-side 8–10 A; open CAN, DBC export | A$549–649 | Phase 3 |
+| 4a | **RDM IO Pico** | DIY button/switch box: 8× DIN + 4× AIN 12-bit + 4× LS 500 mA + NeoPixel out; ESP32-C3, WiFi config, CAN emulation modes | A$89 (board-only $69) | Phase 3a *(ADR 0010)* |
+| 4b | **RDM IO Core** | Mini2-class: 8× AIN (software pull-ups) + 8× DIN 20 kHz freq/duty + 8× LS 1 A PWM; terminals + printed case | A$219 | Phase 3c *(ADR 0010)* |
+| 4c | **RDM IO Pro** | The gap box: 4× precision 16-bit ΔΣ + 4× std 12-bit AIN, 4× K-TC, 4× dig/freq (2 VR), 4× LS 2 A PWM, 2× HS 8–10 A; open CAN, DBC export + emulation | A$449 terminals / A$579 DTM *(ADRs 0009/0010)* | Phase 3b |
 
 Positioning line: **"One car. One app. No licenses."** Every device configures through the same free suite, over WiFi, through the dash — from a laptop *or a phone*. The IO expander and GPS module also speak plain DBC-documented CAN so they sell into MoTeC/Link/Haltech cars as a wedge (AEM's lock-in mistake, inverted).
 
@@ -154,6 +156,15 @@ The wedge feature. Blink hardware exists, customers own it, and every competitor
 ### 6.3 CAN IO expander (Phase 3 — RDM IO)
 
 **Spec (the documented gap):** 8× analog 0–5 V 12-bit • 4× K-type thermocouple • 4× digital/frequency (2 VR-capable) • 4× low-side 2 A PWM • 2× high-side 8–10 A. Configurable 11/29-bit CAN, 125k–1M. IP-rated enclosure, automotive connector (DTM-style). ESP32 + TWAI inside → same OTA/gateway story. Retail A$549–649.
+
+> **Amended 2026-07-21** — now a three-tier ladder (see §4 rows 4a–4c and
+> `docs/adr/0010-rdm-io-three-tier-ladder.md`): **Pico** A$89 DIY button box
+> (Phase 3a, first), **Pro** A$449/579 carrying the spec above with the
+> mixed-precision analog front-end of `docs/adr/0009-rdm-io-mixed-precision-frontend.md`
+> (Phase 3b), **Core** A$219 Mini2-class (Phase 3c, last). All tiers share one
+> ESP32 firmware family with CAN emulation modes (Haltech IO12, MoTeC E888,
+> ECUMaster SwitchBoard) + DBC export, and configure through the same Studio
+> IO workspace.
 
 **Config:** ECUMaster-style **pin → function → calibration → broadcast** wizard (firmware web editor first, desktop inherits). Input pins publish channels (calibration curves + channel math exist); outputs bind to channels/rules — closing the loop: *keypad button → channel → IO output*, a soft PDM for fans/pumps/lights without PDM wiring or price.
 

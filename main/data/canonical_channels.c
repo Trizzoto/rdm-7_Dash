@@ -756,6 +756,23 @@ RIDE_HEIGHT_ENTRY(rl, "RL"), RIDE_HEIGHT_ENTRY(rr, "RR"),
 	.low_warn=UL, .high_warn=UH,
 	.color_normal=0xFFD000, .notes=NULL
 },
+{
+	.id="sector_number", .label="Sector",
+	.group=CHGRP_LAP_TIMING, .tier=3, .card=CHCARD_SCALAR,
+	.units_native="count", .units_display_def="count", .decimals=0,
+	.min_default=0, .max_default=9,
+	.low_warn=UL, .high_warn=UH,
+	.color_normal=0xFFFFFF, .notes="1-based. 0 before the first line crossing."
+},
+{
+	.id="lap_time_theoretical", .label="Theoretical Best",
+	.group=CHGRP_LAP_TIMING, .tier=3, .card=CHCARD_SCALAR,
+	.units_native="s", .units_display_def="s", .decimals=3,
+	.min_default=0, .max_default=9999,
+	.low_warn=UL, .high_warn=UH,
+	.color_normal=0x40C040,
+	.notes="Sum of best sectors — the lap already proven in pieces. 0 until every sector has a best."
+},
 
 /* ── Body & Lights ────────────────────────────────────────────────── */
 {
@@ -918,6 +935,87 @@ RIDE_HEIGHT_ENTRY(rl, "RL"), RIDE_HEIGHT_ENTRY(rr, "RR"),
 	.color_normal=0x4CC9F0, .notes="STA RSSI in dBm (signal WIFI_RSSI). More negative = weaker."
 },
 
+/* ── Position & GPS (CHGRP_POSITION) ───────────────────────────────
+ * Fed by an RDM GPS puck on the CAN bus, or by any CAN GPS whose frames
+ * are mapped onto these channels. Bound in one call by
+ * lap_engine_bind_gps_channels() — see main/lap/lap_engine.h.
+ *
+ * PRECISION NOTE, and it matters: channel current_value is a float, so
+ * gps_latitude / gps_longitude here carry roughly 1.7 m of quantisation at
+ * mid latitudes. That is fine for showing a position on screen and for
+ * logging, and NOT fine for lap timing, which resolves about 1.1 m at
+ * 200 km/h. The lap engine therefore does NOT read these channels — it
+ * decodes the CAN frame itself into a double. See ADR-0008. */
+{
+	.id="gps_latitude", .label="Latitude",
+	.group=CHGRP_POSITION, .tier=3, .card=CHCARD_SCALAR,
+	.units_native="deg", .units_display_def="deg", .decimals=3,
+	.min_default=-90, .max_default=90,
+	.low_warn=UL, .high_warn=UH,
+	.color_normal=0x40C0FF,
+	.notes="Display/logging only — float precision. The lap engine reads the CAN frame directly."
+},
+{
+	.id="gps_longitude", .label="Longitude",
+	.group=CHGRP_POSITION, .tier=3, .card=CHCARD_SCALAR,
+	.units_native="deg", .units_display_def="deg", .decimals=3,
+	.min_default=-180, .max_default=180,
+	.low_warn=UL, .high_warn=UH,
+	.color_normal=0x40C0FF,
+	.notes="Display/logging only — float precision. The lap engine reads the CAN frame directly."
+},
+{
+	.id="gps_speed", .label="GPS Speed",
+	.group=CHGRP_POSITION, .tier=2, .card=CHCARD_SCALAR,
+	.units_native="km/h", .units_display_def="km/h", .decimals=1,
+	.min_default=0, .max_default=300,
+	.low_warn=UL, .high_warn=UH,
+	.color_normal=0x40C0FF,
+	.notes="Doppler ground speed — independent of wheel size, tyre wear and wheelspin."
+},
+{
+	.id="gps_altitude", .label="Altitude",
+	.group=CHGRP_POSITION, .tier=3, .card=CHCARD_SCALAR,
+	.units_native="m", .units_display_def="m", .decimals=1,
+	.min_default=-100, .max_default=3000,
+	.low_warn=UL, .high_warn=UH,
+	.color_normal=0x40C0FF, .notes="Above mean sea level."
+},
+{
+	.id="gps_heading", .label="Heading",
+	.group=CHGRP_POSITION, .tier=3, .card=CHCARD_SCALAR,
+	.units_native="deg", .units_display_def="deg", .decimals=0,
+	.min_default=0, .max_default=360,
+	.low_warn=UL, .high_warn=UH,
+	.color_normal=0x40C0FF, .notes="Course over ground. Meaningless at a standstill."
+},
+{
+	.id="gps_satellites", .label="GPS Satellites",
+	.group=CHGRP_POSITION, .tier=3, .card=CHCARD_SCALAR,
+	.units_native="count", .units_display_def="count", .decimals=0,
+	.min_default=0, .max_default=40,
+	.low_warn=UL, .high_warn=UH,
+	.color_normal=0x40C0FF, .notes=NULL
+},
+{
+	.id="gps_fix_type", .label="GPS Fix",
+	.group=CHGRP_POSITION, .tier=3, .card=CHCARD_ENUM,
+	.units_native="", .units_display_def="", .decimals=0,
+	.min_default=0, .max_default=5,
+	.low_warn=UL, .high_warn=UH,
+	.color_normal=0x40C0FF,
+	.notes="0 none, 1 dead-reckoning, 2 2D, 3 3D, 4 GNSS+DR, 5 time-only."
+},
+{
+	.id="gps_accuracy", .label="GPS Accuracy",
+	.group=CHGRP_POSITION, .tier=3, .card=CHCARD_SCALAR,
+	.units_native="m", .units_display_def="m", .decimals=2,
+	.min_default=0, .max_default=25,
+	.low_warn=UL, .high_warn=UH,
+	.color_normal=0x40C0FF,
+	.notes="Horizontal accuracy estimate. Pegs at 655.35 m when the receiver has no idea."
+},
+
 }; /* end CANONICAL_CHANNELS */
 
 const size_t CANONICAL_CHANNEL_COUNT =
@@ -949,6 +1047,7 @@ static const struct {
 	{CHGRP_BODY_LIGHTS,        "Body & Lights",       "body"},
 	{CHGRP_DIAGNOSTIC,         "Diagnostics",         "diag"},
 	{CHGRP_DASH_SYSTEM,        "Dash Internals",      "dash"},
+	{CHGRP_POSITION,           "Position & GPS",      "gps"},
 };
 
 const char *channel_group_name(channel_group_t g) {

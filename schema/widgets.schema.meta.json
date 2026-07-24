@@ -31,6 +31,10 @@
         },
         "display_name": { "type": "string", "minLength": 1 },
         "singleton": { "type": "boolean" },
+        "hidden": {
+          "type": "boolean",
+          "description": "When true, codegen emits hidden:true and the web editor omits this type from the add-widget palette. The type stays fully registered — existing layouts using it still load and edit — it just cannot be added anew. Used for experimental widgets not yet ready for users."
+        },
         "default_size": {
           "type": "object",
           "additionalProperties": false,
@@ -106,7 +110,8 @@
             "font",
             "image_picker",
             "can_id",
-            "gradient_stops"
+            "gradient_stops",
+            "anim_frames"
           ]
         },
         "default": {
@@ -126,6 +131,10 @@
           "description": "Gate this field's visibility on another field. Forms: 'field' (show when truthy), '!field' (show when falsy), 'field=a,b' (show when value is one of a/b — gate by a select). Combine conditions with '&' for AND, e.g. 'show_ticks&major_tick_image_name' or 'show_needle&!needle_image_name'. The web editor hides the field when the condition is unmet."
         },
         "inline": { "type": "string" },
+        "rule_only": {
+          "type": "boolean",
+          "description": "Field is offered as a conditional-rule target only, not a static setting — codegen emits ruleOnly and both inspectors skip it in the normal field loop."
+        },
         "night_overridable": { "type": "boolean" },
         "night_key": {
           "type": "string",

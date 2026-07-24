@@ -11,6 +11,7 @@
 #include "widget_pathbar.h"
 #include "widget_text.h"
 #include "widget_panel.h"
+#include "widget_anim.h"
 #include "data/canonical_channels.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -133,6 +134,22 @@ static void _rebuild_signal_state(uint16_t count)
             mx = top > 0.0f ? top * 1.05f : 100.0f;
             break;
         }
+#if RDM_WIDGET_ANIM_ENABLED
+        case WIDGET_ANIM: {
+            /* Drive the animation across its active range so it scrubs / loops
+             * on the bench instead of sitting dead on frame 0. */
+            anim_data_t *ad = (anim_data_t *)w->type_data;
+            sig_name = ad->signal_name;
+            if (ad->mode == 1) {      /* trigger: sweep across the threshold */
+                mn = 0.0f;
+                mx = ad->threshold > 0.0f ? ad->threshold * 1.1f : 100.0f;
+            } else {                  /* scrub: the configured value range */
+                mn = ad->range_min;
+                mx = ad->range_max;
+            }
+            break;
+        }
+#endif
         default:
             /* Widget types without explicit min/max keep the 0-100 default. */
             continue;

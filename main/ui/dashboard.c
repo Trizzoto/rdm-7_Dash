@@ -24,6 +24,7 @@
 #include "can/can_manager.h"
 #include "can/dtc_monitor.h"
 #include "data/channel_math.h"
+#include "lap/lap_engine.h"
 
 #include "esp_log.h"
 #include "esp_system.h"
@@ -110,7 +111,8 @@ static void _register_widget_long_press(void) {
 		 * user can select / drag them too; edit_mode_exit() restores. */
 		bool is_decoration = (w->type == WIDGET_IMAGE ||
 		                      w->type == WIDGET_SHAPE_PANEL ||
-		                      w->type == WIDGET_LINE);
+		                      w->type == WIDGET_LINE ||
+		                      w->type == WIDGET_ANIM);
 		if (is_decoration) {
 			lv_obj_clear_flag(w->root, LV_OBJ_FLAG_CLICKABLE);
 		} else {
@@ -358,6 +360,10 @@ loaded:
 	 * tick. Output signals were (re-)registered during the layout load via
 	 * channel_manager_register_decoded_signals. */
 	channel_math_start();
+
+	/* Lap timing. Idempotent like channel_math_start(); it is driven by CAN
+	 * frames rather than a timer, so this only marks it live. */
+	lap_engine_start();
 
 	/* Subscribe brightness dimmer to its configured signal */
 	dimmer_subscribe();

@@ -40,6 +40,7 @@ function Get-ExtraSources($name) {
 		"test_widget_rules"      { return @("cjson/cJSON.c") }
 		"test_layout_migration"  { return @("cjson/cJSON.c") }
 		"test_obd2_pid_table"    { return @("../../main/can/obd2_pids.c") }
+		"test_lap_core"          { return @("../../main/lap/lap_core.c") }
 		default                  { return @() }
 	}
 }
@@ -48,6 +49,7 @@ function Get-ExtraIncludes($name) {
 		"test_widget_rules"      { return @("-Imocks", "-Icjson", "-I.") }
 		"test_layout_migration"  { return @("-Icjson") }
 		"test_widget_fields"     { return @("-Imocks", "-Icjson", "-I../../main") }
+		"test_lap_core"          { return @("-I../../main") }
 		default                  { return @() }
 	}
 }

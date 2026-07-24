@@ -9,6 +9,7 @@
 #include "can_id_tracker.h"
 #include "obd2.h"
 #include "signal.h"
+#include "lap/lap_engine.h"
 #include "signal_sim.h"
 
 #include "driver/twai.h"
@@ -385,6 +386,25 @@ void build_twai_filter_from_signals(twai_filter_config_t *out_filter) {
 			if (ids[j] == id) { dup = true; break; }
 		}
 		if (!dup) ids[count++] = id;
+	}
+
+	/* Always include the RDM GPS device block (base..base+0xF). The lap
+	 * engine DISCOVERS a puck by hearing its status frame — but on a dash
+	 * that has never bound the GPS channels, nothing in the signal registry
+	 * carries a 0x400-block ID, so a narrowed filter could drop the very
+	 * frame that triggers auto-bind and the puck would never be detected.
+	 * Same rationale as the OBD2 range above: software dispatch already
+	 * filters exactly, widening the hardware mask costs nothing. */
+	{
+		uint32_t gps_base = (uint32_t)lap_engine_get_base_id() & 0x7FFu;
+		for (uint32_t id = gps_base; id <= gps_base + 0xFu && id <= 0x7FFu; id++) {
+			if (count >= 64) break;
+			bool dup = false;
+			for (int j = 0; j < count; j++) {
+				if (ids[j] == id) { dup = true; break; }
+			}
+			if (!dup) ids[count++] = id;
+		}
 	}
 
 	if (count == 0) {
@@ -868,6 +888,8 @@ void can_process_queued_frames(void) {
 		uint32_t id;
 		uint8_t  data[8];
 		uint8_t  dlc;
+		bool     extd; /* the lap engine must not confuse a 29-bit id that is
+		                * numerically inside the GPS block with a real puck */
 	} coal[32];   /* static: LVGL task only; max_batch bounds the count */
 	int n_coal = 0;
 
@@ -876,11 +898,16 @@ void can_process_queued_frames(void) {
 		/* When simulator is active, drain queue but skip dispatch */
 		if (!signal_sim_is_active()) {
 			int k;
+			/* Key on (id, extd): an 11-bit gauge id and a 29-bit frame that
+			 * share low bits are different frames and must not collapse into
+			 * one slot — last-writer-wins would dispatch the wrong payload
+			 * and flip extd, and could hide a GPS frame from the lap engine. */
 			for (k = 0; k < n_coal; k++)
-				if (coal[k].id == msg.identifier) break;
+				if (coal[k].id == msg.identifier && coal[k].extd == (msg.extd != 0)) break;
 			if (k < (int)(sizeof(coal) / sizeof(coal[0]))) {
 				coal[k].id  = msg.identifier;
 				coal[k].dlc = msg.data_length_code > 8 ? 8 : msg.data_length_code;
+				coal[k].extd = msg.extd != 0;
 				memcpy(coal[k].data, msg.data, coal[k].dlc);
 				if (k == n_coal) n_coal++;
 			}
@@ -906,6 +933,16 @@ void can_process_queued_frames(void) {
 			 * decoding without needing signals defined in the layout. */
 			can_raw_logger_record_frame(msg.identifier, msg.extd != 0,
 			                            msg.data, msg.data_length_code);
+			/* Lap engine gets EVERY frame, in true arrival order, straight
+			 * from the drain — not the coalesced set. Coalescing keeps only
+			 * the last frame per id per batch, which under a render hitch
+			 * would drop queued GPS fixes and mis-pair position/motion from
+			 * different bursts. Non-GPS ids are rejected on the first compare
+			 * inside. It needs the untruncated int32 position — signal/channel
+			 * values are floats (latitude quantised to ~1.7 m) while lap timing
+			 * resolves ~1.1 m at 200 km/h. See ADR-0008. */
+			lap_engine_on_can_frame(msg.identifier, msg.extd != 0, msg.data,
+			                        msg.data_length_code);
 		}
 		processed++;
 	}

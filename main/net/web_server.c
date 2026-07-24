@@ -366,6 +366,7 @@ esp_err_t web_server_start(void) {
 	web_server_signals_register(server);
 	web_server_obd2_register(server);
 	web_server_channels_register(server);
+	web_server_lap_register(server);
 	web_server_test_register(server);
 
 	/* Final registration tally. If any registration failed (almost always

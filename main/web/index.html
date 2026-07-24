@@ -4404,6 +4404,11 @@
                 <div class="card-body">Browse and download community layouts and presets.</div>
                 <div class="card-stat">Community</div>
             </div>
+            <div class="setup-card" onclick="openLapTiming && openLapTiming()">
+                <div class="card-title"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="13" x2="15" y2="15"/><line x1="9" y1="2" x2="15" y2="2"/></svg>Lap Timing</div>
+                <div class="card-body">GPS lap timer with an RDM GPS puck. Drive across your start/finish line and capture it — no coordinates, no PC.</div>
+                <div class="card-stat" id="setupLapStat">RDM GPS</div>
+            </div>
         </div>
 
         <div class="setup-section-title" style="margin-top:30px;">Files &amp; storage</div>
@@ -5321,6 +5326,70 @@
                     <input id="devDash" type="checkbox" style="width:16px; height:16px;" onchange="devToggleDash(this.checked)">
                 </label>
                 <div style="font-size:11px; color:var(--text-muted); margin-top:6px;">Simulate the real dash in the offline preview: RGB565 colour banding + firmware-feasible glow (no Gaussian blur / radial halos). Editor preview only.</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Lap Timing modal (Setup ▸ Lap Timing). Configure the GPS lap timer:
+         capture the start/finish line and sector splits from the car's live
+         position, watch lap state, reset the session. Backed by /api/lap/*
+         (main/net/web_server_lap.c, ADR-0008). -->
+    <div id="lapTimingModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;" onclick="closeLapTiming()">
+        <div class="dbc-modal-content" style="width:min(520px, 92vw);" onclick="event.stopPropagation()">
+            <div class="signal-modal-header">
+                <span>Lap Timing</span>
+                <button class="close-btn" onclick="closeLapTiming()">&times;</button>
+            </div>
+            <div class="dbc-form">
+                <!-- Live status strip -->
+                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                    <span id="lapGpsBadge" style="font-size:11px; font-weight:700; padding:3px 8px; border-radius:var(--radius-sm); background:var(--bg); border:1px solid var(--border); color:var(--text-muted);">GPS: —</span>
+                    <span id="lapFixBadge" style="font-size:11px; padding:3px 8px; border-radius:var(--radius-sm); background:var(--bg); border:1px solid var(--border); color:var(--text-muted);"></span>
+                    <span id="lapTrackBadge" style="font-size:11px; padding:3px 8px; border-radius:var(--radius-sm); background:var(--bg); border:1px solid var(--border); color:var(--text-muted);">No track configured</span>
+                </div>
+                <!-- Live timing (hidden until armed) -->
+                <div id="lapLiveRow" style="display:none; font-family:'JetBrains Mono', monospace; font-size:12px; color:var(--text); background:var(--bg); border:1px solid var(--border); border-radius:var(--radius-sm); padding:8px 10px;"></div>
+
+                <div style="border-top:1px solid var(--border); margin:4px 0;"></div>
+
+                <!-- Capture flow -->
+                <div style="font-size:11px; color:var(--text-muted); line-height:1.5;">
+                    <b>Setting up a track:</b> drive across the start/finish line at speed and
+                    tap Capture — the line's position <i>and direction</i> come from the live GPS.
+                    Then do the same at each sector split, in driving order. A stationary
+                    capture works but cannot know the crossing direction, so prefer a moving one.
+                </div>
+                <div style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap;">
+                    <div style="flex:0 0 110px;">
+                        <label>Line half-width (m)</label>
+                        <input type="text" id="lapHalfWidth" value="15" inputmode="numeric">
+                    </div>
+                    <button class="btn" onclick="lapCapture('start_finish')">Capture Start/Finish</button>
+                    <button class="btn btn-secondary" id="lapCaptureSectorBtn" onclick="lapCapture('sector')">Capture Sector</button>
+                </div>
+
+                <div style="border-top:1px solid var(--border); margin:4px 0;"></div>
+
+                <!-- Track details -->
+                <div style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap;">
+                    <div style="flex:1 1 140px;">
+                        <label>Track name</label>
+                        <input type="text" id="lapTrackName" placeholder="e.g. Mallala">
+                    </div>
+                    <div style="flex:0 0 110px;">
+                        <label>Min lap time (s)</label>
+                        <input type="text" id="lapMinLap" placeholder="10" inputmode="numeric">
+                    </div>
+                    <button class="btn btn-secondary" onclick="lapSaveTrackMeta()">Save</button>
+                </div>
+                <div id="lapSectorSummary" style="font-size:11px; color:var(--text-muted);"></div>
+            </div>
+            <div class="dbc-footer" style="justify-content:space-between;">
+                <div style="display:flex; gap:8px;">
+                    <button class="btn btn-secondary" onclick="lapResetSession()">Reset Session</button>
+                    <button class="btn btn-secondary" style="color:hsl(0,70%,60%);" onclick="lapClearTrack()">Clear Track</button>
+                </div>
+                <button class="btn" onclick="closeLapTiming()">Close</button>
             </div>
         </div>
     </div>
@@ -7429,6 +7498,9 @@
                                   { v: 3, l: "Edges In" }
                               ] },
                             { name: "bar_bg_color", label: "Background", type: "color", def: 0xF0F0F0, cat: "appearance", group: "Frame", help: "Colour of the empty background.", nightOverridable: true },
+                            { name: "show_rpm_value", label: "Show RPM Number", type: "checkbox", def: false, cat: "appearance", group: "Text", help: "Show the RPM as a number on the bar." },
+                            { name: "rpm_value_font", label: "RPM Number Font", type: "font", def: "", cat: "appearance", group: "Text", help: "Text style and size of the RPM number.", enabledBy: "show_rpm_value" },
+                            { name: "rpm_value_color", label: "RPM Number Color", type: "color", def: 0xE8E8E8, cat: "appearance", group: "Text", help: "Colour of the RPM number.", enabledBy: "show_rpm_value", nightOverridable: true },
                             { name: "limiter_color", label: "Limiter Color", type: "color", def: 0xFF0000, cat: "appearance", group: "Redline", help: "Colour shown when you hit the limiter.", nightOverridable: true },
                             { name: "show_ticks", label: "Show Ticks", type: "checkbox", def: true, cat: "appearance", group: "Ticks", help: "Show marks along the bar." },
                             { name: "tick_side", label: "Tick Side", type: "select", def: 2, cat: "appearance", group: "Ticks", help: "Which side of the bar the marks sit on.", enabledBy: "show_ticks",
@@ -7508,7 +7580,8 @@
                     "bar": {
                         displayName: "Bar Graph", defW: 300, defH: 30,
                         fields: [
-                            { name: "label", label: "Label", type: "text", def: "", cat: "data", group: "Value", help: "Text shown with the bar." },
+                            { name: "show_bar_label", label: "Show Label", type: "checkbox", def: true, cat: "data", group: "Value", help: "Show the text label next to the bar. Turn off for a clean value-only bar." },
+                            { name: "label", label: "Label", type: "text", def: "", cat: "data", group: "Value", help: "Text shown with the bar.", enabledBy: "show_bar_label" },
                             { name: "bar_min", label: "Min Value", type: "number", def: 0, cat: "data", group: "Value", help: "The reading at the empty end of the bar." },
                             { name: "bar_max", label: "Max Value", type: "number", def: 100, cat: "data", group: "Value", help: "The reading at the full end of the bar." },
                             { name: "decimals", label: "Decimals", type: "number", def: 0, cat: "data", group: "Value", help: "How many digits after the decimal point to show." },
@@ -7617,6 +7690,7 @@
                                   { v: 1, l: "Flashing" }
                               ] },
                             { name: "flash_speed", label: "Flash Speed (ms)", type: "stepper", def: 200, cat: "appearance", group: "Behaviour", help: "How fast it flashes (smaller = faster), in milliseconds.", min: 50, max: 1000, step: 50, enabledBy: "flash_mode=1" },
+                            { name: "lamp_on", label: "Lamp Lit", type: "checkbox", def: true, cat: "appearance", group: "Behaviour", help: "Force the light on or off. Normally the light comes on whenever the channel reads anything other than zero — use this in a rule to keep it dark until a reading matters, e.g. off below 90.", ruleOnly: true },
                             { name: "is_momentary", label: "Momentary", type: "checkbox", def: true, cat: "appearance", group: "Behaviour", help: "Only stay on while the signal is active, instead of latching on." },
                             { name: "invert_toggle", label: "Invert State", type: "checkbox", def: false, cat: "appearance", group: "Behaviour", help: "Flip it - the warning shows when the signal is OFF." }
                         ]
@@ -7757,7 +7831,14 @@
                              * regardless of size. Independent of Show Needle. */
                             { name: "show_needle_ball", label: "Show Needle Ball", type: "checkbox", def: true, cat: "appearance", group: "Needle", help: "Show a round hub in the middle of the needle." },
                             { name: "needle_ball_size", label: "Needle Ball Size", type: "stepper", def: 10, cat: "appearance", group: "Needle", help: "How big the hub is.", min: 0, max: 40, enabledBy: "show_needle_ball" },
-                            { name: "needle_ball_color", label: "Needle Ball Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Needle", help: "Colour of the hub.", enabledBy: "show_needle_ball", nightOverridable: true }
+                            { name: "needle_ball_color", label: "Needle Ball Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Needle", help: "Colour of the hub.", enabledBy: "show_needle_ball", nightOverridable: true },
+                            { name: "shadow_enabled", label: "Needle Shadow", type: "checkbox", def: false, cat: "appearance", group: "Needle", help: "Drop a soft shadow under the needle to lift it off the dial face." },
+                            { name: "shadow_dynamic", label: "Dynamic (Sun Overhead)", type: "checkbox", def: true, cat: "appearance", group: "Needle", help: "Swing the shadow as the needle moves, as if lit from above. Turn off to keep it at a fixed offset.", enabledBy: "shadow_enabled" },
+                            { name: "shadow_offset_x", label: "Shadow Offset X", type: "stepper", def: 3, cat: "appearance", group: "Needle", help: "How far the shadow sits to the side of the needle.", min: -32, max: 32, enabledBy: "shadow_enabled" },
+                            { name: "shadow_offset_y", label: "Shadow Offset Y", type: "stepper", def: 4, cat: "appearance", group: "Needle", help: "How far the shadow sits below the needle.", min: -32, max: 32, enabledBy: "shadow_enabled" },
+                            { name: "shadow_opa", label: "Shadow Opacity", type: "stepper", def: 120, cat: "appearance", group: "Needle", help: "How dark the shadow is (255 = solid).", min: 0, max: 255, enabledBy: "shadow_enabled" },
+                            { name: "shadow_width_extra", label: "Shadow Extra Width", type: "stepper", def: 2, cat: "appearance", group: "Needle", help: "Make the shadow wider than the needle for a softer look.", min: 0, max: 32, enabledBy: "shadow_enabled" },
+                            { name: "shadow_color", label: "Shadow Color", type: "color", def: 0x000000, cat: "appearance", group: "Needle", help: "Colour of the needle's shadow.", enabledBy: "shadow_enabled" }
                         ]
                     },
                     "image": {
@@ -7811,7 +7892,8 @@
                             { name: "line_width", label: "Thickness", type: "stepper", def: 4, cat: "appearance", group: "Style", help: "How thick the line is.", min: 1, max: 30 },
                             { name: "line_opa", label: "Opacity (0-255)", type: "stepper", def: 255, cat: "appearance", group: "Style", help: "How see-through the line is (0-255).", min: 0, max: 255 },
                             { name: "rounded", label: "Rounded Ends", type: "checkbox", def: false, cat: "appearance", group: "Style", help: "Round the line's ends." },
-                            { name: "dash_gap", label: "Dash Gap (0 = solid)", type: "stepper", def: 0, cat: "appearance", group: "Style", help: "Gap between dashes (0 = a solid line).", min: 0, max: 40 }
+                            { name: "dash_gap", label: "Dash Gap (0 = solid)", type: "stepper", def: 0, cat: "appearance", group: "Style", help: "Gap between dashes (0 = a solid line).", min: 0, max: 40 },
+                            { name: "curvature", label: "Curvature", type: "slider", def: 0, cat: "appearance", group: "Style", help: "Bend the line into a curve. 0 is straight; negative and positive bow it opposite ways.", min: -200, max: 200 }
                         ]
                     },
                     "banner": {
@@ -8110,6 +8192,28 @@
                             { name: "tick_label_divisor", label: "Number Divisor", type: "number", def: 1, cat: "data", group: "Numbers", help: "Shrink the numbers by dividing them (1000 shows 7000 as '7').", min: 1, max: 100000, enabledBy: "show_labels" },
                             { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 20, cat: "data", group: "Behaviour", help: "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw value.", min: 0, max: 500, step: 10 }
                         ]
+                    },
+                    /* EXPERIMENTAL signal-driven image sequence. Frames are uploaded as
+                     * prefix_0..prefix_N-1 .rdmimg files and pre-loaded into PSRAM; the bound
+                     * channel picks which frame shows. Firmware module is gated by
+                     * RDM_WIDGET_ANIM_ENABLED — see tools/WIDGET_ANIM_README.md before removing. */
+                    "anim": {
+                        displayName: "Animation", defW: 200, defH: 200, hidden: true,
+                        fields: [
+                            { name: "anim_upload", label: "Animation", type: "anim_frames", def: "", cat: "data", group: "Frames", help: "Upload a GIF, short video clip, or a set of still images. The editor slices it into frames, converts them and sends them to the dash." },
+                            { name: "frame_prefix", label: "Frame Prefix", type: "text", def: "", cat: "data", group: "Frames", help: "Name prefix of the frame set on the device (frames are stored as prefix_0, prefix_1, ...). Set automatically when you upload an animation." },
+                            { name: "frame_count", label: "Frames", type: "stepper", def: 8, cat: "data", group: "Frames", help: "How many frames are in the set. Set automatically by the upload; lower it to trim the end of the animation.", min: 1, max: 16 },
+                            { name: "mode", label: "Mode", type: "select", def: 0, cat: "data", group: "Behaviour", help: "Follow value: the frame tracks the reading across the range, like a needle. Loop: sits on frame 1 until the reading passes the threshold, then plays all frames on repeat.",
+                              options: [
+                                  { v: 0, l: "Follow value (scrub)" },
+                                  { v: 1, l: "Loop above threshold" }
+                              ] },
+                            { name: "range_min", label: "Range Min", type: "number", def: 0, cat: "data", group: "Behaviour", help: "Follow-value mode: the reading that shows the first frame." },
+                            { name: "range_max", label: "Range Max", type: "number", def: 8000, cat: "data", group: "Behaviour", help: "Follow-value mode: the reading that shows the last frame." },
+                            { name: "threshold", label: "Threshold", type: "number", def: 6000, cat: "data", group: "Behaviour", help: "Loop mode: the animation plays while the reading is at or above this value." },
+                            { name: "loop_fps", label: "Loop Speed (fps)", type: "stepper", def: 12, cat: "data", group: "Behaviour", help: "Loop mode: how fast the frames play, in frames per second.", min: 1, max: 30 },
+                            { name: "hyst_pct", label: "Hysteresis %", type: "slider", def: 2, cat: "data", group: "Behaviour", help: "Stops the animation flickering when the reading sits right on a frame boundary or the threshold. Raise it if the frame chatters.", min: 0, max: 10, step: 1 }
+                        ]
                     }
                 };
         // AUTO-GENERATED END: WIDGET_DEFS
@@ -8334,7 +8438,8 @@
             button:      '<svg viewBox="0 0 20 16"><rect x="2" y="4" width="16" height="8" rx="2" fill="currentColor" opacity="0.2" stroke="currentColor" stroke-width="1.2"/><text x="5" y="11" font-size="6" fill="currentColor" opacity="0.7">OK</text></svg>',
             shift_light: '<svg viewBox="0 0 20 16"><rect x="1" y="5" width="3" height="6" rx="0.5" fill="currentColor" opacity="0.7"/><rect x="5" y="5" width="3" height="6" rx="0.5" fill="currentColor" opacity="0.7"/><rect x="9" y="5" width="3" height="6" rx="0.5" fill="currentColor" opacity="0.7"/><rect x="13" y="5" width="3" height="6" rx="0.5" fill="currentColor" opacity="0.2"/></svg>',
             banner:      '<svg viewBox="0 0 20 16"><rect x="1" y="11" width="18" height="4" rx="0.6" fill="currentColor" opacity="0.5"/><text x="3" y="14.3" font-size="3.5" font-weight="bold" fill="#000">WARNING</text></svg>',
-            pathbar:     '<svg viewBox="0 0 20 16"><path d="M4,14 L4,7 Q4,4 7,4 L17,4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" opacity="0.25"/><path d="M4,14 L4,7 Q4,4 7,4 L11,4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>'
+            pathbar:     '<svg viewBox="0 0 20 16"><path d="M4,14 L4,7 Q4,4 7,4 L17,4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" opacity="0.25"/><path d="M4,14 L4,7 Q4,4 7,4 L11,4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>',
+            anim:        '<svg viewBox="0 0 20 16"><rect x="2" y="2" width="16" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/><rect x="3.5" y="3.5" width="2" height="2" fill="currentColor" opacity="0.5"/><rect x="3.5" y="7" width="2" height="2" fill="currentColor" opacity="0.5"/><rect x="3.5" y="10.5" width="2" height="2" fill="currentColor" opacity="0.5"/><rect x="14.5" y="3.5" width="2" height="2" fill="currentColor" opacity="0.5"/><rect x="14.5" y="7" width="2" height="2" fill="currentColor" opacity="0.5"/><rect x="14.5" y="10.5" width="2" height="2" fill="currentColor" opacity="0.5"/><polygon points="8.5,5.5 12.5,8 8.5,10.5" fill="currentColor" opacity="0.7"/></svg>'
         };
 
         function setSplashUIVisibility(isSplash) {
@@ -8587,7 +8692,11 @@
          * so the two never drift. _paletteTileTypes honors the splash-mode
          * filter; _paletteTileHtml renders one tile's inner markup. */
         function _paletteTileTypes() {
-            return Object.entries(WIDGET_DEFS).filter(([type]) =>
+            return Object.entries(WIDGET_DEFS).filter(([type, def]) =>
+                /* hidden types (e.g. experimental widgets) can't be added anew from
+                 * the palette, but stay fully registered so existing layouts still
+                 * load and edit them. */
+                !def.hidden &&
                 !(currentScreenMode === 'splash' && !SPLASH_WIDGET_TYPES.includes(type)));
         }
         function _paletteTileHtml(type, def) {
@@ -9208,6 +9317,30 @@
             return s;
         }
 
+        /* Animation widget: the studio can't fetch the device's .rdmimg frames,
+         * so draw a film-strip placeholder. The frame strip along the bottom
+         * tracks the live/sim value in scrub mode so you can see which frame
+         * the device would be showing. */
+        function _pvAnim(w, c){
+            const p = devToWeb(w.x, w.y), left = p.x - w.w / 2, top = p.y - w.h / 2;
+            const n = Math.max(1, Math.min(16, _pvNum(c.frame_count, 8)));
+            const mn = _pvNum(c.range_min, 0), mx = _pvNum(c.range_max, 8000);
+            const val = _pvScene(w, c, mn, mx);
+            const frac = _pvClamp((val - mn) / ((mx - mn) || 1), 0, 1);
+            const cur = Math.round(frac * (n - 1));
+            let s = `<rect x="${left.toFixed(1)}" y="${top.toFixed(1)}" width="${w.w}" height="${w.h}" rx="4" fill="#1b1b1b" fill-opacity="0.5" stroke="#555" stroke-width="1" stroke-dasharray="4 3"/>`;
+            s += `<text x="${p.x}" y="${p.y - 6}" fill="#9aa" font-family="'Segoe UI',sans-serif" font-size="${Math.max(8, Math.min(13, w.h * 0.18))}" text-anchor="middle" dominant-baseline="central">${_pvEsc(c.frame_prefix || 'animation')} · ${n}f</text>`;
+            /* Frame strip */
+            const cell = Math.min(10, Math.max(3, (w.w - 12) / n - 2));
+            const stripW = n * (cell + 2) - 2;
+            const sx0 = p.x - stripW / 2, sy0 = top + w.h - cell - 5;
+            for (let i = 0; i < n; i++) {
+                const on = i === cur;
+                s += `<rect x="${(sx0 + i * (cell + 2)).toFixed(1)}" y="${sy0.toFixed(1)}" width="${cell.toFixed(1)}" height="${cell.toFixed(1)}" rx="1" fill="${on ? 'hsl(120,80%,55%)' : '#444'}" fill-opacity="${on ? 0.9 : 0.6}"/>`;
+            }
+            return s;
+        }
+
         function _pvLine(w, c){
             const p = devToWeb(w.x, w.y);
             const col = _pvColor(c.line_color, '#FFF'), lw = _pvNum(c.line_width, 4);
@@ -9502,6 +9635,7 @@
                 case 'shift_light': return _pvShiftLight(w, c);
                 case 'toggle': case 'button': return _pvButton(w, c);
                 case 'pathbar':     return _pvPathbar(w, c);
+                case 'anim':        return _pvAnim(w, c);
                 default:            return '';
             }
         }
@@ -11601,6 +11735,27 @@
                            "
                            ${disabledAttr} style="flex:1;">
                 </div>`;
+            } else if (f.type === 'anim_frames') {
+                /* Animation frame-set uploader: file input feeds the slicer
+                 * dialog, which converts + uploads N frames and then writes
+                 * frame_prefix / frame_count on this widget. NOTE: no `w` in
+                 * renderFieldHTML scope — read the selected widget directly. */
+                const _afW = (selectedIndex >= 0 && currentLayout.widgets[selectedIndex]) || null;
+                const _afPrefix = (_afW && _afW.config && _afW.config.frame_prefix) || '';
+                /* frame_count is defaults-only in the JSON (default 8) — show 8
+                 * rather than 0 when it was omitted. */
+                const _afCount = (_afW && _afW.config && _afW.config.frame_count) || 8;
+                /* Escape: frame_prefix is a free-text field, so a stray '<' would
+                 * otherwise break (or inject into) this inspector row. */
+                const _afPrefixEsc = _pvEsc(_afPrefix);
+                const _afSummary = _afPrefix
+                    ? `<span style="color:#9aa;font-size:11px;">${_afPrefixEsc}_0 … ${_afPrefixEsc}_${Math.max(0, _afCount - 1)}</span>`
+                    : `<span style="color:#777;font-size:11px;">No frames uploaded yet</span>`;
+                html += `<div style="display:flex;gap:8px;align-items:center;">
+                    <button type="button" class="btn btn-secondary" style="padding:4px 10px;cursor:pointer;" onclick="document.getElementById('animUploadInput').click()" ${disabledAttr}>&#x1F39E; Upload animation…</button>
+                    ${_afSummary}
+                    <input type="file" id="animUploadInput" accept="image/gif,video/mp4,video/webm,image/png,image/jpeg" multiple style="display:none" onchange="openAnimUploadDialog(this)">
+                </div>`;
             } else if (f.type === 'image_picker') {
                 html += `<div class="image-picker-wrap">
                     <select id="imgsel_${f.name}" onchange="updateWidgetConfigField('${f.name}', this.value, false)" ${disabledAttr}>
@@ -12151,16 +12306,21 @@
              * with ruleOverridable=true (e.g. the image widget's image_name,
              * which conceptually belongs under Data) can opt in explicitly. */
             const appearFields = def.fields.filter(f => f.cat === 'appearance' || f.ruleOverridable === true);
-            if (appearFields.length) {
-                const changedCount = appearFields.filter(f => {
+            /* ruleOnly fields (e.g. warning.lamp_on) are offered as rule targets
+             * below but are NOT static settings — a checkbox for "force the lamp
+             * on" means nothing outside an IF condition. Keep them out of the
+             * Appearance accordion and its badge count. */
+            const appearStatic = appearFields.filter(f => !f.ruleOnly);
+            if (appearStatic.length) {
+                const changedCount = appearStatic.filter(f => {
                     const val = w.config[f.name] !== undefined ? w.config[f.name] : f.def;
                     return val !== f.def;
                 }).length;
                 const badgeHtml = changedCount > 0 ? `<span class="badge">${changedCount}</span>` : '';
                 html += `<details class="inspector-accordion" open><summary>Appearance${badgeHtml}</summary><div class="accordion-body">`;
-                const _appMulti = new Set(appearFields.map(f => f.group || '')).size > 1;
+                const _appMulti = new Set(appearStatic.map(f => f.group || '')).size > 1;
                 let _appG = null;
-                appearFields.forEach(f => {
+                appearStatic.forEach(f => {
                     const val = w.config[f.name] !== undefined ? w.config[f.name] : f.def;
                     if (_enabledByHidden(f.enabledBy, k => w.config[k] !== undefined ? w.config[k] : _fieldDefault(w.type, k))) return;
                     if (_appMulti && f.group && f.group !== _appG) {
@@ -12229,7 +12389,7 @@
              * that is just 'pathbar'. meter and indicator DO implement
              * apply_overrides (widget_meter.c / widget_indicator.c) and are
              * intentionally NOT excluded — earlier code wrongly listed them. */
-            const NO_RULES_TYPES = new Set(['pathbar']);
+            const NO_RULES_TYPES = new Set(['pathbar', 'anim']);
             const rules = w.config.rules || [];
             /* Rules authoring UI. Set to false to hide the add/edit surface
              * (the firmware rules engine still honours any rules already saved
@@ -12292,6 +12452,17 @@
                 const RULE_TARGET_EXCLUDE = {
                     meter: new Set(['needle_color']),
                     bar:   new Set(['bar_in_range_color', 'fill_edge_color']),
+                    /* warning's _warning_apply_overrides honours colour, border,
+                     * flash and lamp_on only. The rest are geometry/asset/
+                     * behaviour fields it never reads, so offering them as rule
+                     * targets is a control that silently does nothing. Wiring any
+                     * of them up means adding a branch there first, then removing
+                     * the name here. */
+                    warning: new Set(['active_opa', 'inactive_opa', 'radius',
+                                      'image_name', 'image_scale', 'show_label',
+                                      'label_font', 'label_y_offset',
+                                      'label_text_align', 'is_momentary',
+                                      'invert_toggle']),
                 };
                 const _ruleExcluded = RULE_TARGET_EXCLUDE[w.type];
                 appearFields.forEach(f => {
@@ -13930,6 +14101,255 @@
                 u8[off++] = a;
             }
             return buf;
+        }
+
+        /* ─── Animation frame slicer (anim widget) ─────────────────────────────
+         * All the heavy lifting happens in the browser: GIF/video/stills are
+         * decoded to canvases here, resized, converted to .rdmimg and uploaded
+         * as <prefix>_0 … <prefix>_N-1 through the normal image upload
+         * endpoint. The device only ever sees plain RDMIMG frames. */
+
+        const ANIM_MAX_FRAMES = 16;             /* matches ANIM_MAX_FRAMES in widget_anim.h */
+        const ANIM_FRAME_WARN_BYTES = 450 * 1024;  /* PSRAM decode comfort ceiling per image */
+        const ANIM_TOTAL_WARN_BYTES = 3 * 1024 * 1024;
+
+        /* Decode every frame of a GIF via WebCodecs ImageDecoder (Chromium). */
+        async function _animFramesFromGif(file) {
+            if (typeof ImageDecoder === 'undefined')
+                throw new Error('GIF decoding needs a Chromium browser (Chrome/Edge) — or upload a video or a set of stills instead');
+            const dec = new ImageDecoder({ data: await file.arrayBuffer(), type: 'image/gif' });
+            await dec.tracks.ready;
+            const n = Math.min(dec.tracks.selectedTrack.frameCount, 64);
+            const frames = [];
+            for (let i = 0; i < n; i++) {
+                const { image } = await dec.decode({ frameIndex: i });
+                const cvs = document.createElement('canvas');
+                cvs.width = image.displayWidth; cvs.height = image.displayHeight;
+                cvs.getContext('2d').drawImage(image, 0, 0);
+                image.close();
+                frames.push(cvs);
+            }
+            if (dec.close) dec.close();
+            return frames;
+        }
+
+        /* Grab ANIM_MAX_FRAMES evenly-spaced stills from a video file. */
+        async function _animFramesFromVideo(file) {
+            const url = URL.createObjectURL(file);
+            const v = document.createElement('video');
+            v.muted = true; v.preload = 'auto'; v.src = url;
+            try {
+                await new Promise((res, rej) => {
+                    v.onloadedmetadata = res;
+                    v.onerror = () => rej(new Error('Cannot decode this video'));
+                });
+                const dur = v.duration;
+                if (!isFinite(dur) || dur <= 0) throw new Error('Video has no duration');
+                const frames = [];
+                for (let i = 0; i < ANIM_MAX_FRAMES; i++) {
+                    /* Sample the middle of each i-th slice; never seek to the
+                     * exact end — some codecs stall there. */
+                    const t = Math.min(dur * (i + 0.5) / ANIM_MAX_FRAMES, Math.max(0, dur - 0.05));
+                    await new Promise((res, rej) => {
+                        v.onseeked = res;
+                        v.onerror = () => rej(new Error('Video seek failed'));
+                        v.currentTime = t;
+                    });
+                    const cvs = document.createElement('canvas');
+                    cvs.width = v.videoWidth; cvs.height = v.videoHeight;
+                    cvs.getContext('2d').drawImage(v, 0, 0);
+                    frames.push(cvs);
+                }
+                return frames;
+            } finally {
+                URL.revokeObjectURL(url);
+            }
+        }
+
+        /* One frame per still image, in filename order. */
+        async function _animFramesFromStills(files) {
+            const sorted = Array.from(files).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+            const frames = [];
+            for (const f of sorted.slice(0, ANIM_MAX_FRAMES)) {
+                const bmp = await createImageBitmap(f);
+                const cvs = document.createElement('canvas');
+                cvs.width = bmp.width; cvs.height = bmp.height;
+                cvs.getContext('2d').drawImage(bmp, 0, 0);
+                bmp.close();
+                frames.push(cvs);
+            }
+            return frames;
+        }
+
+        async function openAnimUploadDialog(input) {
+            const files = Array.from(input.files || []);
+            input.value = '';
+            if (!files.length) return;
+
+            const statusEl = document.createElement('div');
+            statusEl.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);background:#1a1a2e;color:#e0e0e0;padding:8px 16px;border-radius:6px;z-index:10000;border:1px solid var(--border);';
+            statusEl.textContent = 'Decoding frames…';
+            document.body.appendChild(statusEl);
+
+            let srcFrames;
+            try {
+                if (files.length > 1) {
+                    srcFrames = await _animFramesFromStills(files);
+                } else if (files[0].type === 'image/gif') {
+                    srcFrames = await _animFramesFromGif(files[0]);
+                } else if (files[0].type.startsWith('video/')) {
+                    srcFrames = await _animFramesFromVideo(files[0]);
+                } else {
+                    throw new Error('Pick a GIF, a short video, or select several stills at once');
+                }
+                if (!srcFrames || srcFrames.length < 2)
+                    throw new Error('Need at least 2 frames for an animation');
+            } catch (e) {
+                statusEl.textContent = 'Decode failed: ' + e.message;
+                statusEl.style.borderColor = '#f44';
+                setTimeout(() => statusEl.remove(), 3500);
+                return;
+            }
+            statusEl.remove();
+
+            const origW = srcFrames[0].width, origH = srcFrames[0].height;
+            const suggestedName = files[0].name.replace(/\.[^.]+$/, '')
+                .replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 20) || 'anim';
+            /* Default scale: fit a 240px box — big enough for most overlay
+             * animations, small enough that 10 frames ≈ 1.7 MB PSRAM. */
+            const fitPct = Math.min(100, Math.floor(Math.min(240 / origW, 240 / origH) * 100)) || 100;
+            const defCount = Math.min(10, srcFrames.length);
+
+            const overlay = document.createElement('div');
+            overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.75);backdrop-filter:blur(3px);display:flex;flex-direction:column;font-family:inherit;';
+            overlay.innerHTML = `
+                <div id="afr-stage" style="flex:1;display:flex;align-items:center;justify-content:center;min-height:0;padding:24px 24px 12px;">
+                    <canvas id="afr-preview" style="max-width:80%;max-height:100%;border:1px solid rgba(255,255,255,0.18);border-radius:3px;background:#000;box-shadow:0 16px 56px rgba(0,0,0,0.8);image-rendering:pixelated;"></canvas>
+                </div>
+                <div style="background:rgba(12,12,20,0.97);border-top:1px solid rgba(255,255,255,0.08);padding:12px 20px 16px;display:flex;flex-direction:column;gap:10px;">
+                    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+                        <span style="color:#888;font-size:12px;width:52px;flex-shrink:0;">Name</span>
+                        <input id="afr-name" type="text" value="${suggestedName}" maxlength="20"
+                            style="width:160px;padding:5px 8px;background:#1a1a2e;border:1px solid #444;border-radius:4px;color:#fff;font-size:13px;">
+                        <span style="margin-left:auto;color:#555;font-size:11px;white-space:nowrap;">${origW} × ${origH} · ${srcFrames.length} source frames</span>
+                    </div>
+                    <div style="display:flex;gap:10px;align-items:center;">
+                        <span style="color:#888;font-size:12px;width:52px;flex-shrink:0;">Preview</span>
+                        <input id="afr-scrub" type="range" min="0" max="${srcFrames.length - 1}" value="0" style="flex:1;cursor:pointer;accent-color:#2979ff;">
+                        <span id="afr-scrub-lbl" style="color:#bbb;font-size:12px;width:56px;text-align:right;font-family:monospace;"></span>
+                    </div>
+                    <div style="display:flex;gap:10px;align-items:center;">
+                        <span style="color:#888;font-size:12px;width:52px;flex-shrink:0;">Frames</span>
+                        <input id="afr-count" type="range" min="2" max="${Math.min(ANIM_MAX_FRAMES, srcFrames.length)}" value="${defCount}" style="flex:1;cursor:pointer;accent-color:#2979ff;">
+                        <span id="afr-count-lbl" style="color:#bbb;font-size:12px;width:24px;text-align:right;font-family:monospace;"></span>
+                        <span style="color:#444;font-size:12px;">·</span>
+                        <span style="color:#888;font-size:12px;width:38px;flex-shrink:0;">Scale</span>
+                        <input id="afr-scale" type="range" min="5" max="100" value="${fitPct}" style="flex:1;cursor:pointer;accent-color:#2979ff;">
+                        <span id="afr-dims" style="color:#bbb;font-size:12px;width:88px;flex-shrink:0;text-align:right;font-family:monospace;"></span>
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end;">
+                        <span id="afr-size" style="margin-right:auto;font-size:12px;font-family:monospace;"></span>
+                        <button id="afr-cancel" style="padding:7px 18px;cursor:pointer;background:transparent;border:1px solid #555;border-radius:4px;color:#ccc;font-size:13px;">Cancel</button>
+                        <button id="afr-upload" style="padding:7px 22px;cursor:pointer;background:#2979ff;border:none;border-radius:4px;color:#fff;font-size:13px;font-weight:600;">Upload</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+
+            const preview  = document.getElementById('afr-preview');
+            const scrub    = document.getElementById('afr-scrub');
+            const scrubLbl = document.getElementById('afr-scrub-lbl');
+            const countEl  = document.getElementById('afr-count');
+            const countLbl = document.getElementById('afr-count-lbl');
+            const scaleEl  = document.getElementById('afr-scale');
+            const dimsEl   = document.getElementById('afr-dims');
+            const sizeEl   = document.getElementById('afr-size');
+
+            preview.width = origW; preview.height = origH;
+            const pctx = preview.getContext('2d');
+
+            function targetDims() {
+                const pct = parseInt(scaleEl.value);
+                /* Cap at device screen — rdm_image_load rejects larger. */
+                let tw = Math.max(1, Math.round(origW * pct / 100));
+                let th = Math.max(1, Math.round(origH * pct / 100));
+                if (tw > 800 || th > 480) {
+                    const fit = Math.min(800 / tw, 480 / th);
+                    tw = Math.max(1, Math.floor(tw * fit));
+                    th = Math.max(1, Math.floor(th * fit));
+                }
+                return { tw, th };
+            }
+            function refresh() {
+                const i = parseInt(scrub.value);
+                pctx.clearRect(0, 0, origW, origH);
+                pctx.drawImage(srcFrames[i], 0, 0);
+                scrubLbl.textContent = `${i + 1}/${srcFrames.length}`;
+                const n = parseInt(countEl.value);
+                countLbl.textContent = n;
+                const { tw, th } = targetDims();
+                dimsEl.textContent = `${tw} × ${th} px`;
+                const perFrame = tw * th * 3 + 12;
+                const total = perFrame * n;
+                const warn = perFrame > ANIM_FRAME_WARN_BYTES || total > ANIM_TOTAL_WARN_BYTES;
+                sizeEl.style.color = warn ? 'hsl(30,90%,60%)' : '#8a9';
+                sizeEl.textContent = `${(perFrame / 1024).toFixed(0)} KB/frame · ${(total / 1048576).toFixed(2)} MB total (flash + PSRAM)`
+                    + (warn ? ' — big! consider fewer frames or a smaller scale' : '');
+            }
+            scrub.oninput = refresh;
+            countEl.oninput = refresh;
+            scaleEl.oninput = refresh;
+            refresh();
+
+            function closeOverlay() { overlay.remove(); document.removeEventListener('keydown', onKey); }
+            const onKey = e => { if (e.key === 'Escape') closeOverlay(); };
+            document.addEventListener('keydown', onKey);
+            document.getElementById('afr-cancel').onclick = closeOverlay;
+
+            document.getElementById('afr-upload').onclick = async () => {
+                const n = parseInt(countEl.value);
+                const { tw, th } = targetDims();
+                const prefix = (document.getElementById('afr-name').value || suggestedName)
+                    .replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 20) || 'anim';
+                closeOverlay();
+                await _animUploadFrames(srcFrames, n, tw, th, prefix);
+            };
+        }
+
+        async function _animUploadFrames(srcFrames, n, tw, th, prefix) {
+            const statusEl = document.createElement('div');
+            statusEl.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);background:#1a1a2e;color:#e0e0e0;padding:8px 16px;border-radius:6px;z-index:10000;border:1px solid var(--border);';
+            document.body.appendChild(statusEl);
+            try {
+                for (let i = 0; i < n; i++) {
+                    /* Even resample of the source frames across the target count. */
+                    const srcIdx = n === 1 ? 0 : Math.round(i * (srcFrames.length - 1) / (n - 1));
+                    const name = `${prefix}_${i}`;
+                    statusEl.textContent = `Uploading frame ${i + 1}/${n} (${name})…`;
+                    const rdmimg = convertImageToRDMIMG(srcFrames[srcIdx], tw, th);
+                    try { await fetch(`/api/image/delete?name=${encodeURIComponent(name)}`, { method: 'POST' }); } catch (e) {}
+                    const resp = await fetch(`/api/image/upload?name=${encodeURIComponent(name)}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/octet-stream' },
+                        body: rdmimg
+                    });
+                    if (!resp.ok) throw new Error(`frame ${i}: ` + await resp.text());
+                }
+                /* Clear leftovers from a previous, longer frame set so they
+                 * don't waste flash (delete is a no-op if absent). */
+                for (let i = n; i < ANIM_MAX_FRAMES; i++) {
+                    try { await fetch(`/api/image/delete?name=${encodeURIComponent(prefix + '_' + i)}`, { method: 'POST' }); } catch (e) {}
+                }
+                statusEl.textContent = `Uploaded ${n} frames as ${prefix}_0…${prefix}_${n - 1}`;
+                updateWidgetConfigField('frame_prefix', prefix, false);
+                updateWidgetConfigField('frame_count', n, false);
+                _refreshImageList();
+                refreshStorageInfo();
+                updateInspector();
+            } catch (e) {
+                statusEl.textContent = 'Upload failed: ' + e.message;
+                statusEl.style.borderColor = '#f44';
+            }
+            setTimeout(() => statusEl.remove(), 3000);
         }
 
         /* ─── Font management ──────────────────────────────────────────────── */
@@ -16655,6 +17075,18 @@
             const fontFamilies = new Set();
             (currentLayout.widgets || []).forEach(w => {
                 if (!w.config || !w.type) return;
+                /* Animation frames are named prefix_0..N-1, not held in an
+                 * image_picker field — enumerate them here or the bundle
+                 * ships without its animation (missing frames are skipped
+                 * with the same warning as any other unfetchable image). */
+                if (w.type === 'anim' && w.config.frame_prefix) {
+                    /* frame_count is defaults-only in the layout JSON (default 8),
+                     * so a default-length animation reloads with it undefined —
+                     * fall back to 8 or the export ships zero frames. */
+                    const _fc = Math.min(ANIM_MAX_FRAMES, w.config.frame_count || 8);
+                    for (let i = 0; i < _fc; i++)
+                        imageNames.add(`${w.config.frame_prefix}_${i}`);
+                }
                 const def = WIDGET_DEFS[w.type];
                 if (!def || !def.fields) return;
                 def.fields.forEach(f => {
@@ -19442,7 +19874,7 @@
             3: 'Electrical', 4: 'Chassis — Dynamics', 5: 'Chassis — Per-corner',
             6: 'Brakes & Inputs', 7: 'Fuel & Distance', 8: 'Environment',
             9: 'Lap Timing', 10: 'Body & Lights', 11: 'Diagnostic',
-            12: 'Dash Internals',
+            12: 'Dash Internals', 13: 'Position & GPS',
         };
         const _CH_ZONE_COLORS_DEFAULT = {
             color_low_warn:      0x9BC4E6,
@@ -20128,7 +20560,7 @@
             4: 'Chassis', 5: 'Wheels & corners', 6: 'Brakes & inputs',
             7: 'Fuel', 8: 'Environment', 9: 'Lap timing',
             10: 'Body & lights', 11: 'Diagnostic',
-            12: 'Dash Internals', 99: 'Custom',
+            12: 'Dash Internals', 13: 'Position & GPS', 99: 'Custom',
         };
 
         /* Sidebar: every canonical channel + every custom channel, grouped
@@ -23524,6 +23956,185 @@
 
         /* Re-sync on viewport change (rotation / resize) */
         window.addEventListener('resize', _wstUpdate);
+
+        /* ── Lap Timing modal ───────────────────────────────────────────
+         * Configuration + live view for the GPS lap timer. Bound to:
+         *   GET  /api/lap/status         presence, fix, track, live timing
+         *   GET  /api/lap/track          full track detail
+         *   POST /api/lap/track          replace track / {"clear":true}
+         *   POST /api/lap/capture        set a line from the car's position
+         *   POST /api/lap/session/reset  clear times, keep track
+         * The capture flow is the product: no coordinate entry, no map. */
+        let _lapTimer = null;
+        let _lapTrack = null;   /* last GET /api/lap/track payload, or null */
+        let _lapPollInFlight = false;   /* guard: never stack /api/lap/status calls */
+        let _lapModalOpen = false;      /* drives the self-rescheduling poll loop */
+
+        function _lapFmtTime(s) {
+            if (!s || s <= 0) return '—';
+            const m = Math.floor(s / 60);
+            const r = s - m * 60;
+            return m > 0 ? `${m}:${r.toFixed(3).padStart(6, '0')}` : r.toFixed(3);
+        }
+
+        async function _lapRefreshTrack() {
+            try {
+                const r = await fetch('/api/lap/track');
+                if (!r.ok) return;
+                const t = await r.json();
+                _lapTrack = t.empty ? null : t;
+                const nameEl = document.getElementById('lapTrackName');
+                const minEl  = document.getElementById('lapMinLap');
+                /* Don't clobber in-progress typing: only fill when blank/unfocused */
+                if (_lapTrack) {
+                    if (document.activeElement !== nameEl) nameEl.value = _lapTrack.name || '';
+                    if (document.activeElement !== minEl)  minEl.value  = _lapTrack.min_lap_time_s || '';
+                }
+                const n = _lapTrack ? (_lapTrack.sectors || []).length : 0;
+                document.getElementById('lapSectorSummary').textContent = _lapTrack
+                    ? `Start/finish set · ${n} sector split${n === 1 ? '' : 's'} (${n + 1} sector${n ? 's' : ''} per lap, max 8 splits)`
+                    : 'No track yet — capture a start/finish line to begin.';
+            } catch (e) { /* silent */ }
+        }
+
+        async function _lapPoll() {
+            /* In-flight guard + self-reschedule instead of setInterval: the dash
+             * round-trips at ~1-1.5 s under load, and a fixed 1 s interval would
+             * stack requests and multiply device latency (see the channels-probe
+             * lesson). Only the NEXT poll is scheduled once this one settles. */
+            if (_lapPollInFlight) return;
+            _lapPollInFlight = true;
+            try {
+                const r = await fetch('/api/lap/status');
+                if (!r.ok) return;
+                const st = await r.json();
+
+                const gps = document.getElementById('lapGpsBadge');
+                gps.textContent = st.gps_present ? 'GPS: connected' : 'GPS: not detected';
+                gps.style.color = st.gps_present ? 'hsl(152,60%,55%)' : 'hsl(0,60%,60%)';
+
+                const fix = document.getElementById('lapFixBadge');
+                if (st.fix) {
+                    fix.style.display = '';
+                    fix.textContent = `${st.fix.speed_kph.toFixed(1)} km/h · hdg ${Math.round(st.fix.heading)}°`;
+                } else {
+                    fix.style.display = st.gps_present ? '' : 'none';
+                    fix.textContent = 'no fix yet';
+                }
+
+                document.getElementById('lapTrackBadge').textContent =
+                    st.has_track ? `Track: ${st.track_name}` : 'No track configured';
+
+                const live = document.getElementById('lapLiveRow');
+                const t = st.timing || {};
+                if (t.armed) {
+                    live.style.display = '';
+                    const delta = (t.lap_delta === undefined) ? '—'
+                        : (t.lap_delta >= 0 ? '+' : '') + t.lap_delta.toFixed(2);
+                    live.textContent =
+                        `Lap ${t.lap_number}  cur ${_lapFmtTime(t.lap_time_current)}  ` +
+                        `last ${_lapFmtTime(t.lap_time_last)}  best ${_lapFmtTime(t.lap_time_best)}  Δ ${delta}`;
+                } else {
+                    live.style.display = 'none';
+                }
+
+                const stat = document.getElementById('setupLapStat');
+                if (stat) stat.textContent = st.gps_present
+                    ? (st.has_track ? st.track_name : 'GPS connected')
+                    : 'RDM GPS';
+            } catch (e) { /* silent */ }
+            finally {
+                _lapPollInFlight = false;
+                /* Reschedule only while the modal is open — a settled poll queues
+                 * the next one 1 s out, so calls never overlap. */
+                if (_lapModalOpen) _lapTimer = setTimeout(_lapPoll, 1000);
+            }
+        }
+
+        function openLapTiming() {
+            document.getElementById('lapTimingModal').style.display = 'flex';
+            _lapModalOpen = true;
+            _lapRefreshTrack();
+            if (_lapTimer) { clearTimeout(_lapTimer); _lapTimer = null; }
+            _lapPoll();   /* self-reschedules while _lapModalOpen */
+        }
+
+        function closeLapTiming() {
+            document.getElementById('lapTimingModal').style.display = 'none';
+            _lapModalOpen = false;
+            if (_lapTimer) { clearTimeout(_lapTimer); _lapTimer = null; }
+        }
+
+        async function lapCapture(what) {
+            const hw = parseFloat(document.getElementById('lapHalfWidth').value) || 15;
+            try {
+                const r = await fetch('/api/lap/capture', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({what, half_width_m: hw}),
+                });
+                if (!r.ok) {
+                    const msg = await r.text().catch(() => '');
+                    throw new Error(msg || ('HTTP ' + r.status));
+                }
+                const d = await r.json();
+                const label = what === 'start_finish' ? 'Start/finish' : `Sector split ${d.sector_count}`;
+                showToast(`${label} captured`, 'success');
+                if (d.heading_reliable === false) {
+                    showToast('Captured while stationary — direction unknown. Re-capture while driving across the line.', 'info');
+                }
+                _lapRefreshTrack();
+            } catch (e) {
+                showToast('Capture failed: ' + e.message, 'error');
+            }
+        }
+
+        async function lapSaveTrackMeta() {
+            if (!_lapTrack) { showToast('Capture a start/finish line first', 'error'); return; }
+            /* Empty field → keep the current value; an explicit "0" must pass
+             * through (firmware reads 0 as "use the default gate"), so don't let
+             * the falsy-OR chain swallow a typed zero. */
+            const _mlRaw = document.getElementById('lapMinLap').value.trim();
+            const _ml = _mlRaw === '' ? (_lapTrack.min_lap_time_s || 0)
+                                      : (parseFloat(_mlRaw) || 0);
+            const body = Object.assign({}, _lapTrack, {
+                name: document.getElementById('lapTrackName').value.trim() || _lapTrack.name,
+                min_lap_time_s: _ml,
+            });
+            try {
+                const r = await fetch('/api/lap/track', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(body),
+                });
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                showToast('Track saved', 'success');
+                _lapRefreshTrack();
+            } catch (e) { showToast('Save failed: ' + e.message, 'error'); }
+        }
+
+        async function lapClearTrack() {
+            if (!confirm('Remove the configured track? Lap and sector times will be lost.')) return;
+            try {
+                const r = await fetch('/api/lap/track', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({clear: true}),
+                });
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                showToast('Track cleared', 'success');
+                _lapRefreshTrack(); _lapPoll();
+            } catch (e) { showToast('Clear failed: ' + e.message, 'error'); }
+        }
+
+        async function lapResetSession() {
+            try {
+                const r = await fetch('/api/lap/session/reset', {method: 'POST'});
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                showToast('Session reset — best times cleared', 'success');
+                _lapPoll();
+            } catch (e) { showToast('Reset failed: ' + e.message, 'error'); }
+        }
 
     </script>
 </body>

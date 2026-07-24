@@ -15,6 +15,9 @@ Read the relevant ADR before changing the area it covers. The "we already tried 
 | [0005](0005-channel-owned-decode.md) | Accepted | Channel-owned CAN decode for portable layouts (decode moves layout `signals[]` → `channels.json`) | `main/data/channel_manager.c`, `main/layout/*`, `schema/canonical_channels.md` |
 | [0006](0006-channel-architecture-v2.md) | Accepted | Channel architecture v2 — canonical channel registry as the binding layer | `main/data/canonical_channels.c`, `main/data/channel_manager.c` |
 | [0007](0007-html-source-of-truth.md) | Accepted | Three HTML copies — why they exist and the codegen plan to collapse them | `main/web/index.html`, `../rdm7-desktop/src/index.html`, `schema/widgets.schema.json` |
+| [0008](0008-gps-lap-timing-integration.md) | Accepted | GPS lap timing — how the puck, the dash and the desktop suite fit together | `main/lap/`, `main/data/canonical_channels.c`, `main/can/can_manager.c`, `../rdm-gps-node/` |
+| [0009](0009-rdm-io-mixed-precision-frontend.md) | Accepted | RDM IO mixed-precision analog front-end (4× 16-bit ΔΣ + 4× 12-bit) + PT Motorsport benchmark | `docs/PLATFORM_PLAN_2026-07.md` §6.3, `../rdm7-desktop/src/tauri-overlay.html` (IO workspace) |
+| [0010](0010-rdm-io-three-tier-ladder.md) | Accepted | RDM IO three-tier ladder — Pico A$89 / Core A$219 / Pro A$449–579, shared firmware + emulation modes | `docs/PLATFORM_PLAN_2026-07.md` §4/§6.3, future firmware `profiles/` layer |
 
 ## When to write a new ADR
 
@@ -61,4 +64,4 @@ Existing ADRs vary slightly from this skeleton — none rigorous. Match the surr
 
 ## Numbering
 
-Strictly sequential. The next ADR is `0008`. Don't reuse numbers, even if a draft is abandoned — leave a stub if needed (`0008-abandoned.md` with one line of explanation).
+Strictly sequential. The next ADR is `0011`. Don't reuse numbers, even if a draft is abandoned — leave a stub if needed (`0011-abandoned.md` with one line of explanation).

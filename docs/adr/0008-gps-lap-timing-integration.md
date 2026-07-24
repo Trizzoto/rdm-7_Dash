@@ -1,0 +1,197 @@
+# ADR 0008 — GPS lap timing: how the puck, the dash and the desktop suite fit together
+
+Status: Accepted (2026-07-20) — dash side implemented; desktop workspace not yet built.
+
+Supersedes nothing. Implements `docs/PLATFORM_PLAN_2026-07.md` §6.2.
+
+## Context
+
+Phase 2 of the platform plan adds an **RDM GPS** — a 25 Hz GNSS puck that hangs
+off the CAN bus — and turns the RDM-7 into a lap timer. Three codebases have to
+agree for that to work:
+
+| Repo | Role |
+|---|---|
+| `rdm-gps-node` | Puck firmware: u-blox NEO-M9N → CAN |
+| `RDM-7_Dash` (this) | Lap engine, channels, widgets |
+| `rdm7-desktop` | RDM Studio: configuration and session analysis |
+
+Before this ADR, the dash had six lap-timing canonical channels defined
+(`lap_time_current`, `lap_time_last`, `lap_time_best`, `lap_number`,
+`lap_delta_best`, `sector_time_current`) that **nothing ever fed**, and no GPS
+channels at all. There was also no CAN ID allocation for RDM-designed bus
+devices — only OBD2 IDs were pinned anywhere.
+
+The market research (`docs/research/2026-07-gps-laptimer-market.md`) sets the
+bar: 25 Hz, auto track detection, GPS start/finish with no beacon, best/last/
+**predictive** delta, sectors, and ±0.02 s. That last number is the constraint
+that drives most of what follows.
+
+## Decisions
+
+### 1. The puck is dumb; the lap engine runs on the dash
+
+The RDM GPS broadcasts position, motion, accuracy and time. It computes
+nothing. All lap logic lives in `main/lap/` on the dash.
+
+Why: the lap engine then survives a GPS-vendor swap, and any CAN GPS that can be
+made to speak the published DBC works with the dash. It also puts the engine
+where the track database, the UI and the storage already are. The cost is bus
+traffic (~1.4% at 500 kbit/s), which is nothing.
+
+### 2. CAN ID allocation for RDM bus devices: `0x400`–`0x4FF`
+
+Defined in the puck's `docs/PROTOCOL.md` and duplicated as frame offsets in
+`main/lap/lap_engine.c`. Blocks of 16 IDs per device:
+
+| Range | Device class |
+|---|---|
+| `0x400`–`0x43F` | RDM GPS (4 instances) |
+| `0x440`–`0x47F` | RDM IO (reserved, Phase 3) |
+| `0x480`–`0x4BF` | RDM Keypad native mode (reserved; Blink units use CANopen) |
+| `0x4C0`–`0x4FF` | Reserved |
+
+Chosen to clear the ECU broadcast ranges the shipped presets use (Haltech
+`0x360`–`0x373`, Link `0x3E8`–`0x3F1`), MoTeC (`0x500`+), MaxxECU (`0x520`+),
+CANopen SDO (`0x580`+) and OBD2. It is numerically *below* OBD2, so 25 Hz
+telemetry wins arbitration against diagnostic polling but still loses to an
+ECU's critical low-ID frames.
+
+The base is configurable because no reservation survives contact with somebody
+else's bus.
+
+### 3. GPS channels bind via channel-owned decode, NOT the ECU preset system
+
+`lap_engine_bind_gps_channels()` activates the eight Position & GPS canonical
+channels and calls `channel_manager_set_decode()` on each with the bit layout
+from the published DBC.
+
+Rejected: adding `ECU_SIG_GPS_*` slots to `ecu_signal_slot_t`. Reasons:
+
+- A GPS is not an ECU. A car has one ECU preset *and* possibly a GPS; the
+  preset system assumes one exclusive choice and rewrites the layout's
+  `signals[]` wholesale.
+- Adding slots means three parallel tables (`ECU_SIGNAL_NAMES`,
+  `ECU_SIGNAL_CANONICAL`, `ECU_SIGNAL_ALIASES`) must stay in lockstep.
+- ADR-0005 already moved decode ownership to the channel. The preset path is
+  the legacy one; new device classes should not extend it.
+
+Consequence: one function call configures a GPS completely. No DBC import step,
+no manual bit entry — which is the "zero extra hardware, under ten minutes"
+promise the platform plan makes.
+
+### 4. The lap engine reads raw CAN frames, not the GPS channels
+
+**This is the non-obvious one.**
+
+`channel_t.current_value` is a `float`. A float32 carries ~24 bits of mantissa,
+so a longitude of 138.6° quantises to about 1.5e-5° — roughly **1.7 metres**,
+growing with distance from the prime meridian.
+
+The accuracy target is ±0.02 s. At 200 km/h (55.6 m/s) that is **1.1 metres**.
+Reading position from a float channel would put the quantisation error above
+the entire accuracy budget — and because it is quantisation rather than noise,
+it does not average out.
+
+So `lap_engine_on_can_frame()` is called from `can_process_queued_frames()`
+alongside `signal_dispatch_frame()`, decodes the position frame's two `int32`
+fields itself, and carries them as `double` all the way into `lap_core`. The
+`gps_latitude` / `gps_longitude` channels still exist and are still bound — they
+are for display and logging, where a metre does not matter.
+
+Sub-fix-interval interpolation is the other half of hitting ±0.02 s: at 25 Hz
+the fixes are 40 ms apart, so the crossing instant is interpolated between the
+two fixes that straddle the line, and crossing timestamps are held as `double`
+milliseconds rather than being rounded back to integers.
+
+### 5. `lap_core.c` has no ESP-IDF, so the tests compile it directly
+
+`main/lap/` is split in two:
+
+- `lap_core.c` — geometry, crossing detection, interpolation, sectors,
+  predictive delta. No LVGL, no FreeRTOS, no `esp_*`.
+- `lap_engine.c` — CAN frames, channels, signals, persistence, logging.
+
+`tests/native/test_lap_core.c` therefore **compiles the firmware source**
+rather than mirroring its arithmetic, which is what `test_calculated_gear.c`
+and `test_ecu_preset_match.c` are forced to do because the real code drags in
+the IDF. A mirrored test can drift out of lockstep with the code it claims to
+cover without anything failing. New modules should follow this split.
+
+### 6. New channel group `CHGRP_POSITION`, appended
+
+Group indices are **persisted numerically** in `channels.json`
+(`"group": <int>`). Inserting a group in the middle of `channel_group_t` would
+silently regroup every channel on every device already in the field. The new
+group is therefore appended after `CHGRP_DASH_SYSTEM` as index 13, and the enum
+now carries a comment saying so.
+
+### 7. Predictive delta indexes by distance, not by time
+
+The reference lap is stored as "elapsed time at each distance bucket around the
+lap" (512 buckets, adapting to lap length after the first completed lap).
+Indexing by distance is what makes the delta predictive: at any moment we know
+how far round we are, so we can ask how long the reference took to get this far.
+Indexing by time would only say where we *were*.
+
+Distance is integrated from **Doppler ground speed**, not from differencing
+positions. Position differencing accumulates GPS noise into hundreds of metres
+of phantom distance while a car sits in the pits; Doppler speed reads a true
+zero.
+
+## Who owns what
+
+| Concern | Owner | Notes |
+|---|---|---|
+| GNSS → CAN | `rdm-gps-node` | Published DBC; no lap logic |
+| CAN → channels | `lap_engine_bind_gps_channels()` | ADR-0005 channel-owned decode |
+| Lap arithmetic | `main/lap/lap_core.c` | Host-tested |
+| Track storage | `/lfs/lap_track.json` | Atomic write, `schema_version` |
+| Lap config UI | firmware `main/web/index.html` | **Not yet built** |
+| Session analysis | `rdm7-desktop` only | **Not yet built** — heavy plots |
+
+Per ADR-0007 the lap **configuration** UI belongs in the firmware editor first
+so it is phone-configurable, and the desktop inherits it through
+`sync_firmware.py`. Only session analysis is desktop-exclusive.
+
+## Consequences
+
+Accepted:
+
+- The RDM GPS frame offsets are duplicated between `rdm-gps-node`'s
+  `rdm_gps_proto.h` and this repo's `lap_engine.c`. The two repos cannot share
+  a header. Mitigated by the protocol being additive-only after first ship.
+- The lap engine runs on the LVGL task, in the CAN drain path. It rejects
+  non-GPS ids on the first compare, and at 25 Hz the work is trivial arithmetic
+  — but it is on the critical rendering path and must stay cheap.
+- `signal_source_t` still has no `SIGNAL_SOURCE_GPS`; lap outputs register as
+  `SIGNAL_SOURCE_INTERNAL`. The plan calls for a GPS value, but it is
+  provenance-display only and adding it means three string-mapping sites
+  (`web_server_channels.c`, `web_server_signals.c`, `layout_manager.c`) must
+  agree. Deferred deliberately, not forgotten.
+
+Built since acceptance (2026-07-20, same day):
+
+- ~~Lap config UI~~ — the **capture flow**: `POST /api/lap/capture` takes the
+  car's live position AND course from the GPS stream, so setting up a track is
+  "drive across the line, tap the button". Six endpoints in
+  `main/net/web_server_lap.c`, modal in the firmware editor (Setup ▸ Lap
+  Timing). Desktop inherits on the next `sync_firmware.py`.
+- ~~`M:SS.sss` formatting~~ — `channel_format_display_value()` now renders
+  Lap Timing group channels ≥60 s as `M:SS.sss`; deltas stay signed decimals.
+- Detection hardening: auto-bind requires the status frame to identify as
+  `GpsDeviceType 0x02`, and 29-bit ids numerically inside the block are
+  rejected (the coalesce buffer now carries `extd`).
+
+Timing honesty note: fixes are timestamped when the LVGL task drains the CAN
+queue (~2 ms cadence), not at bus reception, so crossing timestamps carry a few
+milliseconds of scheduling jitter — ~0.1–0.2 m at 200 km/h, inside the ±0.02 s
+budget but not free. If the budget ever tightens, timestamp in the RX task.
+
+Still to build:
+
+- Track database with auto-detection. Today one track is stored; the plan wants
+  ~100 seeded circuits with auto-selection by proximity.
+- Race Page bundled layout, predictive-delta bar widget, lap list panel.
+- Session logging to SD with a lap/sector index, and the desktop analysis
+  workspace that reads it.

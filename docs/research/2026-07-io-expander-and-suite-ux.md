@@ -20,6 +20,7 @@
 | **RaceGrade TC8** ([racegrade.com](https://racegrade.com/TC8.html)) | 8× K-type TC (0–1000 °C) | none | Emulates MoTeC E8xx protocol → works with many ECUs/dashes | **US$629** ([JRR](https://johnreedracing.com/products/racegrade-tc8)) |
 | **MaxxECU Expansion Module** ([maxxecu.com](https://www.maxxecu.com/store/engine-control-or-electronics/maxxecu-modules/maxxecu-expansion-module-with-connector-kit)) | 4× pulse, 12× analog 0–5 V | 4× 12 V out, 2× H-bridge | MTune (MaxxECU only) | **US$419** |
 | **CANchecked MCE18** ([canchecked manual](https://www.canchecked.de/updater/MCE18-manual_V3+V4.pdf)) | 9× analog 10-bit, 6× digital | 3× low-side 0.5 A | Configurable ID; sold as generic module by MaxxECU etc. | **~€229** ([Turbozentrum](https://www.turbozentrum.de/CANchecked-CAN-Bus-extension-module-MCE18-for-MFD28-MFD32-MFD32S)) |
+| **PT Motorsport IO Mini2** ([ptmotorsport.com.au](https://www.ptmotorsport.com.au/product/pt-motorsport-canbus-io-expander-mini2/)) *(added 2026-07-21)* | 8× AV 0–5 V (12 V-tol, solder-pad 1k pull-ups), 8× digital 0–60 kHz freq/duty | 8× low-side 0.5 A PWM 0–60 kHz | **Emulation modes: Haltech IO12A/B + IO16A/B, ECUMaster SwitchBoard v3, MoTeC E888, Emtron** + own protocol; Windows COM-port app; open-source firmware (Arduino UNO R4 / Renesas RA4M1) | **AU$200** (~US$130); lineup: Nano AU$99 / Mini AU$200 / DTM (4×3 A out) AU$299 |
 
 ### A2. Expander vs PDM — where the line is, and the gap
 
@@ -55,3 +56,13 @@ The line: **expanders** carry sensor inputs plus signal-level outputs (0.5–8 A
 **Suite architecture: one app, device-modular — the NSP/RS3 pattern, not the MoTeC split.** Concretely: (1) a **device tree pane** ("Devices on this car") populated by discovery — RDM already does WiFi subnet-sweep discovery and has a CAN bus on every product, mirroring ECUMaster Light Client's bus discovery; (2) **per-device tabs** inside one window sharing a **single car project file** that bundles dash layout + keypad map + IO expander config + lap timer settings (nobody except Haltech really nails cross-device sharing — RDM's existing `channels.json` registry is the natural spine: make channel names car-scoped so an IO-expander pin named `oil_press` is instantly bindable on the dash, keypad LED rules, and logger); (3) a **whole-network firmware manager** modeled on RS3's Connected Devices badge + cascade updates — with explicit compatibility checks to avoid Holley-style lockstep pain; (4) **CAN ID auto-assignment with conflict validation** at project level (Haltech's fixed Box A/B is the crude version; do it properly), plus **DBC import/export** like ECUMaster so RDM devices drop into MoTeC/Link/Haltech ecosystems — that's the trojan horse for selling the expander to non-RDM-dash owners. Keep configs offline-editable with device sync on connect (all leaders do this; RDM's current live-editing model should gain an offline project mode).
 
 **IO expander sweet spot:** ~US$349–449 (AU$550–700), one box: **8× analog 0–5 V (12-bit+), 4× K-type thermocouple, 4× digital/frequency (incl. VR-capable ×2), 4× low-side PWM 2 A + 2–4× half-bridge/high-side 8–10 A outputs**, configurable 11/29-bit CAN at 125k–1M with an RDM-native protocol *and* generic DBC-exportable broadcast. That combination — TC + analog + usable power outputs + open CAN — does not exist under US$500 today: it beats Haltech IO12 (US$370, no TC, no power) on capability, undercuts E888+TC8 (~US$1,574 combined) by ~70%, and dodges AEM's fatal lock-in mistake. Ship the ECUMaster-style pin → function → calibration → CAN-broadcast wizard inside the suite and it doubles as the acquisition funnel for the dash.
+
+> **2026-07-21 amendment** — the PT Motorsport line (row added to A1) attacks the
+> *bottom* of this space at AU$99–299 with an Arduino-core board, ≤500 mA
+> low-side outputs, no TC/VR, and — the part worth copying — **CAN emulation
+> modes** that let one cheap box impersonate Haltech/ECUMaster/MoTeC expanders.
+> Consequences for the RDM IO spec are recorded in
+> [`docs/adr/0009-rdm-io-mixed-precision-frontend.md`](../adr/0009-rdm-io-mixed-precision-frontend.md):
+> mixed-precision AIN (4× 16-bit ΔΣ + 4× 12-bit), emulation modes adopted in
+> firmware, two-tier terminals/DTM pricing at A$449/A$579, gap spec otherwise
+> unchanged — do not chase the AU$200 floor.
