@@ -3,7 +3,14 @@
  *
  * Routes:
  *   GET  /                  — health check
- *   GET  /<version>/<file>.bin — resolve GitHub release download → CDN URL
+ *   GET  /<version>/<file>.bin — STREAM the GitHub release asset (the firmware
+ *                             bytes themselves). One TLS hop for the device, no
+ *                             cross-host redirect — GitHub's browser_download_url
+ *                             302s to a second host mid-download, and the double
+ *                             TLS handshake is what exhausts internal RAM on
+ *                             heavily-loaded dashes (seen in the field, 2026-07).
+ *                             Add ?resolve=1 for the legacy JSON {url,size,...}
+ *                             response instead of the bytes (debug/tooling).
  *   POST /can-upload        — accept a CAN trace from a dashboard
  *                             (HMAC-SHA256 authenticated, stored in R2)
  *
@@ -61,7 +68,7 @@ export default {
       return jsonResponse({ count: items.length, truncated: listed.truncated, items });
     }
 
-    // OTA resolve endpoint: /<version>/<filename>.bin
+    // OTA endpoint: /<version>/<filename>.bin
     const match = path.match(/^\/([^/]+)\/([^/]+\.bin)$/);
     if (!match) {
       return new Response("Not found.", { status: 404 });
@@ -69,21 +76,44 @@ export default {
 
     const version = match[1];
     const filename = match[2];
+    // Legacy behaviour ONLY on request: the old endpoint returned this JSON
+    // instead of bytes. No firmware release ever consumed it successfully
+    // (esp_https_ota chokes on JSON), but keep it reachable for tooling.
+    const wantResolve = url.searchParams.get("resolve") === "1";
 
     try {
       for (const tag of [`v${version}`, version]) {
         const downloadUrl = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/${tag}/${filename}`;
+        // cacheEverything: a tagged release asset is immutable, so let the
+        // Cloudflare edge cache absorb fleet downloads — faster for devices,
+        // and OTA keeps working through a GitHub wobble once cached.
         const resp = await fetch(downloadUrl, {
           headers: { "User-Agent": "RDM7-OTA-Proxy" },
           redirect: "follow",
+          cf: { cacheEverything: true, cacheTtl: 86400 },
         });
         if (!resp.ok) continue;
-        return jsonResponse({
-          url: resp.url,
-          size: parseInt(resp.headers.get("content-length") || "0", 10),
-          version: version,
-          tag: tag,
+
+        if (wantResolve) {
+          return jsonResponse({
+            url: resp.url,
+            size: parseInt(resp.headers.get("content-length") || "0", 10),
+            version: version,
+            tag: tag,
+          });
+        }
+
+        // Stream the firmware straight through — the device sees one origin,
+        // one TLS session, no redirect. Pass Content-Length through so
+        // esp_https_ota_get_image_size() works and the dialog shows progress.
+        const headers = new Headers({
+          "Content-Type": "application/octet-stream",
+          "Cache-Control": "no-cache",
+          "X-OTA-Tag": tag,
         });
+        const len = resp.headers.get("content-length");
+        if (len) headers.set("Content-Length", len);
+        return new Response(resp.body, { status: 200, headers });
       }
       return new Response(`Firmware not found: ${version}/${filename}`, { status: 404 });
     } catch (err) {

@@ -540,23 +540,26 @@ const char *ota_get_firmware_url(void) {
 }
 
 esp_err_t start_ota_update(void) {
-    /* Build the download URL */
-    char url[512];
-    if (ota_firmware_url[0]) {
-        strncpy(url, ota_firmware_url, sizeof(url) - 1);
-        url[sizeof(url) - 1] = '\0';
-    } else if (download_url[0]) {
-        strncpy(url, download_url, sizeof(url) - 1);
-        url[sizeof(url) - 1] = '\0';
-    } else {
-        snprintf(url, sizeof(url), "%s/%s/esp32-firmware.bin",
+    /* Two candidate URLs, alternated across retry attempts:
+     *
+     *   proxy  — the Cloudflare worker streams the bytes itself: ONE origin,
+     *            one TLS session, no redirect. GitHub's browser_download_url
+     *            302s to a second host (release-assets.githubusercontent.com),
+     *            and the second TLS handshake mid-download is what pushed
+     *            internal-RAM-tight dashes over the edge (field failure at ~1%,
+     *            2026-07 — failed on WiFi AND hotspot, i.e. not the network).
+     *   github — the direct asset URL, kept as the odd-attempt fallback so the
+     *            worker never becomes a single point of failure for the fleet.
+     *
+     * With OTA_RETRY_ATTEMPTS=3 the sequence is proxy, github, proxy. */
+    char proxy_url[512] = {0};
+    if (latest_version[0]) {
+        snprintf(proxy_url, sizeof(proxy_url), "%s/%s/esp32-firmware.bin",
                  OTA_DEFAULT_BASE_URL, latest_version);
     }
 
-    ESP_LOGI(TAG, "Starting OTA download from: %s", url);
-
-    if (strlen(url) == 0) {
-        ESP_LOGE(TAG, "Download URL is empty");
+    if (!ota_firmware_url[0] && !proxy_url[0] && !download_url[0]) {
+        ESP_LOGE(TAG, "No download URL available — run a version check first");
         ota_status = OTA_UPDATE_FAILED;
         return ESP_FAIL;
     }
@@ -579,6 +582,20 @@ esp_err_t start_ota_update(void) {
             check_wifi_signal_strength();
             adaptive_timeout = calculate_adaptive_timeout();
         }
+
+        /* Pick this attempt's URL. An explicit override (dev hook) always
+         * wins; otherwise even attempts use the proxy, odd attempts fall back
+         * to GitHub direct — and if either candidate is missing, whatever
+         * exists is used for every attempt. */
+        const char *url;
+        if (ota_firmware_url[0]) {
+            url = ota_firmware_url;
+        } else if ((download_retry_count % 2) == 0) {
+            url = proxy_url[0] ? proxy_url : download_url;
+        } else {
+            url = download_url[0] ? download_url : proxy_url;
+        }
+        ESP_LOGI(TAG, "Starting OTA download from: %s", url);
 
         esp_http_client_config_t http_config = {
             .url = url,

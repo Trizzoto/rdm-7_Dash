@@ -50,3 +50,6 @@ tools/ford_cluster_preview.svg
 # stray reference photo dropped into the embedded-web dir (not referenced by
 # index.html; must never be embedded into firmware)
 main/web/ford_ref.jpg
+
+# Cloudflare wrangler local state
+tools/cloudflare-ota-proxy/.wrangler/

@@ -223,9 +223,13 @@ void show_ota_update_dialog(const char* current_version, const char* new_version
     lv_obj_set_style_text_font(version_label, THEME_FONT_BODY, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_color(version_label, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
     
-    // File size
+    // File size. Integer math only: LVGL's sprintf is built with
+    // LV_SPRINTF_USE_FLOAT=0, so "%.1f" renders as the literal text "f" —
+    // customers saw "Size: f MB" on the update dialog.
     lv_obj_t *size_label = lv_label_create(ota_dialog);
-    lv_label_set_text_fmt(size_label, "Size: %.1f MB", file_size_mb);
+    int size_mb_tenths = (int)(file_size_mb * 10.0f + 0.5f);
+    lv_label_set_text_fmt(size_label, "Size: %d.%d MB",
+                          size_mb_tenths / 10, size_mb_tenths % 10);
     lv_obj_align(size_label, LV_ALIGN_TOP_LEFT, 0, 65);
     lv_obj_set_style_text_font(size_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_color(size_label, THEME_COLOR_TEXT_MUTED, LV_PART_MAIN | LV_STATE_DEFAULT);

@@ -1008,7 +1008,11 @@ static void fuel_timer_cb(lv_timer_t *t)
     fuel_tab_ctx_t *fc = (fuel_tab_ctx_t *)t->user_data;
     if (!fc || !fc->voltage_lbl) return;
     float v = signal_internal_get_fuel_voltage();
-    lv_label_set_text_fmt(fc->voltage_lbl, "%.3f V", v);
+    /* newlib snprintf, not lv_label_set_text_fmt: LVGL's sprintf is built with
+     * LV_SPRINTF_USE_FLOAT=0, so "%.3f" would render as the literal "f V". */
+    char buf[24];
+    snprintf(buf, sizeof(buf), "%.3f V", (double)v);
+    lv_label_set_text(fc->voltage_lbl, buf);
 }
 
 static void fuel_tab_delete_cb(lv_event_t *e)

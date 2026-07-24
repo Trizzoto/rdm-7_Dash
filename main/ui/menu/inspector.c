@@ -1014,8 +1014,15 @@ static void _numeric_confirm_cb(const char *text, void *user_data) {
 
     inspector_row_t *r = _find_row(s_active_text_field);
     if (r && r->value_lbl && lv_obj_is_valid(r->value_lbl)) {
-        if (frac) lv_label_set_text_fmt(r->value_lbl, "%.2f", (double)v.f);
-        else      lv_label_set_text_fmt(r->value_lbl, "%d", v_int);
+        if (frac) {
+            /* newlib snprintf: LVGL's sprintf has LV_SPRINTF_USE_FLOAT=0, so
+             * "%.2f" through set_text_fmt renders as the literal "f". */
+            char fbuf[24];
+            snprintf(fbuf, sizeof(fbuf), "%.2f", (double)v.f);
+            lv_label_set_text(r->value_lbl, fbuf);
+        } else {
+            lv_label_set_text_fmt(r->value_lbl, "%d", v_int);
+        }
     }
     s_active_text_field[0] = '\0';
 }
