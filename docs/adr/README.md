@@ -18,6 +18,7 @@ Read the relevant ADR before changing the area it covers. The "we already tried 
 | [0008](0008-gps-lap-timing-integration.md) | Accepted | GPS lap timing — how the puck, the dash and the desktop suite fit together | `main/lap/`, `main/data/canonical_channels.c`, `main/can/can_manager.c`, `../rdm-gps-node/` |
 | [0009](0009-rdm-io-mixed-precision-frontend.md) | Accepted | RDM IO mixed-precision analog front-end (4× 16-bit ΔΣ + 4× 12-bit) + PT Motorsport benchmark | `docs/PLATFORM_PLAN_2026-07.md` §6.3, `../rdm7-desktop/src/tauri-overlay.html` (IO workspace) |
 | [0010](0010-rdm-io-three-tier-ladder.md) | Accepted | RDM IO three-tier ladder — Pico A$89 / Core A$219 / Pro A$449–579, shared firmware + emulation modes | `docs/PLATFORM_PLAN_2026-07.md` §4/§6.3, future firmware `profiles/` layer |
+| [0011](0011-analyzer-no-synthetic-data.md) | Accepted | The CAN analyzer never fabricates traffic — demo generator deleted, every empty state names its cause | `../rdm7-desktop/src/tauri-overlay.html` (analyzer workspace), `main/net/web_server_test.c`, `main/net/web_server_obd2.c` |
 
 ## When to write a new ADR
 
@@ -64,4 +65,4 @@ Existing ADRs vary slightly from this skeleton — none rigorous. Match the surr
 
 ## Numbering
 
-Strictly sequential. The next ADR is `0011`. Don't reuse numbers, even if a draft is abandoned — leave a stub if needed (`0011-abandoned.md` with one line of explanation).
+Strictly sequential. The next ADR is `0012`. Don't reuse numbers, even if a draft is abandoned — leave a stub if needed (`0011-abandoned.md` with one line of explanation).
