@@ -86,6 +86,12 @@ static cJSON *track_to_json(const lap_track_t *t) {
 	cJSON *arr = cJSON_AddArrayToObject(j, "sectors");
 	for (uint8_t i = 0; i < t->sector_count && arr; i++)
 		cJSON_AddItemToArray(arr, line_to_json(&t->sectors[i]));
+	/* Emitted only for a point-to-point course, so a circuit's payload is
+	 * byte-identical to what it was before this existed. */
+	if (t->point_to_point) {
+		cJSON_AddBoolToObject(j, "point_to_point", true);
+		cJSON_AddItemToObject(j, "finish", line_to_json(&t->finish));
+	}
 	return j;
 }
 
@@ -118,8 +124,15 @@ static esp_err_t lap_status_get_handler(httpd_req_t *req) {
 
 	const lap_engine_t *e = lap_engine_state();
 	cJSON_AddBoolToObject(root, "has_track", e->have_track);
-	if (e->have_track)
+	if (e->have_track) {
 		cJSON_AddStringToObject(root, "track_name", e->track.name);
+		/* Only for a point-to-point course, so a circuit's status payload is
+		 * unchanged. Clients need it because the two read differently: on a
+		 * sprint, `armed` false with a time banked means the run FINISHED,
+		 * whereas on a circuit it means nothing has started yet. */
+		if (e->track.point_to_point)
+			cJSON_AddBoolToObject(root, "point_to_point", true);
+	}
 
 	cJSON *timing = cJSON_AddObjectToObject(root, "timing");
 	if (timing) {
@@ -234,6 +247,24 @@ static esp_err_t lap_track_post_handler(httpd_req_t *req) {
 				track.sector_count++;
 		}
 	}
+
+	/* Point-to-point (sprint / hillclimb): the run ends on its own line.
+	 *
+	 * Both keys are required together. `point_to_point` without a usable
+	 * `finish` would arm a run with nothing able to close it — the timer would
+	 * look alive and never produce a time — so reject it loudly rather than
+	 * store a track that cannot work. */
+	const cJSON *p2p = cJSON_GetObjectItemCaseSensitive(root, "point_to_point");
+	if (cJSON_IsTrue(p2p)) {
+		const cJSON *fin = cJSON_GetObjectItemCaseSensitive(root, "finish");
+		if (!line_from_json(fin, &track.finish)) {
+			cJSON_Delete(root);
+			httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+			                    "point_to_point needs a valid finish line");
+			return ESP_FAIL;
+		}
+		track.point_to_point = true;
+	}
 	cJSON_Delete(root);
 
 	if (!rdm_lvgl_lock(500))
@@ -273,13 +304,16 @@ static esp_err_t lap_capture_post_handler(httpd_req_t *req) {
 	const cJSON *what = cJSON_GetObjectItemCaseSensitive(root, "what");
 	bool is_sf = cJSON_IsString(what) && strcmp(what->valuestring, "start_finish") == 0;
 	bool is_sector = cJSON_IsString(what) && strcmp(what->valuestring, "sector") == 0;
+	/* "finish" is the point-to-point finish line: drive to the top of the
+	 * hill and capture it there, exactly as you do the start. */
+	bool is_finish = cJSON_IsString(what) && strcmp(what->valuestring, "finish") == 0;
 	const cJSON *w = cJSON_GetObjectItemCaseSensitive(root, "half_width_m");
 	float half_width = cJSON_IsNumber(w) ? (float)w->valuedouble : 15.0f;
 	cJSON_Delete(root);
 
-	if (!is_sf && !is_sector) {
+	if (!is_sf && !is_sector && !is_finish) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-		                    "what must be start_finish or sector");
+		                    "what must be start_finish, sector or finish");
 		return ESP_FAIL;
 	}
 	if (half_width < 2.0f)
@@ -322,6 +356,16 @@ static esp_err_t lap_capture_post_handler(httpd_req_t *req) {
 		/* A new start/finish begins a new track definition — stale sector
 		 * lines from some other layout of the circuit would misfire. */
 		track.sector_count = 0;
+	} else if (is_finish) {
+		if (!track.start_finish.half_width_m) {
+			rdm_lvgl_unlock();
+			httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+			                    "capture start_finish before the finish line");
+			return ESP_FAIL;
+		}
+		track.finish = line;
+		/* Capturing a finish line is what MAKES the course point-to-point. */
+		track.point_to_point = true;
 	} else {
 		if (!track.start_finish.half_width_m) {
 			rdm_lvgl_unlock();
@@ -346,7 +390,8 @@ static esp_err_t lap_capture_post_handler(httpd_req_t *req) {
 	}
 
 	ESP_LOGI(TAG, "captured %s at %.7f,%.7f heading %.1f (%.1f km/h)",
-	         is_sf ? "start/finish" : "sector", lat, lon, (double)heading, (double)speed);
+	         is_sf ? "start/finish" : (is_finish ? "finish" : "sector"),
+	         lat, lon, (double)heading, (double)speed);
 
 	cJSON *resp = cJSON_CreateObject();
 	if (resp) {

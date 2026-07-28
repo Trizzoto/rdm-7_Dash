@@ -61,6 +61,18 @@ typedef struct {
 	/* Rejects a re-trigger of the same line. Also the guard against a car
 	 * stopped ON the line jittering across it once per fix. */
 	float      min_lap_time_s;
+
+	/* Point-to-point: a sprint or hillclimb, where the run ENDS on a different
+	 * line from the one it started on.
+	 *
+	 * On a circuit the same line does both jobs, so one line and "re-cross it"
+	 * is the whole rule. A hillclimb start and finish can be kilometres apart
+	 * and the car never returns, so that rule cannot express it — hence a second
+	 * line rather than a mode flag on the first.
+	 *
+	 * When false, `finish` is ignored entirely and behaviour is unchanged. */
+	bool       point_to_point;
+	lap_line_t finish;                   /* only read when point_to_point */
 } lap_track_t;
 
 /* One GPS fix, already converted out of wire units. */
@@ -126,6 +138,7 @@ typedef struct {
 	bool      have_prev;
 	float     prev_sf_distance;    /* signed distance to start/finish, metres */
 	float     prev_sector_distance;
+	float     prev_finish_distance; /* point-to-point only */
 	bool      have_prev_distances;
 
 	/* Reference lap for the predictive delta, plus the trace being recorded

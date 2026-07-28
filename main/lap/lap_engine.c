@@ -45,7 +45,10 @@ static const char *TAG = "lap_engine";
 #define TRACK_PATH     "/lfs/lap_track.json"
 #define TRACK_TMP_PATH TRACK_PATH ".tmp"
 #define TRACK_BAK_PATH TRACK_PATH ".bak"
-#define TRACK_SCHEMA_VERSION 1
+/* 2 adds point_to_point + finish (sprint/hillclimb). A v1 file still loads
+ * unchanged: both keys absent means point_to_point stays false, i.e. the
+ * circuit behaviour every existing track already has. */
+#define TRACK_SCHEMA_VERSION 2
 #define TRACK_MAX_FILE_BYTES (16 * 1024)
 
 /* ── State ─────────────────────────────────────────────────────────────── */
@@ -188,6 +191,10 @@ static esp_err_t track_save(void) {
 		cJSON *arr = cJSON_AddArrayToObject(root, "sectors");
 		for (uint8_t i = 0; i < t->sector_count && arr; i++)
 			cJSON_AddItemToArray(arr, line_to_json(&t->sectors[i]));
+		if (t->point_to_point) {
+			cJSON_AddBoolToObject(root, "point_to_point", true);
+			cJSON_AddItemToObject(root, "finish", line_to_json(&t->finish));
+		}
 	}
 
 	char *json = cJSON_PrintUnformatted(root);
@@ -307,8 +314,17 @@ static void track_load(void) {
 				t.sector_count++;
 			}
 		}
+		/* Only honour point_to_point when a finish line came with it — a flag
+		 * on its own would arm a run that can never be closed. */
+		const cJSON *fin = cJSON_GetObjectItemCaseSensitive(root, "finish");
+		if (cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(root, "point_to_point")) &&
+		    cJSON_IsObject(fin)) {
+			line_from_json(fin, &t.finish);
+			t.point_to_point = true;
+		}
 		lap_core_set_track(&s_engine, &t);
-		ESP_LOGI(TAG, "track loaded: '%s', %u sector line(s)", t.name, t.sector_count);
+		ESP_LOGI(TAG, "track loaded: '%s', %u sector line(s)%s", t.name, t.sector_count,
+		         t.point_to_point ? ", point-to-point" : "");
 	}
 	cJSON_Delete(root);
 }

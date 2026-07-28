@@ -65,4 +65,4 @@ Existing ADRs vary slightly from this skeleton — none rigorous. Match the surr
 
 ## Numbering
 
-Strictly sequential. The next ADR is `0012`. Don't reuse numbers, even if a draft is abandoned — leave a stub if needed (`0011-abandoned.md` with one line of explanation).
+Strictly sequential. The next ADR is `0013`. Don't reuse numbers, even if a draft is abandoned — leave a stub if needed (`0011-abandoned.md` with one line of explanation).

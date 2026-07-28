@@ -1,6 +1,8 @@
 # ADR 0008 — GPS lap timing: how the puck, the dash and the desktop suite fit together
 
-Status: Accepted (2026-07-20) — dash side implemented; desktop workspace not yet built.
+Status: Accepted (2026-07-20) — dash side implemented. Puck USB RPC + Studio's
+RDM GPS **node configurator** built 2026-07-27 (see the addendum); the desktop
+**session-analysis** workspace is still not built.
 
 Supersedes nothing. Implements `docs/PLATFORM_PLAN_2026-07.md` §6.2.
 
@@ -149,10 +151,12 @@ zero.
 | Track storage | `/lfs/lap_track.json` | Atomic write, `schema_version` |
 | Lap config UI | firmware `main/web/index.html` | **Not yet built** |
 | Session analysis | `rdm7-desktop` only | **Not yet built** — heavy plots |
+| Puck device config | `rdm-gps-node` USB RPC + Studio's RDM GPS workspace | Desktop-only of necessity — see the 2026-07-27 addendum |
 
 Per ADR-0007 the lap **configuration** UI belongs in the firmware editor first
 so it is phone-configurable, and the desktop inherits it through
-`sync_firmware.py`. Only session analysis is desktop-exclusive.
+`sync_firmware.py`. Session analysis is desktop-exclusive, and so — for a
+different and stronger reason — is configuring the puck itself.
 
 ## Consequences
 
@@ -195,3 +199,93 @@ Still to build:
 - Race Page bundled layout, predictive-delta bar widget, lap list panel.
 - Session logging to SD with a lap/sector index, and the desktop analysis
   workspace that reads it.
+
+## Addendum — 2026-07-27: the puck's USB RPC, and how Studio tells devices apart
+
+The puck gained a **USB JSON-RPC** interface (`rdm-gps-node/main/net/serial_rpc.c`,
+specified in that repo's `docs/USB_RPC.md`), and RDM Studio gained an **RDM GPS**
+workspace that speaks it. Both verified against the rev A board on 2026-07-27
+with a live 15–16 satellite fix.
+
+**Decision 1 is unchanged.** This is a configuration and diagnostics channel,
+not a data path. The puck still computes nothing, the lap engine still lives on
+the dash, and CAN broadcast is identical whether or not a USB host is attached.
+Nothing in the lap pipeline reads USB.
+
+Why it exists: without it the puck can only be configured over CAN (`0x40E`
+command frames), which requires something already on the bus. That is a poor
+first-run experience for a device with a USB socket, and it makes WiFi
+provisioning circular — you would need the network to configure the network.
+
+### The wire format is deliberately the dash's
+
+`[STX][len 4B LE][payload][CRC16-CCITT 2B LE][ETX]`, `payload[0] = 0x00` for
+JSON — byte-identical to `main/net/uart_protocol.h`. Studio therefore talks to
+both devices through one `UsbTransport` and one set of Rust serial commands,
+with no second protocol implementation to keep in step. Console `ESP_LOG` output
+shares the same CDC interface (the S3's USB-Serial/JTAG gives exactly one), so
+every client must discard non-frame bytes; Studio's Rust parser already did.
+
+### `device_type` is the discriminator — and its absence means "dash"
+
+`device.info` on the puck returns `"device_type":"gps"`. Dash firmware predates
+the field and answers with `schema` instead, so **absent is treated as "dash"**.
+That default is the whole reason no device already in the field changes
+behaviour.
+
+This closed a real bug rather than merely adding a feature. Studio's connection
+test opened with `listLayouts()`, so a perfectly good link to a puck was
+reported to the user as a **connection failure**. The flow now probes
+`device.info` first and only asks a `"dash"` for layouts, images or fonts. The
+same guard sits in the `/api/*` router (dash-only endpoints are answered locally
+rather than sent to a node that has no such RPC) and in the connection UI, which
+hides backup/restore, OTA and the live screen mirror when the connected device
+is not a dash. The Rust probe behind USB auto-detect had the same assumption
+baked in — it required a `schema` field — and so had never been able to find a
+puck at all.
+
+### The node configurator is desktop-first of necessity
+
+ADR-0007 and the table above put configuration UI in the firmware editor first,
+so it is phone-configurable, with the desktop inheriting it via
+`sync_firmware.py`. **The RDM GPS workspace is a permanent exception**: the puck
+has no display, no web server and no HTTP API. USB is its only configuration
+path and a browser cannot open a serial port, so there is no firmware editor for
+this UI to live in. This narrows nothing about ADR-0007 for the dash's own
+editor.
+
+It is also distinct from the existing **GPS Lap Timer** workspace, which is
+unchanged. That one does tracks, gates and delta analysis; this one configures
+and proves out the device — fix state, satellites, PDOP, accuracy, link and CAN
+counters with derived rates, live IMU, WiFi provisioning and identify.
+
+### Honesty constraints this interface forces on the UI
+
+These are not stylistic. Each is a case where the obvious reading of a reply is
+wrong, and each cost real debugging time to establish:
+
+- **`identify` returns `led_healthy: true` on a board whose LED cannot light.**
+  The field reports the RMT channel, which stays healthy while transmitting an
+  illegal waveform (`REV_A_ERRATA` E6) — and on rev A the pixel is fitted 180°
+  out with its data input wired to nothing (E7). Studio warns *before* the
+  click and never reports a flash the hardware cannot produce.
+- **Opening the CDC port resets the S3.** A stale `link:false`, or no fix
+  immediately after connecting, is expected rather than a fault; a cold start
+  takes 10–30 s. The workspace says so instead of showing an unexplained blank.
+- **`wifi.config.get` never returns the password**, only `has_password`. An
+  absent `password` on set leaves the stored one alone, so Studio omits the key
+  entirely when the field is blank — an empty box *keeps* the saved key, it does
+  not clear it. Sending `""` would risk overwriting a customer's key with
+  nothing. `reboot_required` is reported as received, not assumed.
+- The node **stores** WiFi credentials but does not yet bring a station up.
+  Provisioning deliberately landed ahead of the radio, and the UI says so.
+- **Absent is not zero.** Position, altitude, speed, PDOP and accuracy are
+  omitted from `gps.status` entirely until there is a fix. In JavaScript
+  `null / 1000` is `0`, so the naive formatter renders a confident `0.00 m` for
+  a reading that was never sent — and then grades it red. Every scaled readout
+  goes through one helper that preserves "absent" for exactly this reason.
+
+Position stays in raw 1e-7-degree integers end to end — wire, `gps.status`, and
+Studio's own state — with only the renderer dividing, at the full seven decimal
+places the wire carries. Converting on the way in would cost ~1.7 m, which is
+the whole reason decision 3 keeps the integer.

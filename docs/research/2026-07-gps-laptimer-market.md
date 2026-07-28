@@ -74,6 +74,18 @@ What club racers actually use: delta-T vs reference lap, GPS track map with sect
 
 ## 8. Feature deep-dive (2026-07-11 refresh) — what the software actually does
 
+> **Status correction — 2026-07-28.** The ✅ marks in the two tables below were
+> earned by RDM Studio's *Simulate/Analyse* workspace, which computed laps in
+> the browser from a synthetic speed model — it never called `/api/lap/*` and
+> never saw a real lap. That workspace has been removed (ADR-0011 widened: no
+> Studio workspace fabricates data), so **every analysis row marked shipped is
+> now "not built"**, not "built and working". The on-device rows are real: the
+> lap engine, sectors, theoretical best and predictive delta all exist in
+> `main/lap/lap_core.c`, are covered by 33 host tests, and now run on the puck
+> itself. Treat this section as a feature *map*, not a shipping claim, until the
+> analysis surface is rebuilt against recorded laps.
+
+
 Three parallel research passes on AiM Solo 2/DL + Garmin Catalyst, RaceBox +
 Harry's LapTimer/RaceChrono/TrackAddict, and the pro-analysis tier
 (VBOX Circuit Tools, MoTeC i2, RaceRender). Feature-level findings, mapped to

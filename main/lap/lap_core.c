@@ -165,6 +165,8 @@ void lap_core_set_track(lap_engine_t *e, const lap_track_t *track) {
 	normalize_line(&e->track.start_finish);
 	for (uint8_t i = 0; i < e->track.sector_count; i++)
 		normalize_line(&e->track.sectors[i]);
+	if (e->track.point_to_point)
+		normalize_line(&e->track.finish);
 	e->have_track = true;
 	/* A different track invalidates everything timed against the old one. */
 	lap_core_reset_session(e);
@@ -303,6 +305,53 @@ static void recompute_theoretical(lap_engine_t *e) {
 /* ---------------------------------------------------------------------------
  * Update
  * ------------------------------------------------------------------------- */
+/* Begin timing a lap (circuit) or a run (point-to-point) at `cross_ms`.
+ *
+ * The crossing lands part-way through the current fix interval, so the new
+ * lap has already covered (1-frac) of this step — crediting it here is what
+ * keeps the distance-indexed reference trace aligned lap to lap. */
+static void start_run(lap_engine_t *e, double cross_ms, float step_m, float frac) {
+	e->armed = true;
+	e->lap_start_ms = cross_ms;
+	e->sector_start_ms = cross_ms;
+	e->last_cross_ms = cross_ms;
+	e->sector_number = 1;
+	e->distance_m = step_m * (1.0f - frac);
+	e->lap_delta = 0.0f;
+	e->lap_delta_valid = false;
+	trace_begin_lap(e);
+}
+
+/* Close the lap/run in progress at `cross_ms`: bank the time, update best and
+ * theoretical, and promote the trace if this was the quickest so far.
+ *
+ * Shared by the circuit path and the point-to-point finish line so the two
+ * cannot drift apart — the only difference between them is what happens NEXT
+ * (a circuit starts the following lap, a sprint disarms). */
+static void close_run(lap_engine_t *e, double cross_ms, float step_m, float frac) {
+	float lap_s = (float)((cross_ms - e->lap_start_ms) / 1000.0);
+	/* Where the lap actually ENDED: the crossing, not this fix.
+	 * distance_m currently includes the full step to the fix. */
+	float dist_at_cross = e->distance_m - step_m * (1.0f - frac);
+	if (dist_at_cross < 0.0f)
+		dist_at_cross = 0.0f;
+
+	close_sector(e, cross_ms);
+	recompute_theoretical(e);
+
+	e->lap_time_last = lap_s;
+	e->lap_time_current = lap_s;
+	if (e->lap_time_best <= 0.0f || lap_s < e->lap_time_best) {
+		e->lap_time_best = lap_s;
+		/* The reference for the predictive delta is the best lap, and it
+		 * updates the moment a better one is set — so the delta always answers
+		 * "against my best", which is the question the driver is asking. */
+		trace_record(e, dist_at_cross, lap_s);
+		trace_promote_to_reference(e, lap_s, dist_at_cross);
+	}
+	e->lap_number++;
+}
+
 lap_event_t lap_core_update(lap_engine_t *e, const lap_fix_t *fix) {
 	if (!fix)
 		return LAP_EVT_NONE;
@@ -351,6 +400,10 @@ lap_event_t lap_core_update(lap_engine_t *e, const lap_fix_t *fix) {
 	float sf_lateral = 0.0f;
 	float sf_d = lap_line_signed_distance(&e->track.start_finish, fix->lat_deg, fix->lon_deg,
 	                                      &sf_lateral);
+
+	float fin_d = 0.0f;
+	if (e->track.point_to_point)
+		fin_d = lap_line_signed_distance(&e->track.finish, fix->lat_deg, fix->lon_deg, NULL);
 
 	bool have_sector_line = e->armed && e->sector_number >= 1 &&
 	                        (e->sector_number - 1) < e->track.sector_count;
@@ -403,49 +456,45 @@ lap_event_t lap_core_update(lap_engine_t *e, const lap_fix_t *fix) {
 				 * not complete a lap. Timing from ignition-on would otherwise
 				 * report an "out lap" that includes however long the car sat
 				 * in the garage. */
-				e->armed = true;
-				e->lap_number = 1;
-				e->lap_start_ms = cross_ms;
-				e->sector_start_ms = cross_ms;
-				e->last_cross_ms = cross_ms;
-				e->sector_number = 1;
-				/* The lap started at the crossing, part-way through this
-				 * fix interval — credit the distance already covered since. */
-				e->distance_m = step_m * (1.0f - frac);
-				trace_begin_lap(e);
+				start_run(e, cross_ms, step_m, frac);
+				/* Only the FIRST arm of a session is run 1. A point-to-point
+				 * course disarms at its finish line and re-arms for the next
+				 * run, which must not renumber back to 1. */
+				if (e->lap_number == 0)
+					e->lap_number = 1;
+				evt = LAP_EVT_ARMED;
+			} else if (e->track.point_to_point) {
+				/* Sprint: re-crossing the START line while a run is live. The
+				 * car never returns to the start mid-run on a real hillclimb,
+				 * so this is an aborted run being retaken — restart rather than
+				 * time a run that never finished. min_lap_time_s above already
+				 * absorbed the jitter case. */
+				start_run(e, cross_ms, step_m, frac);
 				evt = LAP_EVT_ARMED;
 			} else {
-				float lap_s = (float)((cross_ms - e->lap_start_ms) / 1000.0);
-				/* Where the lap actually ENDED: the crossing, not this fix.
-				 * distance_m currently includes the full step to the fix. */
-				float dist_at_cross = e->distance_m - step_m * (1.0f - frac);
-				if (dist_at_cross < 0.0f)
-					dist_at_cross = 0.0f;
-
-				close_sector(e, cross_ms);
-				recompute_theoretical(e);
-
-				e->lap_time_last = lap_s;
-				if (e->lap_time_best <= 0.0f || lap_s < e->lap_time_best) {
-					e->lap_time_best = lap_s;
-					/* The reference for the predictive delta is the best lap,
-					 * and it updates the moment a better one is set — so the
-					 * delta always answers "against my best", which is the
-					 * question the driver is actually asking. */
-					trace_record(e, dist_at_cross, lap_s);
-					trace_promote_to_reference(e, lap_s, dist_at_cross);
-				}
-
-				e->lap_number++;
-				e->lap_start_ms = cross_ms;
-				e->sector_start_ms = cross_ms;
-				e->last_cross_ms = cross_ms;
-				e->sector_number = 1;
-				e->distance_m = step_m * (1.0f - frac);
+				close_run(e, cross_ms, step_m, frac);
+				/* A circuit's finish line IS its start line: the same crossing
+				 * that ended that lap begins the next one. */
+				start_run(e, cross_ms, step_m, frac);
 				e->lap_time_current = 0.0f;
-				e->lap_delta = 0.0f;
-				e->lap_delta_valid = false;
-				trace_begin_lap(e);
+				evt = LAP_EVT_LAP_COMPLETE;
+			}
+		}
+
+		/* Point-to-point: the run ends on its own line, and the car then coasts
+		 * back down the hill with nothing armed. Checked after start/finish so a
+		 * course whose two lines sit close together resolves in a defined order. */
+		if (e->track.point_to_point && e->armed &&
+		    crossed(e->prev_finish_distance, fin_d, &frac)) {
+			double cross_ms = (double)e->prev_fix.t_ms + interval_ms * (double)frac;
+			if (!within_width(&e->track.finish, &e->prev_fix, fix, frac)) {
+				e->crossings_rejected_width++;
+			} else {
+				close_run(e, cross_ms, step_m, frac);
+				/* Disarm: the run is over. Nothing is timed until the car
+				 * crosses the start line again. */
+				e->armed = false;
+				e->last_cross_ms = cross_ms;
 				evt = LAP_EVT_LAP_COMPLETE;
 			}
 		}
@@ -476,6 +525,7 @@ lap_event_t lap_core_update(lap_engine_t *e, const lap_fix_t *fix) {
 	e->have_prev = true;
 	e->prev_sf_distance = sf_d;
 	e->prev_sector_distance = sec_d;
+	e->prev_finish_distance = fin_d;
 	e->have_prev_distances = true;
 	return evt;
 }

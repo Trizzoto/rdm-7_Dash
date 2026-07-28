@@ -689,6 +689,146 @@ static void test_delta_is_near_zero_on_a_repeat_lap(void) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════
+ * Point-to-point (sprint / hillclimb)
+ *
+ * A run STARTS on start_finish and ENDS on a different line, after which
+ * nothing is timed until the car crosses the start again. The car never
+ * returns through the finish, so none of the circuit's "re-cross the same
+ * line" behaviour applies.
+ * ════════════════════════════════════════════════════════════════════ */
+
+/* Start at the origin crossed heading north; finish 1000 m north, also
+ * crossed heading north. A car driving due north runs start -> finish. */
+static lap_track_t track_sprint(void) {
+	lap_track_t t;
+	memset(&t, 0, sizeof(t));
+	strcpy(t.name, "hillclimb");
+	t.start_finish = line_north();
+	t.sector_count = 0;
+	t.min_lap_time_s = 10.0f;
+	t.point_to_point = true;
+	t.finish = line_north();
+	t.finish.lat_deg = north_to_lat(1000.0);
+	return t;
+}
+
+/* Drive due north from `from_m` to `to_m` at `v` m/s, 25 Hz. */
+static uint32_t sprint_drive(lap_engine_t *e, uint32_t t_ms, double from_m, double to_m, double v) {
+	const double dt = 0.04;
+	for (double n = from_m; n <= to_m; n += v * dt) {
+		lap_fix_t f = fix_at(0.0, n, t_ms, (float)(v * 3.6));
+		lap_core_update(e, &f);
+		t_ms += 40;
+	}
+	return t_ms;
+}
+
+static void test_sprint_times_start_to_finish(void) {
+	lap_engine_t e;
+	lap_core_init(&e);
+	lap_track_t t = track_sprint();
+	lap_core_set_track(&e, &t);
+
+	const double v = 50.0;                    /* m/s = 180 km/h */
+	const double expected = 1000.0 / v;       /* 20.0 s over the 1 km */
+	sprint_drive(&e, 0, -200.0, 1200.0, v);
+
+	TEST_ASSERT_TRUE(e.lap_time_last > 0.0f);
+	TEST_ASSERT_TRUE(fabs(e.lap_time_last - expected) < 0.05);
+	TEST_ASSERT_TRUE(fabs(e.lap_time_best - expected) < 0.05);
+	/* The run is over: nothing is timed on the coast back down. */
+	TEST_ASSERT_FALSE(e.armed);
+}
+
+static void test_sprint_does_not_close_on_the_start_line(void) {
+	/* The circuit rule — re-crossing start_finish ends the lap — must NOT
+	 * apply, or a hillclimb would clock a "lap" the instant it set off. */
+	lap_engine_t e;
+	lap_core_init(&e);
+	lap_track_t t = track_sprint();
+	lap_core_set_track(&e, &t);
+
+	sprint_drive(&e, 0, -100.0, 500.0, 50.0);   /* through start, short of finish */
+	TEST_ASSERT_TRUE(e.armed);
+	TEST_ASSERT_EQUAL_FLOAT(0.0f, e.lap_time_last);   /* nothing banked yet */
+	TEST_ASSERT_TRUE(e.lap_time_current > 0.0f);      /* but the clock is running */
+}
+
+static void test_sprint_second_run_numbers_and_keeps_best(void) {
+	lap_engine_t e;
+	lap_core_init(&e);
+	lap_track_t t = track_sprint();
+	lap_core_set_track(&e, &t);
+
+	uint32_t ms = sprint_drive(&e, 0, -200.0, 1200.0, 50.0);   /* run 1: 20.0 s */
+	float first = e.lap_time_last;
+	uint16_t after_first = e.lap_number;
+
+	ms += 60000;                                                /* trundle back */
+	sprint_drive(&e, ms, -200.0, 1200.0, 62.5);                 /* run 2: 16.0 s */
+
+	TEST_ASSERT_TRUE(e.lap_time_last < first);                  /* quicker */
+	TEST_ASSERT_TRUE(fabs(e.lap_time_best - e.lap_time_last) < 0.001);
+	/* Re-arming for a second run must not renumber back to run 1. */
+	TEST_ASSERT_TRUE(e.lap_number > after_first);
+	TEST_ASSERT_FALSE(e.armed);
+}
+
+static void test_sprint_restart_discards_the_aborted_run(void) {
+	/* Driver sets off, aborts, returns and re-crosses the start line. That
+	 * must restart the clock, not bank a run that never reached the finish. */
+	lap_engine_t e;
+	lap_core_init(&e);
+	lap_track_t t = track_sprint();
+	lap_core_set_track(&e, &t);
+
+	uint32_t ms = sprint_drive(&e, 0, -100.0, 400.0, 50.0);     /* set off */
+	TEST_ASSERT_TRUE(e.armed);
+
+	ms += 30000;                                                /* back to the start */
+	sprint_drive(&e, ms, -100.0, 1200.0, 50.0);                 /* re-cross, full run */
+
+	/* Timed from the RE-cross, so a clean 20 s — not the aborted attempt
+	 * plus the 30 s spent turning round. */
+	TEST_ASSERT_TRUE(fabs(e.lap_time_last - 20.0f) < 0.05f);
+	TEST_ASSERT_FALSE(e.armed);
+}
+
+static void test_sprint_sectors_split_the_run(void) {
+	lap_engine_t e;
+	lap_core_init(&e);
+	lap_track_t t = track_sprint();
+	t.sector_count = 1;
+	t.sectors[0] = line_north();
+	t.sectors[0].lat_deg = north_to_lat(400.0);   /* split 400 m up the hill */
+	lap_core_set_track(&e, &t);
+
+	sprint_drive(&e, 0, -200.0, 1200.0, 50.0);
+	/* 400 m at 50 m/s = 8 s for sector 1; the run total is still 20 s. */
+	TEST_ASSERT_TRUE(fabs(e.best_sector_s[0] - 8.0f) < 0.05f);
+	TEST_ASSERT_TRUE(fabs(e.lap_time_last - 20.0f) < 0.05f);
+}
+
+static void test_circuit_is_unaffected_by_the_finish_line_field(void) {
+	/* A circuit track carries a zeroed `finish`. It must be ignored entirely,
+	 * not treated as a line at (0,0) that the car keeps crossing. */
+	lap_engine_t e;
+	lap_core_init(&e);
+	lap_track_t t = track_simple();          /* point_to_point == false */
+	lap_core_set_track(&e, &t);
+
+	lap_core_update(&e, FIX(0.0, -20.0, 0, 72.0f));
+	lap_core_update(&e, FIX(0.0, 20.0, 1000, 72.0f));      /* arms */
+	TEST_ASSERT_TRUE(e.armed);
+	TEST_ASSERT_EQUAL_UINT(1, e.lap_number);
+
+	lap_core_update(&e, FIX(0.0, -20.0, 20000, 72.0f));
+	lap_core_update(&e, FIX(0.0, 20.0, 21000, 72.0f));     /* completes lap 1 */
+	TEST_ASSERT_EQUAL_UINT(2, e.lap_number);
+	TEST_ASSERT_TRUE(e.armed);                             /* circuits stay armed */
+}
+
+/* ══════════════════════════════════════════════════════════════════════
  * Session handling
  * ════════════════════════════════════════════════════════════════════ */
 
@@ -774,6 +914,13 @@ int main(void) {
 	RUN_TEST(test_delta_is_near_zero_on_a_repeat_lap);
 	RUN_TEST(test_delta_stays_sane_through_the_finish_line);
 	RUN_TEST(test_long_circuit_grows_buckets_instead_of_truncating);
+
+	RUN_TEST(test_sprint_times_start_to_finish);
+	RUN_TEST(test_sprint_does_not_close_on_the_start_line);
+	RUN_TEST(test_sprint_second_run_numbers_and_keeps_best);
+	RUN_TEST(test_sprint_restart_discards_the_aborted_run);
+	RUN_TEST(test_sprint_sectors_split_the_run);
+	RUN_TEST(test_circuit_is_unaffected_by_the_finish_line_field);
 
 	RUN_TEST(test_session_reset_keeps_track_but_clears_times);
 	RUN_TEST(test_no_track_is_inert);
