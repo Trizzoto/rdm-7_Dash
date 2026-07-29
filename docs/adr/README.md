@@ -21,6 +21,7 @@ Read the relevant ADR before changing the area it covers. The "we already tried 
 | [0011](0011-analyzer-no-synthetic-data.md) | Accepted | The CAN analyzer never fabricates traffic — demo generator deleted, every empty state names its cause | `../rdm7-desktop/src/tauri-overlay.html` (analyzer workspace), `main/net/web_server_test.c`, `main/net/web_server_obd2.c` |
 | [0012](0012-corner-phase-attribution.md) | Accepted | Corner-phase time attribution (braking/entry/apex/exit), the lane rack, and the optimal-lap patent boundary | `../rdm7-desktop/src/tauri-overlay.html` (Session workspace) |
 | [0013](0013-one-course-type.md) | Accepted | One course type — a finish line is a thing you add, not a mode you pick; the session splitter learned the second line | `../rdm7-desktop/src/tauri-overlay.html` (Tracks + Session), `main/lap/lap_core.{c,h}` (unchanged, documented) |
+| [0014](0014-workspace-design-language.md) | Accepted | Workspace design language — chrome is monochrome, colour is data, the accent marks | `../rdm7-desktop/src/tauri-overlay.html` (shared `.ws-*` chrome) |
 
 ## When to write a new ADR
 
@@ -67,4 +68,4 @@ Existing ADRs vary slightly from this skeleton — none rigorous. Match the surr
 
 ## Numbering
 
-Strictly sequential. The next ADR is `0014`. Don't reuse numbers, even if a draft is abandoned — leave a stub if needed (`0011-abandoned.md` with one line of explanation).
+Strictly sequential. The next ADR is `0015`. Don't reuse numbers, even if a draft is abandoned — leave a stub if needed (`0011-abandoned.md` with one line of explanation).
