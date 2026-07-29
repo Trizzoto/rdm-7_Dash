@@ -21,15 +21,15 @@ Dependencies force most of it:
 - **Video is its own project.** It is the heaviest lift, it needs units and
   persistence, and nothing else is blocked behind it.
 
-| # | Stage | Blocked by | Size |
+| # | Stage | Blocked by | Status (2026-07-29) |
 |---|---|---|---|
-| 1 | Session library — recordings persist | — | M |
-| 2 | Units — metric / imperial | — | S |
-| 3 | Export — CSV + session file | 1 | S |
-| 4 | History — per-track trend | 1 | M |
-| 5 | Track library — ~100 circuits, search, community | — | M |
-| 6 | Cross-session comparison — car, driver, day | 1, 4 | M |
-| 7 | Video overlay — GPS-timestamp auto-sync | 1, 2 | L |
+| 1 | Session library — recordings persist | — | done, `f4c9fe6` |
+| 2 | Units — metric / imperial | — | done, `e1ac3d5` |
+| 3 | Export — CSV + session file | 1 | done, `3a3ae52` |
+| 4 | History — per-track trend | 1 | done, `49fa0ad` |
+| 5 | Track library — 108 circuits, search | — | done, `af45771` (community path waits on the marketplace) |
+| 6 | Cross-session comparison — car, driver, day | 1, 4 | done, `955ddad` |
+| 7 | Video — auto-sync, linked scrub, live gauges | 1, 2 | watch-side done; burned-in export deferred (below) |
 
 ---
 
@@ -102,8 +102,21 @@ lap in the library — different day, different car, different driver. The
 corner-phase machinery already works on two arbitrary ranges; this is mostly
 making the reference picker reach outside the current recording.
 
-## Stage 7 — Video overlay
+## Stage 7 — Video
 
-GPS-timestamp auto-sync (every incumbent does *manual* offset alignment),
-gauge rendering over the video, export. Its own project; specced when stage 6
-lands.
+**Shipped (watch-side):** open a local file beside the Session view; the mvhd
+creation time (parsed in ~80 lines of box-walking, head then loose tail scan
+for non-faststart files) auto-aligns footage whose camera clock is real
+against a GPS-dated session — the nudge slider is for a clock a second
+adrift, not for finding the offset. The timeline drives the video and a
+playing video drives the timeline; speed / delta / long-g paint over the
+footage from the mapped sample. Dead camera clocks (1904/1970) are treated
+as no clock. The video element survives inspector re-renders (same node
+swapped back in, so playback position and buffer are kept).
+
+**Deferred until a GoPro is on the bench:**
+- burned-in export (canvas capture + MediaRecorder is webm-only in WebView2;
+  an ffmpeg sidecar would give mp4 — decide against real footage);
+- GPMF parsing (GoPro's per-frame GPS lets sync verify itself and would give
+  in-video lap markers);
+- multi-clip sessions (one recording spanning several files).
