@@ -660,37 +660,66 @@ const ecu_preset_t ECU_PRESETS[] = {
     },
 
     /* ══════════════════════════════════════════════════════════════════
-     * Toyota 86 / Subaru BRZ (2012-2020) — HS-CAN @ 500 kbps.
-     * Source: community-documented (FT86Club / openbsd / wireshark caps).
-     * These come from the vehicle bus, not a standalone ECU. RPM and a
-     * handful of other channels broadcast continuously; many slots have
-     * no native broadcast (use OBD2 PIDs for those — coolant, fuel level,
-     * battery voltage, lambda, ignition timing all come via Mode 01).
+     * Toyota 86 / Subaru BRZ / Scion FR-S (2012-2020) — HS-CAN @ 500 kbps.
      *
-     * If your specific year/region differs, switch this to a custom
-     * preset by editing the CAN ids in Signal Manager. Values verified
-     * on a 2014 86 GT (Australian market) — let us know corrections.
+     * VERIFIED ON HARDWARE 2026-07-25 against two Australian-market cars
+     * (bus captures + live value cross-check). These rows are now kept in
+     * lockstep with the hardware-proven GT86 table in preset_picker.c —
+     * if you change one, change both.
+     *
+     * The previous rows were community-sourced and substantially wrong;
+     * applying this preset actively broke a working dash, which is why the
+     * two bench cars had to run hand-built custom configs. Corrected:
+     *   RPM        len 16 -> 14. The top 2 bits of the byte pair are NOT
+     *              rpm; at 1023 rpm a 16-bit read returns 17416.
+     *   THROTTLE   0x143 -> 0x140 bit 48. 0x143 is NOT BROADCAST on these
+     *              cars at all (absent from a 37-ID bus capture) — the
+     *              slot was simply dead.
+     *   SPEED      0x141 -> 0x0D1, scale 0.01 -> 0.05625. 0x141 bytes 0-1
+     *              are a CONSTANT 0x8426 (reads 338 km/h parked). Scale is
+     *              3.6/64 because the raw field is 1/64 m/s — the old
+     *              1/64 scale emitted m/s labelled km/h, reading 3.6x low
+     *              ("speed stops at 30" = 108 km/h). See preset_picker.c.
+     *   GEAR       0x161 -> unsupported. Also NOT BROADCAST. Use the
+     *              CALCULATED_GEAR internal signal (gear derived from
+     *              rpm x speed + ratios) and give it a value_map so 0
+     *              renders as "N".
+     *   COOLANT /  were marked OBD2-only, but BOTH broadcast natively on
+     *   OIL_TEMP   0x360 (bits 24 and 16). Native beats polling.
+     *   YAW/LAT G  added — both live on 0x0D0.
+     *
+     * Also raises the auto-detect match score: the old ID set was
+     * {0x140,0x141,0x143,0x161} of which two never appear (50% ceiling);
+     * the new set {0x140,0x0D1,0x360,0x0D0} is all-broadcast.
+     *
+     * Genuinely OBD2-only on this platform (Mode 01 gap-fill): MAP 0x0B,
+     * IAT 0x0F, lambda 0x44, short fuel trim 0x06, ignition timing 0x0E,
+     * battery 0x42, fuel level 0x2F. Note the registry names OBD2 gives
+     * those last two decode paths are SHORT_FUEL_TRIM_1 and
+     * TIMING_ADVANCE, NOT FUEL_TRIM / IGNITION.
      * ══════════════════════════════════════════════════════════════════ */
     {
         .make = "Toyota / Subaru",
         .version = "86 / BRZ",
         .display = "Toyota 86 / Subaru BRZ (2012-2020)",
         .rows = {
-            [ECU_SIG_RPM]             = { 0x140, 16, 16, 1.0f,  0.0f,    false, 0, "rpm",    0 },
+            [ECU_SIG_RPM]             = { 0x140, 16, 14, 1.0f,  0.0f,    false, 1, "rpm",    0 },
             [ECU_SIG_MAP]             = SIG_UNSUPPORTED,  /* OBD2 PID 0x0B */
-            [ECU_SIG_THROTTLE]        = { 0x143,  0,  8, 0.39215f, 0.0f, false, 0, "%",      1 },
-            [ECU_SIG_COOLANT_TEMP]    = SIG_UNSUPPORTED,  /* OBD2 PID 0x05 */
+            [ECU_SIG_THROTTLE]        = { 0x140, 48,  8, 0.39215f, 0.0f, false, 1, "%",      1 },
+            [ECU_SIG_COOLANT_TEMP]    = { 0x360, 24,  8, 1.0f, -40.0f,   false, 1, "degC",   0 },
             [ECU_SIG_INTAKE_AIR_TEMP] = SIG_UNSUPPORTED,  /* OBD2 PID 0x0F */
             [ECU_SIG_LAMBDA]          = SIG_UNSUPPORTED,  /* OBD2 PID 0x44 */
-            [ECU_SIG_OIL_TEMP]        = SIG_UNSUPPORTED,
+            [ECU_SIG_OIL_TEMP]        = { 0x360, 16,  8, 1.0f, -40.0f,   false, 1, "degC",   0 },
             [ECU_SIG_OIL_PRESSURE]    = SIG_UNSUPPORTED,
             [ECU_SIG_FUEL_PRESSURE]   = SIG_UNSUPPORTED,
-            [ECU_SIG_IGNITION]        = SIG_UNSUPPORTED,  /* OBD2 PID 0x0E */
-            [ECU_SIG_VEHICLE_SPEED]   = { 0x141,  0, 16, 0.01f, 0.0f,    false, 0, "km/h",   0 },
-            [ECU_SIG_GEAR]            = { 0x161,  0,  8, 1.0f,  0.0f,    false, 0, "",       0 }, /* manual only */
+            [ECU_SIG_IGNITION]        = SIG_UNSUPPORTED,  /* OBD2 PID 0x0E -> TIMING_ADVANCE */
+            [ECU_SIG_VEHICLE_SPEED]   = { 0x0D1, 0, 16, 0.05625f, 0.0f,  false, 1, "km/h",   0 },
+            [ECU_SIG_GEAR]            = SIG_UNSUPPORTED,  /* not broadcast — use CALCULATED_GEAR */
             [ECU_SIG_BATTERY_VOLTAGE] = SIG_UNSUPPORTED,  /* OBD2 PID 0x42 */
-            [ECU_SIG_FUEL_TRIM]       = SIG_UNSUPPORTED,
+            [ECU_SIG_FUEL_TRIM]       = SIG_UNSUPPORTED,  /* OBD2 PID 0x06 -> SHORT_FUEL_TRIM_1 */
             [ECU_SIG_EGT]             = SIG_UNSUPPORTED,
+            [ECU_SIG_YAW_RATE]        = { 0x0D0, 16, 16, -0.286478f, 0.0f, true, 1, "deg/s", 1 },
+            [ECU_SIG_LATERAL_G]       = { 0x0D0, 48,  8, 0.2f,  0.0f,    true,  1, "g",      2 },
         },
     },
 
