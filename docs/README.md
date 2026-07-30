@@ -25,6 +25,12 @@ Reading the codebase cold? Open the docs by the **question you have**, not by wh
 | What landed in the last release? | [`CHANGELOG.md`](../CHANGELOG.md) |
 | How do I run the test suite? | [`tests/README.md`](../tests/README.md) |
 | What's the WASM offline preview pipeline? | [`docs/WASM_PREVIEW_BUILD_GUIDE.md`](WASM_PREVIEW_BUILD_GUIDE.md) |
+| Why does the channel registry look the way it does? | [`docs/adr/0005-channel-owned-decode.md`](adr/0005-channel-owned-decode.md) + [`0006`](adr/0006-channel-architecture-v2.md) for the decision; [`docs/v2_channel_architecture.md`](v2_channel_architecture.md) for the (now historical) design detail; `main/data/` for the live code |
+| Where's the platform heading (keypad / GPS / IO expander)? | [`docs/PLATFORM_PLAN_2026-07.md`](PLATFORM_PLAN_2026-07.md) |
+| How is RDM Studio's navigation/shell organized, and why? | [`docs/STUDIO_SHELL_PLAN_2026-07.md`](STUDIO_SHELL_PLAN_2026-07.md) |
+| What analysis features does Studio have vs. AiM/RaceStudio-class tools? | [`docs/STUDIO_ANALYSIS_PLAN_2026-07.md`](STUDIO_ANALYSIS_PLAN_2026-07.md) (shipped; historical) → `rdm7-desktop/docs/LAP_ANALYSIS_REDESIGN_2026-07.md` for what's current |
+| How would a CAN keypad be configured from Studio? | [`docs/KEYPAD_WORKSPACE_PLAN.md`](KEYPAD_WORKSPACE_PLAN.md) (proposal, unbuilt) |
+| How would the GPS puck control an action camera? | [`docs/CAMERA_CONTROL_PLAN_2026-07.md`](CAMERA_CONTROL_PLAN_2026-07.md) (research, unbuilt) |
 
 ## The four doc families
 
@@ -38,6 +44,14 @@ RDM-7_Dash/
 └── docs/
     ├── README.md        ← you are here
     ├── WASM_PREVIEW_BUILD_GUIDE.md   one-off: WASM offline preview build
+    ├── PLATFORM_PLAN_2026-07.md        proposal: dash -> device suite (keypad/GPS/IO)
+    ├── STUDIO_SHELL_PLAN_2026-07.md    Studio nav/shell redesign; in progress
+    ├── STUDIO_ANALYSIS_PLAN_2026-07.md shipped — analysis-gap closure; historical
+    ├── KEYPAD_WORKSPACE_PLAN.md        proposal: CAN keypad configurator; unbuilt
+    ├── CAMERA_CONTROL_PLAN_2026-07.md  research: action-cam sync via GPS puck; unbuilt
+    ├── v2_channel_architecture.md      historical: channel registry design (see ADR-0005/0006)
+    ├── v2_cleanup_log.md               historical: cleanup tracker, not kept current (see git log instead)
+    ├── research/        market research feeding the plan docs above
     ├── handover/        deep developer onboarding (10 chapters)
     │   ├── README.md
     │   ├── 01-architecture.md
@@ -70,6 +84,7 @@ RDM-7_Dash/
 | `RDM-7_User_Guide.md` | A user who bought a dashboard | When user-visible features change. Per release. |
 | `docs/handover/` | A new contributor reading the codebase cold | Schema and module changes. Per major feature. |
 | `docs/adr/` | Anyone about to change an architectural area | Per significant decision. New ADRs are append-only. |
+| `docs/*_PLAN*.md` (top-level, dated) | Anyone scoping or resuming a cross-cutting feature/roadmap | While active. Once the scope ships, compress to a short "what shipped + what's left" summary and a pointer to wherever the live plan moved — don't delete, don't leave it reading like it's still the to-do list. |
 | `CHANGELOG.md` | Anyone deciding whether to upgrade | Per merged change worth a note. |
 | `SECURITY.md` | Anyone preparing a release or auditing | Per security-relevant change. |
 | `tests/README.md` | Anyone adding a test | Per new test file or test pattern. |
@@ -86,6 +101,7 @@ RDM-7_Dash/
 - **Are you answering "what does this code do?"** → header comment in the `.h`. Don't create a doc.
 - **Are you answering "how is this thing built and why?"** → `docs/handover/`, in the relevant numbered chapter. If it doesn't fit any chapter, that's a signal — maybe it deserves a chapter, maybe it's an ADR.
 - **Are you recording a decision you'll be questioned about later?** → new ADR in `docs/adr/`. Pick the next sequential number. Don't edit accepted ADRs — supersede them with a new one.
+- **Are you proposing or tracking a cross-cutting feature/roadmap** (spans multiple modules, or multiple repos)? → a dated top-level `docs/SOMETHING_PLAN_YYYY-MM.md`. When it ships, compress it (see the table above) rather than letting it rot as a stale to-do list.
 - **Are you writing a one-shot build / setup guide?** → top-level `docs/SOMETHING-GUIDE.md`. Keep it standalone.
 - **Are you announcing a change to people who use the firmware?** → `CHANGELOG.md` bullet.
 - **Are you flagging something a release needs to handle?** → `SECURITY.md` checklist item or a release-blocker note in `CHANGELOG.md`'s `[Unreleased]` section.
@@ -100,5 +116,6 @@ Watch for these. They mean a doc-refresh pass would pay off:
 - An ADR says "Proposed" for >6 months. Either accept it, supersede it, or delete it.
 - `CHANGELOG.md`'s `[Unreleased]` section is empty but `git log master ^last-tag` shows real changes. The version is overdue for a cut.
 - `tests/README.md` lists a test file that doesn't exist, or omits one that does. Pattern: stale.
+- A `docs/*_PLAN*.md` still reads present-tense ("to build") for something that's clearly shipped — check `main/` for the files/functions it names, and check the cross-referenced ADR's status. Compress it (see the doc-families table) instead of leaving it be found stale by the next reader.
 
 This file (`docs/README.md`) is the index and should never go stale — if you add a new doc family, add a row here and a new tree entry above.

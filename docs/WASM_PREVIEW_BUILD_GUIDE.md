@@ -2,7 +2,17 @@
 
 **Goal:** Compile the RDM-7 widget system to WebAssembly so the web editor can show a pixel-perfect LVGL preview of dashboard layouts in the browser, without needing the physical ESP32 device.
 
-**Target:** 800x480 RGB565 display, LVGL v8.3, 12 widget types, dynamic TTF fonts, custom RDMIMG image format.
+**Target:** 800x480 RGB565 display, LVGL v8.3, dynamic TTF fonts, custom RDMIMG image format.
+
+**Widget count is a snapshot, not current.** This guide was last verified
+against the firmware on 2026-04-27, when there were 13 widget types (Section
+13 below). The firmware now defines **17** (`WIDGET_TYPE_COUNT` in
+`main/widgets/widget_types.h` is the authority). Four were added since this
+guide was written — `line`, `banner`, `pathbar`, and the experimental `anim`
+(gated behind `RDM_WIDGET_ANIM_ENABLED`) — and aren't covered below. Pull
+their JSON field lists from `WIDGET_DEFS` in `main/web/index.html` (the
+single source of truth per `CLAUDE.md`) or `schema/widgets.schema.json`
+rather than assuming Section 13 is exhaustive.
 
 ---
 
@@ -105,9 +115,23 @@ rdm7-wasm-preview/
 ## 3. Which Firmware Files to Include
 
 ### Include directly (no/minimal changes):
+
+**This table predates several widgets and their support files — cross-check
+against `ls main/widgets/` before trusting it as complete.** Confirmed
+missing as of 2026-07-30: `widget_indicator.c/h`, `widget_rpm_bar.c/h`, and
+`widget_shape_panel.c/h` (all three are in the Section 13 field reference but
+were never added here), plus three helper modules that `widget_arc.c`,
+`widget_meter.c`, `widget_bar.c`, `widget_rpm_bar.c` and `widget_pathbar.c`
+now `#include` directly: `gauge_tick.c/h` (tick rendering), `gradient_stops.c/h`
+(gradient fills), and `widget_smooth.c/h` (value-transition smoothing). The
+four widget types added after this guide was last verified —
+`widget_line.c/h`, `widget_banner.c/h`, `widget_pathbar.c/h`,
+`widget_anim.c/h` — aren't in this table at all; check each one's own
+`#include`s for further support files before porting it.
+
 | File | Notes |
 |------|-------|
-| `widgets/widget_panel.c/h` | All 12 widget types |
+| `widgets/widget_panel.c/h` | |
 | `widgets/widget_bar.c/h` | |
 | `widgets/widget_text.c/h` | |
 | `widgets/widget_button.c/h` | Stub CAN TX to no-op |
@@ -117,6 +141,12 @@ rdm7-wasm-preview/
 | `widgets/widget_image.c/h` | |
 | `widgets/widget_warning.c/h` | |
 | `widgets/widget_shift_light.c/h` | |
+| `widgets/widget_indicator.c/h` | Missing from the original list; needed for the `indicator` type |
+| `widgets/widget_rpm_bar.c/h` | Missing from the original list; needed for the `rpm_bar` type |
+| `widgets/widget_shape_panel.c/h` | Missing from the original list; needed for the `shape_panel` type |
+| `widgets/gauge_tick.c/h` | Missing from the original list; pulled in by `widget_arc.c` / `widget_meter.c` |
+| `widgets/gradient_stops.c/h` | Missing from the original list; pulled in by `widget_arc.c` / `widget_bar.c` / `widget_rpm_bar.c` |
+| `widgets/widget_smooth.c/h` | Missing from the original list; pulled in by `widget_arc.c` / `widget_bar.c` / `widget_meter.c` / `widget_rpm_bar.c` / `widget_pathbar.c` |
 | `widgets/widget_types.c/h` | |
 | `widgets/widget_registry.c/h` | |
 | `widgets/widget_rules.c/h` | |
@@ -665,9 +695,11 @@ Module.ccall('inject_signal', null, ['string', 'number'], ['MAP', 120.5]);
 
 ## 13. Widget Type Reference
 
-### All 13 widget types with their JSON config fields:
+### The 13 widget types current as of 2026-04-27, with their JSON config fields:
 
-(Colors are RGB565 integers in JSON. Defaults shown are firmware defaults.)
+(Colors are RGB565 integers in JSON. Defaults shown are firmware defaults.
+Missing: `line`, `banner`, `pathbar`, `anim` — added after this guide was
+last verified; see the note in the header above.)
 
 #### `panel` — Data display panel (max 8)
 | Field | Type | Default | Notes |

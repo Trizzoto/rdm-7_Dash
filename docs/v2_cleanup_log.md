@@ -1,7 +1,14 @@
 # v2 Cleanup Log
 
-Running log of stale code removed and optimizations landed during the v2
-channel architecture rollout. Populated as work progresses.
+**Not kept up to date.** This was meant to be a running log of stale code
+removed during the v2 channel architecture rollout (`docs/v2_channel_architecture.md`,
+now shipped — see that file). The "Landed" section below was never
+populated even though the rollout clearly happened (channels are live in
+`main/data/`, referenced across most widgets, and described as current
+architecture in `CLAUDE.md`). Treat the table below as a record of *original
+intent* only, not of what actually got removed — for that, use
+`git log -- main/data/ main/widgets/` or check the current widget headers
+directly against the "expected change" column.
 
 Format: each entry is `YYYY-MM-DD | phase | file | change | reason`.
 
@@ -29,7 +36,8 @@ each phase lands.
 
 ## Landed
 
-*(no entries yet — first phase implementation starts after planning commit)*
+*(never populated, despite the rollout landing — see the note at the top of
+this file. Don't read the empty list below as "nothing was cleaned up.")*
 
 ---
 

@@ -1,8 +1,16 @@
 # ADR 0008 — GPS lap timing: how the puck, the dash and the desktop suite fit together
 
 Status: Accepted (2026-07-20) — dash side implemented. Puck USB RPC + Studio's
-RDM GPS **node configurator** built 2026-07-27 (see the addendum); the desktop
-**session-analysis** workspace is still not built.
+RDM GPS **node configurator** built 2026-07-27 (see the addendum). ~~The
+desktop session-analysis workspace is still not built~~ — it shipped
+2026-07-28 onward; see [ADR 0012](0012-corner-phase-attribution.md)
+(corner-phase attribution), [ADR 0013](0013-one-course-type.md) (one course
+type) and [ADR 0014](0014-workspace-design-language.md) (design language).
+**2026-07-30: the dash's own lap engine (`main/lap/lap_core.c`) and its track
+capture UI are deleted — the puck now times its own laps exclusively and the
+dash only decodes what it broadcasts. See the 2026-07-30 addendum; this
+supersedes §1's "the puck is dumb" decision and the "Who owns what" table
+below is corrected accordingly, not merely annotated.**
 
 Supersedes nothing. Implements `docs/PLATFORM_PLAN_2026-07.md` §6.2.
 
@@ -32,6 +40,10 @@ that drives most of what follows.
 ## Decisions
 
 ### 1. The puck is dumb; the lap engine runs on the dash
+
+**Reversed 2026-07-29 — the puck now times its own laps too; see the "Who owns
+what" addendum below.** The reasoning here is why the split was made this way
+originally, and still explains what survives the reversal.
 
 The RDM GPS broadcasts position, motion, accuracy and time. It computes
 nothing. All lap logic lives in `main/lap/` on the dash.
@@ -145,18 +157,80 @@ zero.
 
 | Concern | Owner | Notes |
 |---|---|---|
-| GNSS → CAN | `rdm-gps-node` | Published DBC; no lap logic |
+| GNSS → CAN | `rdm-gps-node` | ~~Published DBC; no lap logic~~ — reversed 2026-07-29, see the addenda below |
 | CAN → channels | `lap_engine_bind_gps_channels()` | ADR-0005 channel-owned decode |
-| Lap arithmetic | `main/lap/lap_core.c` | Host-tested |
-| Track storage | `/lfs/lap_track.json` | Atomic write, `schema_version` |
-| Lap config UI | firmware `main/web/index.html` | **Not yet built** |
-| Session analysis | `rdm7-desktop` only | **Not yet built** — heavy plots |
+| Lap arithmetic | ~~`main/lap/lap_core.c`~~ `rdm-gps-node/main/lap/lap_core.c` only | Moved 2026-07-30 — this repo's copy is deleted, see the 2026-07-30 addendum |
+| Track storage | ~~`/lfs/lap_track.json`~~ the puck, via `lap.track.set` | Moved 2026-07-30, same addendum |
+| Lap config UI | ~~firmware `main/web/index.html`~~ Studio's RDM GPS workspace (and a future phone app) | The capture flow shipped 2026-07-20, then was removed 2026-07-30 — see the 2026-07-30 addendum |
+| Session analysis | `rdm7-desktop` only | ~~Not yet built~~ — built 2026-07-28 onward, see ADR-0012 / ADR-0013 / ADR-0014 |
 | Puck device config | `rdm-gps-node` USB RPC + Studio's RDM GPS workspace | Desktop-only of necessity — see the 2026-07-27 addendum |
 
-Per ADR-0007 the lap **configuration** UI belongs in the firmware editor first
-so it is phone-configurable, and the desktop inherits it through
-`sync_firmware.py`. Session analysis is desktop-exclusive, and so — for a
-different and stronger reason — is configuring the puck itself.
+~~Per ADR-0007 the lap **configuration** UI belongs in the firmware editor
+first~~ — **that attribution is wrong and the rule is retired.** ADR-0007 is
+about one problem, three copies of the *dash layout editor* HTML drifting
+apart; it says nothing about where new workspaces should be authored.
+`docs/STUDIO_SHELL_PLAN_2026-07.md` §2.0 (2026-07-30) traces the citation and
+retires the rule — see it for the full argument, corrected the same day in
+`PLATFORM_PLAN_2026-07.md` §5.3. Session analysis is desktop-exclusive, and so
+— for a different and stronger reason, unrelated to this rule — is configuring
+the puck itself.
+
+**Addendum, 2026-07-29 — the puck times its own laps too.** The table above
+originally described the original split: dash times, puck only senses. That
+reversed the same day this ADR's own puck-config addendum landed —
+`rdm-gps-node/main/lap/lap_core.c` (vendored byte-for-byte from this repo's
+`main/lap/`) plus `lap_timer.c` now run the full lap/sector/predictive-delta
+engine **on the node**, fed by each fix's own iTOW, and broadcast results as
+`RDM_GPS_LAP`/`SECTOR`/`DELTA` once a track is loaded. See
+`rdm-gps-node/lap_timer.h`'s header comment for why, and that repo's
+`CLAUDE.md` for the fuller account. As of this addendum both devices still
+computed independently, from the same raw fixes, redundantly — see the
+2026-07-30 addendum for why that stopped being true one day later.
+
+**Addendum, 2026-07-30 — and now ONLY the puck does, by owner decision.**
+Running two lap engines off the same fixes was a deliberate redundancy
+(above), but it kept the exact risk this ADR's own Consequences section
+already named: two independently-computed answers that can silently
+disagree on a scale factor or a bit position. The owner's call, stated
+plainly: *"dash shouldn't have any GPS timing to it, it just reads the CAN
+from the puck."*
+
+What changed, precisely:
+
+- `main/lap/lap_core.c` and `lap_core.h` are **deleted from this repo.**
+  `rdm-gps-node`'s copy is now the only one that exists anywhere, and is
+  canonical by virtue of being the only copy, not by re-vendoring.
+- `lap_engine.c` no longer calls a lap engine at all. It decodes
+  `RDM_GPS_LAP`/`SECTOR`/`DELTA` (offsets 7/8/9) directly into the same
+  `lap_time_current` / `sector_time_current` / … channels it always
+  published — a plain bit-and-sentinel decode, structurally identical to how
+  `GPS_CHANNELS` already reads position and speed off the wire. The
+  0xFFFF-means-none-yet sentinel and the `HAVE_TRACK`/`DELTA_VALID` flag bits
+  are handled exactly as `rdm-gps-node/docs/PROTOCOL.md` §3 specifies —
+  cross-checked byte-for-byte against the puck's real packer output in
+  `rdm-gps-node/tests/integration/test_dash_interop.c`, which this same
+  change rewrote (it used to compile this repo's `lap_core.c` and assert two
+  engines agreed; there is only one engine now, so it asserts the dash's
+  decode reproduces what the puck's packer wrote instead).
+- `main/net/web_server_lap.c` (`/api/lap/status|track|capture|session/reset|gps`)
+  is **deleted**, along with the firmware web editor's "Lap Timing" modal
+  (Setup ▸ Lap Timing) that was built on it. Everything that modal did —
+  capture a line by driving across it, store a track, reset a session — was
+  authority over a `lap_track_t` this repo no longer has anywhere to put.
+  Track configuration lives entirely in Studio's RDM GPS workspace now
+  (`lap.track.set`/`.get` over the puck's own USB RPC, already wired — see
+  the 2026-07-27 addendum), with a phone app doing the same over the same
+  API planned for later. Session analysis, corner phases, history — none of
+  that touched `lap_core.c` and none of it changed.
+- `tests/native/test_lap_core.c` is deleted from this repo's host suite for
+  the same reason: there is nothing left here to compile it against.
+
+What survives from the original 2026-07-20 plan, unchanged by any of this:
+position/motion broadcast is unconditional and independent of lap state, and
+the wire format is still a public contract any CAN GPS can speak — this
+repo's `lap_engine.c` still decodes `GPS_CHANNELS` (position, speed, heading,
+accuracy, fix, satellites) exactly as it always did. What is gone is the idea
+that the dash ever needs its OWN opinion about how long a lap took.
 
 ## Consequences
 
@@ -194,11 +268,17 @@ budget but not free. If the budget ever tightens, timestamp in the RX task.
 
 Still to build:
 
-- Track database with auto-detection. Today one track is stored; the plan wants
-  ~100 seeded circuits with auto-selection by proximity.
+- ~~Track database with auto-detection.~~ Auto-detecting a track and its
+  start/finish from a driven lap shipped 2026-07-29 (see
+  [ADR 0013](0013-one-course-type.md)). A seeded database of ~100 known
+  circuits, for proximity-based auto-selection before you've driven them, is
+  still outstanding.
 - Race Page bundled layout, predictive-delta bar widget, lap list panel.
-- Session logging to SD with a lap/sector index, and the desktop analysis
-  workspace that reads it.
+- Session logging to SD with a lap/sector index. (~~and the desktop analysis
+  workspace that reads it~~ — that workspace shipped 2026-07-28 onward, see
+  ADR-0012/0013/0014 — but it currently reads sessions downloaded from the GPS
+  puck's own flash ring, not from a dash-side SD log, so this bullet is still
+  open.)
 
 ## Addendum — 2026-07-27: the puck's USB RPC, and how Studio tells devices apart
 

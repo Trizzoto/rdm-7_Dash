@@ -1,6 +1,6 @@
 # ADR 0005 — Channel-owned CAN decode (portable layouts)
 
-Status: Accepted (2026-06-09) — implementation in progress on `feature/widget-sys`.
+Status: Accepted (2026-06-09) — implemented (Phases A and B both complete; `main/layout/layout_manager.c`'s save path carries an explicit "ADR 0005 Phase B" comment where `signals[]` stops carrying decode).
 
 ## Context
 

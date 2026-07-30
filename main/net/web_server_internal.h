@@ -96,7 +96,6 @@ void web_server_logger_register(httpd_handle_t server);
 void web_server_layout_register(httpd_handle_t server);
 void web_server_obd2_register(httpd_handle_t server);
 void web_server_channels_register(httpd_handle_t server);
-void web_server_lap_register(httpd_handle_t server);
 void web_server_test_register(httpd_handle_t server);
 
 /* Rebuild + load the active dashboard screen immediately. LVGL-task only

@@ -167,10 +167,10 @@ Today's single "GPS Lap Timer" card is three separable things:
 
 | Piece | Home | Status |
 |---|---|---|
-| Track library, big-map line placement, sectors, capture-from-car | **Studio** — the good one | to build (reuses the existing Leaflet map) |
-| Live lap state — fix, current/last/best, delta, sector splits | **Studio** — from `/api/lap/status` | to build (replaces the simulator) |
+| Track library, big-map line placement, sectors, capture-from-car | **Studio** — the good one | **built** (2026-07-28, §7 Phase B″; track auto-detect + readiness panel added since, per `rdm7-desktop`) |
+| Live lap state — fix, current/last/best, delta, sector splits | **Studio** — from `/api/lap/status` | to build (replaces the simulator) — unverified from this repo whether this has since changed |
 | Puck health & config — fix, sats, link, WiFi, identify | **RDM GPS** workspace | **built** (2026-07-27) |
-| Session analysis — delta-T, track map, two-lap overlay, CSV | **Studio, desktop-only** | **not built — the actual prize** |
+| Session analysis — delta-T, track map, two-lap overlay, CSV | **Studio, desktop-only** | **built** — shipped via the GPS-puck recording path (IndexedDB), sidestepping rather than resolving the dependency assumed below; see `rdm7-desktop/docs/LAP_ANALYSIS_REDESIGN_2026-07.md` |
 | Minimal track-side track/gate edit, no laptop | **Dash** — existing firmware modal | **built in firmware**, becomes the fallback |
 
 Per §2.0, Studio owns the lap timing experience outright and is built to be the
@@ -192,10 +192,17 @@ So "integrating the track timer" is:
 4. Build **Sessions** — §6.2's "anti-i2", and the part that was always
    desktop-only.
 
-**Honest dependency:** Sessions needs session files, and ADR-0008 still lists
-*"session logging to SD with a lap/sector index"* under **Still to build**. So
-Sessions cannot ship before that firmware work. Don't let the roadmap pretend
-otherwise — see §7.
+**Honest dependency, updated 2026-07-30 — it didn't hold.** This originally
+argued Sessions needs session files, and since ADR-0008 lists *"session
+logging to SD with a lap/sector index"* under **Still to build**, Sessions
+couldn't ship before that firmware work. Sessions shipped anyway, via a path
+this section didn't anticipate: Studio downloads and stores the GPS puck's
+own recording directly (IndexedDB), not the dash's SD card. The firmware-side
+gap ADR-0008 flags is, as far as this repo shows, still genuinely unbuilt
+(`main/storage/data_logger.c` has no lap/sector index) — it just wasn't the
+blocker this section assumed. See §7 Phase C and
+`rdm7-desktop/docs/LAP_ANALYSIS_REDESIGN_2026-07.md` for what actually shipped
+and what's still open.
 
 ---
 
@@ -401,13 +408,16 @@ but it does not block any desktop work.
 Ordered so each phase is shippable and nothing depends on vapour.
 
 **Phase A — truth, and correcting the record** *(small; mostly deletion)*
-- **A0.** Correct the misattributed placement rule at both sources —
-  `PLATFORM_PLAN` §5.3 and ADR-0008's "Who owns what" — and record the §2.0
-  policy. Cheap, and it stops the next person re-deriving the wrong constraint.
-- **A1.** `python tools/sync_firmware.py` → pull `e80452d` for the `/api/lap/*`
-  surface and 1.1.29's editor fixes. Re-anchor any overlay blocks the merge
-  flags; that's the drift detector working. Add an overlay block hiding the
-  inherited Lap Timing modal from Studio's Setup menu.
+- **A0. Done, 2026-07-30.** Correct the misattributed placement rule at both
+  sources — `PLATFORM_PLAN` §5.3 and ADR-0008's "Who owns what" — and record
+  the §2.0 policy. Both corrected; ADR-0008 also gained the on-device lap
+  timing addendum it was missing (§1 and "Who owns what" still described the
+  original "puck senses, dash times" split as current).
+- **A1. Done.** `python tools/sync_firmware.py` → pull `e80452d` for the
+  `/api/lap/*` surface and 1.1.29's editor fixes. Confirmed: `rdm7-desktop`'s
+  `src/firmware-base.commit` is synced through `c061619` (2026-07-29), well
+  past `e80452d`. Whether the overlay block hiding the inherited Lap Timing
+  modal from Studio's Setup menu landed is unverified from this repo.
 - **A2.** Strip the synthetic lap engine from `ltWorkspace` (~600 of its 1396
   lines). Wire the map and timer bar to `/api/lap/status` + `/api/lap/track`.
   Where there's no dash, say so — don't animate a car.
@@ -464,22 +474,37 @@ transports — and a smaller `transport.js` than we started with.
   recovered. Still missing: the ~100-circuit seeded DB and proximity
   auto-selection from `PLATFORM_PLAN` §6.2.
 
-**Phase B‴ — sprint / hillclimb needs firmware** *(not started; scope note)*
+**Phase B‴ — sprint / hillclimb — done (2026-07-29)**
 
-`lap_track_t` holds **one** `start_finish` line plus splits, and `lap_core.c`
-closes a lap only by RE-crossing it. A point-to-point course with a separate
-start and finish therefore cannot be timed at all today. The removed workspace
-drew a green start and a chequered finish for a `type: "sprint"` track, but that
-only ever fed its own simulator — no firmware ever consumed it. Studio now says
-so plainly rather than offering a mode the hardware doesn't have. Supporting it
-means a second line and a run-based (not lap-based) timing path in `main/lap/`.
+This originally said a point-to-point course (separate start and finish)
+couldn't be timed at all, and would need a second line plus a run-based
+timing path added to `main/lap/`. That was wrong on the firmware side:
+`lap_track_t`'s `point_to_point` flag and second `finish` line, and the
+corresponding arm/close/restart rules in `lap_core.c`, had already shipped
+with the lap engine (ADR-0008) — Studio just wasn't exposing either the flag
+or the flow.
 
-**Phase C — Sessions** *(the prize; has a firmware dependency)*
-- **C1.** *Firmware:* session files to SD with a lap/sector index
-  (ADR-0008 "Still to build"). **Blocks C2 — do not start C2 first.**
-- **C2.** *Studio:* Sessions workspace — auto-download over WiFi, delta-T plot vs
-  reference, track map with sector colouring, two-lap overlay, CSV export.
-  Explicitly out of v1: video overlay.
+Commit `23b9e41` ("point-to-point timing, sectors") and ADR-0013 (accepted
+2026-07-29) fixed the actual problem, which was UX, not firmware: a
+`Circuit / Sprint · hillclimb` mode picker made one product feel like two.
+The fix — "a finish line is a thing you add, not a mode you pick" — is live
+in Studio's Tracks and Session views, no firmware change needed. See
+ADR-0013 for the full rationale.
+
+**Phase C — Sessions**
+- **C1.** *Firmware:* session files to SD with a lap/sector index (ADR-0008
+  "Still to build"). Still not built as of 2026-07-30 — see C2, though.
+- **C2. Done, via a side door.** *Studio:* a Sessions workspace shipped
+  without waiting on C1, by recording off the GPS puck directly (IndexedDB)
+  instead of the dash's SD card — auto-download, per-lap/session storage, and
+  analysis all landed. It went well past the scope planned here too: units,
+  CSV/`.rdmsession` export, per-track history, a 108-circuit library,
+  cross-session comparison, a combined multi-channel plot with a draggable
+  navigator, and a synced video view. Video overlay (explicitly out of v1
+  here) shipped in watch-alongside form; burned-in export is deferred pending
+  a GoPro on the bench. Full detail and what's still open (a CAN
+  telemetry-channel picker has landed in Studio; the node/firmware side of
+  that is specified but unbuilt): `rdm7-desktop/docs/LAP_ANALYSIS_REDESIGN_2026-07.md`.
 
 **Phase D — later, per the platform plan**
 - Fleet firmware manager (needs B1's registry).
@@ -532,7 +557,7 @@ Because the rule was cited, not invented, it has to be unwound where it's writte
 
 | File | Change |
 |---|---|
-| `PLATFORM_PLAN_2026-07.md` §5.3 | Replace the "Placement rule" paragraph with the §2.0 policy |
+| `PLATFORM_PLAN_2026-07.md` §5.3 | **Done 2026-07-30.** Replaced the "Placement rule" paragraph with the §2.0 policy |
 | `adr/0008-gps-lap-timing-integration.md` | "Who owns what" — drop *"Per ADR-0007 the lap configuration UI belongs in the firmware editor first"*; lap config UI owner becomes Studio |
 | `adr/0007-html-source-of-truth.md` | Add a scope note: this ADR is about the **dash layout editor** only, and has never governed workspace placement |
 | `adr/0011-analyzer-no-synthetic-data.md` | Widen to all Studio workspaces (A4) |

@@ -1,122 +1,54 @@
-# RDM Studio — closing the analysis gaps (plan, 2026-07-29)
+# RDM Studio — closing the analysis gaps (2026-07-29 plan; shipped 2026-07-30)
 
-Seven gaps identified against the top-tier tools (see
-`docs/research/2026-07-gps-laptimer-market.md` and ADR-0012). All seven are to
-be built. This is the order and what each stage means.
+Seven gaps identified against top-tier tools (AiM Race Studio-class; see
+`docs/research/2026-07-gps-laptimer-market.md` and ADR-0012). All seven were
+built, in `rdm7-desktop`, on branch `claude/xenodochial-bhabha-883b42` —
+merged into that repo's `master` via merge commit `5d2ade4`. Verified
+2026-07-30: all six commit hashes in the table below are ancestors of
+`rdm7-desktop`'s `master` (`git merge-base --is-ancestor <hash> master`).
 
-## Why this order
+**This document is now historical.** For the current state of Studio's lap
+analysis — including substantial work that landed *after* this plan closed,
+on top of the merge — see `rdm7-desktop/docs/LAP_ANALYSIS_REDESIGN_2026-07.md`.
 
-Dependencies force most of it:
+## Why this order (still the right way to sequence this kind of feature set)
 
-- **Nothing is stored.** `gp.trace` lives in memory only. History,
-  cross-session comparison and video all need a session to be a persistent
-  object first. So persistence is stage 1 and is not negotiable as an ordering.
-- **Units cut across every readout.** Doing them before the surfaces multiply
-  (history charts, export headers, video overlay text) means writing the
-  formatter once instead of chasing it through three more screens.
-- **Export is cheap and rides on stage 1.** A session that exists as a record
-  is a session that can be written to a file.
-- **The track library is independent** but makes history meaningful — a trend
-  needs a track to be a trend *at*.
-- **Video is its own project.** It is the heaviest lift, it needs units and
-  persistence, and nothing else is blocked behind it.
+Persistence had to come first: history, comparison, and video are all
+meaningless until a session is a stored object rather than memory that
+vanishes when the node's download ring wraps. Units had to land before the
+surfaces needing them multiplied (history charts, export headers, video
+overlay text). Export and the track library were comparatively cheap once
+persistence existed. Video was saved for last — the heaviest lift, and
+nothing else was blocked behind it.
 
-| # | Stage | Blocked by | Status (2026-07-29) |
+## What shipped
+
+| # | Stage | Commit | What it closed |
 |---|---|---|---|
-| 1 | Session library — recordings persist | — | done, `f4c9fe6` |
-| 2 | Units — metric / imperial | — | done, `e1ac3d5` |
-| 3 | Export — CSV + session file | 1 | done, `3a3ae52` |
-| 4 | History — per-track trend | 1 | done, `49fa0ad` |
-| 5 | Track library — 108 circuits, search | — | done, `af45771` (community path waits on the marketplace) |
-| 6 | Cross-session comparison — car, driver, day | 1, 4 | done, `955ddad` |
-| 7 | Video — auto-sync, linked scrub, live gauges | 1, 2 | watch-side done; burned-in export deferred (below) |
+| 1 | Session library — recordings persist | `f4c9fe6` | Sessions now survive a Studio restart; before this, `gp.trace` was memory-only and a re-download after the node's ring wrapped lost the data permanently |
+| 2 | Units — metric / imperial | `e1ac3d5` | One formatter layer behind every speed/distance readout |
+| 3 | Export — CSV + session file | `3a3ae52` | Per-lap/session CSV; `.rdmsession` for round-tripping between machines |
+| 4 | History — per-track trend | `49fa0ad` | Best lap over time, consistency, corner-level improvement/regression — the trend view no incumbent shows |
+| 5 | Track library — 108 circuits, searchable | `af45771` | Self-curated coordinates (not AiM's proprietary DB, not OSM's share-alike terms); community path still waits on the marketplace |
+| 6 | Cross-session comparison — car, driver, day | `955ddad` | Compare any lap against any other lap in the library |
+| 7 | Video — auto-sync, linked scrub, live gauges | — | Watch-side done (mvhd-clock auto-align, linked timeline, speed/delta/g overlay painted over footage); burned-in export and GPMF parsing deferred until a GoPro is on the bench |
+
+## What's still open
+
+Stage 7's deferred items (burned-in video export, GPMF parsing, multi-clip
+sessions) — see `rdm7-desktop/docs/LAP_ANALYSIS_REDESIGN_2026-07.md` for
+current status. That document also covers everything built *since* this plan
+closed: auto-arm/track-recognition with a readiness panel, session
+stint-splitting, a combined multi-channel plot with a draggable navigator,
+bidirectional gate crossings, a lap-fixed y-axis, resizable telemetry lanes,
+a zoom-aware map trace, a draggable rail/stage splitter, and a CAN
+telemetry-channel picker (Studio half only — the node/firmware half is
+specified there but unbuilt).
 
 ---
 
-## Stage 1 — Session library
-
-**The hole.** You download 370 minutes off the node into `gp.trace`, analyse
-it, quit Studio, and it is gone. Re-download works only until the node's ring
-wraps, after which the session is gone permanently. A $9 phone app stores
-sessions.
-
-- **Store**: IndexedDB, mirroring the existing `imageStore` IIFE
-  (`rdm7_images_db`) rather than inventing a second pattern. localStorage
-  cannot hold this — a full ring is ~4 MB.
-- **Format**: parallel typed arrays (`Int32Array` lat/lon, `Uint16Array`
-  kph/hdg, `Uint32Array` t with a sentinel for "no timestamp"), which
-  structured-clone natively and cost 16 B/sample instead of a JSON object
-  graph. `gpRowsPack` / `gpRowsUnpack`, round-trip tested.
-- **Dating**: the node reports `utc` in `gps.status` but not `itow_ms`. Add it
-  (one line in `serial_rpc.c`) so Studio gets an exact (utc, itow) anchor and
-  can date every sample from its `t`. Fall back to download time when the node
-  had no fix, and mark the session undated rather than guessing.
-- **Auto-save on download.** No "did you remember to save" step — that is the
-  behaviour that closes the hole rather than moving it.
-- **UI**: a Recordings group at the top of the Session rail — name, date, lap
-  count, best lap. Click to load. Rename, delete. Auto-name from track + date.
-
-**Done when** a recording survives a Studio restart, loads back with identical
-laps and identical analysis, and the store survives a node swap.
-
-## Stage 2 — Units
-
-One setting (metric / imperial), one formatter layer. km/h ↔ mph, m ↔ ft,
-metres of distance-into-corner, gate widths, g stays g. Every readout in the
-GPS workspace plus anything else already showing speed or distance. Persisted
-per-PC, not per-track.
-
-**Done when** no user-visible speed or distance is formatted without going
-through the formatter, enforced by a test that greps the built HTML for the
-raw suffixes.
-
-## Stage 3 — Export
-
-- **CSV** per lap or per session: time, distance, lat, lon, speed, heading,
-  derived g/yaw/lateral, sector marks. Column headers in the active units.
-- **Session file** (`.rdmsession`, JSON + packed arrays) for round-tripping
-  between machines and attaching to a marketplace post later.
-- Both from the Session rail, next to the recording they belong to.
-
-## Stage 4 — History
-
-Per-track trend across every stored session: best lap over time, consistency
-(spread of lap times within a session), personal best with the date it was
-set, and which corners have improved or regressed since last time. Keyed on
-the track the session was split with.
-
-The corner-level trend is the part no incumbent has — Garmin shows you the
-session, not the year.
-
-## Stage 5 — Track library
-
-~100 seeded circuits (AU/NZ first, then popular US/EU), search, and a
-community-submission path through the marketplace. Coordinates self-curated —
-not derived from AiM (proprietary) or wholesale OSM (ODbL share-alike). Five
-circuits is the most visible toy-vs-tool signal in the app.
-
-## Stage 6 — Cross-session comparison
-
-Car and driver as fields on a session, then compare any lap against any other
-lap in the library — different day, different car, different driver. The
-corner-phase machinery already works on two arbitrary ranges; this is mostly
-making the reference picker reach outside the current recording.
-
-## Stage 7 — Video
-
-**Shipped (watch-side):** open a local file beside the Session view; the mvhd
-creation time (parsed in ~80 lines of box-walking, head then loose tail scan
-for non-faststart files) auto-aligns footage whose camera clock is real
-against a GPS-dated session — the nudge slider is for a clock a second
-adrift, not for finding the offset. The timeline drives the video and a
-playing video drives the timeline; speed / delta / long-g paint over the
-footage from the mapped sample. Dead camera clocks (1904/1970) are treated
-as no clock. The video element survives inspector re-renders (same node
-swapped back in, so playback position and buffer are kept).
-
-**Deferred until a GoPro is on the bench:**
-- burned-in export (canvas capture + MediaRecorder is webm-only in WebView2;
-  an ffmpeg sidecar would give mp4 — decide against real footage);
-- GPMF parsing (GoPro's per-frame GPS lets sync verify itself and would give
-  in-video lap markers);
-- multi-clip sessions (one recording spanning several files).
+This plan's original per-stage design notes (IndexedDB record layout, GPS
+dating strategy, GPMF field tables, ESP32/BLE detail) have been cut here —
+they described intent, the shipped code in `rdm7-desktop` is now the
+source of truth, and duplicating implementation detail in a historical doc
+just gives it a second chance to go stale.

@@ -10,11 +10,11 @@ Read the relevant ADR before changing the area it covers. The "we already tried 
 |---|---|---|---|
 | [0001](0001-wifi-onboarding-reliability.md) | Accepted | Wi-Fi onboarding reliability — the layered fixes phones need | `main/net/wifi_manager.c`, `main/net/web_server_captive.c`, `main/net/dns_hijack.c`, `sdkconfig` |
 | [0002](0002-web-server-split-roadmap.md) | Complete | Splitting the monolithic `web_server.c` by concern | `main/net/web_server*.c` |
-| [0003](0003-desktop-index-sync-plan.md) | Implemented | Plan for syncing `rdm7-desktop/src/index.html` with the firmware copy | `../rdm7-desktop/src/index.html`, `../rdm7-desktop/src/transport.js` |
+| [0003](0003-desktop-index-sync-plan.md) | Superseded by 0007's landed pipeline | One-time hand-merge that first put the Tauri delta into `rdm7-desktop/src/index.html` | `../rdm7-desktop/src/transport.js` (the fetch-interceptor concept it introduced) |
 | [0004](0004-performance-budgets.md) | Proposed | Documented performance budgets (heap, OTA partition, URI handlers, layout JSON) | repo-wide |
-| [0005](0005-channel-owned-decode.md) | Accepted | Channel-owned CAN decode for portable layouts (decode moves layout `signals[]` → `channels.json`) | `main/data/channel_manager.c`, `main/layout/*`, `schema/canonical_channels.md` |
+| [0005](0005-channel-owned-decode.md) | Accepted (implemented) | Channel-owned CAN decode for portable layouts (decode moves layout `signals[]` → `channels.json`) | `main/data/channel_manager.c`, `main/layout/*`, `schema/canonical_channels.md` |
 | [0006](0006-channel-architecture-v2.md) | Accepted | Channel architecture v2 — canonical channel registry as the binding layer | `main/data/canonical_channels.c`, `main/data/channel_manager.c` |
-| [0007](0007-html-source-of-truth.md) | Accepted | Three HTML copies — why they exist and the codegen plan to collapse them | `main/web/index.html`, `../rdm7-desktop/src/index.html`, `schema/widgets.schema.json` |
+| [0007](0007-html-source-of-truth.md) | Accepted — migration landed 2026-07-09 | Firmware HTML + a Tauri overlay, merged at build time — why the copies exist and how they're kept in sync now | `main/web/index.html`, `../rdm7-desktop/src/{firmware-base,tauri-overlay}.html`, `../rdm7-desktop/tools/merge_overlay.py`, `schema/widgets.schema.json` |
 | [0008](0008-gps-lap-timing-integration.md) | Accepted | GPS lap timing — how the puck, the dash and the desktop suite fit together | `main/lap/`, `main/data/canonical_channels.c`, `main/can/can_manager.c`, `../rdm-gps-node/` |
 | [0009](0009-rdm-io-mixed-precision-frontend.md) | Accepted | RDM IO mixed-precision analog front-end (4× 16-bit ΔΣ + 4× 12-bit) + PT Motorsport benchmark | `docs/PLATFORM_PLAN_2026-07.md` §6.3, `../rdm7-desktop/src/tauri-overlay.html` (IO workspace) |
 | [0010](0010-rdm-io-three-tier-ladder.md) | Accepted | RDM IO three-tier ladder — Pico A$89 / Core A$219 / Pro A$449–579, shared firmware + emulation modes | `docs/PLATFORM_PLAN_2026-07.md` §4/§6.3, future firmware `profiles/` layer |
@@ -22,6 +22,8 @@ Read the relevant ADR before changing the area it covers. The "we already tried 
 | [0012](0012-corner-phase-attribution.md) | Accepted | Corner-phase time attribution (braking/entry/apex/exit), the lane rack, and the optimal-lap patent boundary | `../rdm7-desktop/src/tauri-overlay.html` (Session workspace) |
 | [0013](0013-one-course-type.md) | Accepted | One course type — a finish line is a thing you add, not a mode you pick; the session splitter learned the second line | `../rdm7-desktop/src/tauri-overlay.html` (Tracks + Session), `main/lap/lap_core.{c,h}` (unchanged, documented) |
 | [0014](0014-workspace-design-language.md) | Accepted | Workspace design language — chrome is monochrome, colour is data, the accent marks | `../rdm7-desktop/src/tauri-overlay.html` (shared `.ws-*` chrome) |
+| [0015](0015-the-node-is-part-of-readiness.md) | Accepted | The node's own state is part of readiness — and dialogs must actually ask | `../rdm7-desktop/src/tauri-overlay.html` (GPS workspace), `../rdm-gps-node/` (status honesty + GNSS recovery) |
+| [0016](0016-cancel-must-cancel.md) | Accepted | Cancel must cancel — the editor asks with its own overlay, because `window.confirm` under Tauri doesn't | `main/web/index.html` (`_showConfirmOverlay`/`confirmAsync`, all 19 guards) |
 
 ## When to write a new ADR
 
@@ -68,4 +70,4 @@ Existing ADRs vary slightly from this skeleton — none rigorous. Match the surr
 
 ## Numbering
 
-Strictly sequential. The next ADR is `0015`. Don't reuse numbers, even if a draft is abandoned — leave a stub if needed (`0011-abandoned.md` with one line of explanation).
+Strictly sequential. The next ADR is `0017`. Don't reuse numbers, even if a draft is abandoned — leave a stub if needed (`0011-abandoned.md` with one line of explanation).

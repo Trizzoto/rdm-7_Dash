@@ -1,6 +1,6 @@
 # ADR 0003 — Desktop `index.html` Sync Plan
 
-**Status**: Implemented (2026-04-27)
+**Status**: Implemented (2026-04-27) — **superseded 2026-07-09** by the automated overlay-merge pipeline that ADR 0007 lands (`rdm7-desktop` commit `355f5ff`: `tools/merge_overlay.py` + `tools/sync_firmware.py` merging `src/firmware-base.html` and `src/tauri-overlay.html` into `src/dist/index.html`). The hand-maintained `rdm7-desktop/src/index.html` this plan produced no longer exists. Kept below as the historical record of the first merge and of the `fetch`-interceptor insight, which is still the load-bearing idea inside `transport.js` today — see [ADR 0007](0007-html-source-of-truth.md) for the current mechanism.
 **Context**: `../rdm7-desktop/src/index.html` is ~518 lines smaller than `main/web/index.html` and is missing recent firmware UI work (CONTROL/LIVE mode, mobile widget toolbar, auto-save, layout-too-large pre-validation, ECU selector live-API, alert-test-without-signal, panel9 limiter tint, calculated gear modal, …). Conversely, the desktop file has Tauri-specific code that does not belong in firmware: USB-serial connection, WASM offline preview, native file dialogs, ZIP backup/restore via Rust, auto-updater, device-manager modal.
 
 This ADR documents the merge plan: replace the desktop file with the firmware copy, re-inject the Tauri delta, and (critically) add a `fetch` interceptor in `transport.js` so the firmware's raw `fetch('/api/...')` calls route through the RDM SDK when running under Tauri.

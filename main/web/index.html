@@ -4404,11 +4404,6 @@
                 <div class="card-body">Browse and download community layouts and presets.</div>
                 <div class="card-stat">Community</div>
             </div>
-            <div class="setup-card" onclick="openLapTiming && openLapTiming()">
-                <div class="card-title"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="13" x2="15" y2="15"/><line x1="9" y1="2" x2="15" y2="2"/></svg>Lap Timing</div>
-                <div class="card-body">GPS lap timer with an RDM GPS puck. Drive across your start/finish line and capture it — no coordinates, no PC.</div>
-                <div class="card-stat" id="setupLapStat">RDM GPS</div>
-            </div>
         </div>
 
         <div class="setup-section-title" style="margin-top:30px;">Files &amp; storage</div>
@@ -5330,70 +5325,6 @@
         </div>
     </div>
 
-    <!-- Lap Timing modal (Setup ▸ Lap Timing). Configure the GPS lap timer:
-         capture the start/finish line and sector splits from the car's live
-         position, watch lap state, reset the session. Backed by /api/lap/*
-         (main/net/web_server_lap.c, ADR-0008). -->
-    <div id="lapTimingModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;" onclick="closeLapTiming()">
-        <div class="dbc-modal-content" style="width:min(520px, 92vw);" onclick="event.stopPropagation()">
-            <div class="signal-modal-header">
-                <span>Lap Timing</span>
-                <button class="close-btn" onclick="closeLapTiming()">&times;</button>
-            </div>
-            <div class="dbc-form">
-                <!-- Live status strip -->
-                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                    <span id="lapGpsBadge" style="font-size:11px; font-weight:700; padding:3px 8px; border-radius:var(--radius-sm); background:var(--bg); border:1px solid var(--border); color:var(--text-muted);">GPS: —</span>
-                    <span id="lapFixBadge" style="font-size:11px; padding:3px 8px; border-radius:var(--radius-sm); background:var(--bg); border:1px solid var(--border); color:var(--text-muted);"></span>
-                    <span id="lapTrackBadge" style="font-size:11px; padding:3px 8px; border-radius:var(--radius-sm); background:var(--bg); border:1px solid var(--border); color:var(--text-muted);">No track configured</span>
-                </div>
-                <!-- Live timing (hidden until armed) -->
-                <div id="lapLiveRow" style="display:none; font-family:'JetBrains Mono', monospace; font-size:12px; color:var(--text); background:var(--bg); border:1px solid var(--border); border-radius:var(--radius-sm); padding:8px 10px;"></div>
-
-                <div style="border-top:1px solid var(--border); margin:4px 0;"></div>
-
-                <!-- Capture flow -->
-                <div style="font-size:11px; color:var(--text-muted); line-height:1.5;">
-                    <b>Setting up a track:</b> drive across the start/finish line at speed and
-                    tap Capture — the line's position <i>and direction</i> come from the live GPS.
-                    Then do the same at each sector split, in driving order. A stationary
-                    capture works but cannot know the crossing direction, so prefer a moving one.
-                </div>
-                <div style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap;">
-                    <div style="flex:0 0 110px;">
-                        <label>Line half-width (m)</label>
-                        <input type="text" id="lapHalfWidth" value="15" inputmode="numeric">
-                    </div>
-                    <button class="btn" onclick="lapCapture('start_finish')">Capture Start/Finish</button>
-                    <button class="btn btn-secondary" id="lapCaptureSectorBtn" onclick="lapCapture('sector')">Capture Sector</button>
-                </div>
-
-                <div style="border-top:1px solid var(--border); margin:4px 0;"></div>
-
-                <!-- Track details -->
-                <div style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap;">
-                    <div style="flex:1 1 140px;">
-                        <label>Track name</label>
-                        <input type="text" id="lapTrackName" placeholder="e.g. Mallala">
-                    </div>
-                    <div style="flex:0 0 110px;">
-                        <label>Min lap time (s)</label>
-                        <input type="text" id="lapMinLap" placeholder="10" inputmode="numeric">
-                    </div>
-                    <button class="btn btn-secondary" onclick="lapSaveTrackMeta()">Save</button>
-                </div>
-                <div id="lapSectorSummary" style="font-size:11px; color:var(--text-muted);"></div>
-            </div>
-            <div class="dbc-footer" style="justify-content:space-between;">
-                <div style="display:flex; gap:8px;">
-                    <button class="btn btn-secondary" onclick="lapResetSession()">Reset Session</button>
-                    <button class="btn btn-secondary" style="color:hsl(0,70%,60%);" onclick="lapClearTrack()">Clear Track</button>
-                </div>
-                <button class="btn" onclick="closeLapTiming()">Close</button>
-            </div>
-        </div>
-    </div>
-
     <!-- Widget selection toolbar (mobile/touch; shown when a widget is selected).
          Nudge, W/H steppers, copy/paste/lock/delete, optional test-value slider. -->
     <div id="widgetSelToolbar" aria-hidden="true">
@@ -6003,7 +5934,7 @@
         }
 
         async function deleteCustomEcuVersion(ecu, version) {
-            if (!confirm(`Delete "${ecu} ${version}" and all its signals?`)) return;
+            if (!(await confirmAsync('Delete Preset', `Delete "${ecu} ${version}" and all its signals?`, 'Delete'))) return;
             try {
                 await fetch(`/api/presets/custom/delete?ecu=${encodeURIComponent(ecu)}&version=${encodeURIComponent(version)}`, { method: 'POST' });
                 await fetchPresets();
@@ -6018,7 +5949,7 @@
         }
 
         async function deleteCustomEcu(ecu) {
-            if (!confirm(`Delete custom ECU "${ecu}" and all its signals?`)) return;
+            if (!(await confirmAsync('Delete Custom ECU', `Delete custom ECU "${ecu}" and all its signals?`, 'Delete'))) return;
             const versions = [...new Set(customPresets.filter(p => p.ecu === ecu).map(p => p.version))];
             try {
                 for (const ver of versions) {
@@ -6667,7 +6598,7 @@
             const editing = document.getElementById('presetAuthorModal').dataset.editing === '1';
             const clash = (typeof customPresets !== 'undefined') && Array.isArray(customPresets) &&
                           customPresets.some(p => p.ecu === ecu && p.version === version);
-            if (clash && !editing && !confirm(`A preset "${ecu} ${version}" already exists — overwrite it?`)) return;
+            if (clash && !editing && !(await confirmAsync('Overwrite Preset', `A preset "${ecu} ${version}" already exists — overwrite it?`, 'Overwrite'))) return;
             const btn = document.getElementById('paSaveBtn'); btn.disabled = true; btn.textContent = 'Saving…';
             try {
                 const resp = await fetch('/api/presets/custom/save', {
@@ -6858,30 +6789,57 @@
             setTimeout(() => inp.focus(), 50);
         }
 
-        /* ── Styled Confirm Overlay (replaces browser confirm()) ── */
-        function _showConfirmOverlay(title, message, confirmLabel, onConfirm) {
+        /* ── Styled Confirm Overlay (replaces browser confirm()) ──
+         * window.confirm cannot be trusted here: under the Tauri desktop
+         * webview the dialog plugin remaps it to an async function whose
+         * Promise is always truthy, so an `if (!confirm(...))` guard never
+         * blocks and Cancel does not cancel (ADR-0016). Destructive actions
+         * must use this overlay — this callback form, or confirmAsync(). */
+        function _showConfirmOverlay(title, message, confirmLabel, onConfirm, onCancel, cancelLabel) {
             const overlay = document.createElement('div');
             overlay.style.cssText = 'position:fixed;inset:0;background:rgba(6,6,8,0.82);backdrop-filter:blur(6px);z-index:9999;display:flex;align-items:center;justify-content:center;';
             overlay.innerHTML = `
                 <div style="background:#1a1b1e;border:1px solid #2e2f34;border-radius:10px;padding:24px;min-width:320px;max-width:400px;box-shadow:0 24px 60px rgba(0,0,0,0.6);">
                     <div style="font-size:13px;font-weight:600;color:#e0e0e0;margin-bottom:8px;letter-spacing:0.03em;">${title}</div>
-                    <div style="font-size:12px;color:#999;margin-bottom:18px;line-height:1.5;">${message}</div>
+                    <div style="font-size:12px;color:#999;margin-bottom:18px;line-height:1.5;">${String(message).replace(/\n/g, '<br>')}</div>
                     <div style="display:flex;gap:8px;justify-content:flex-end;">
-                        <button id="_confirmCancel" style="padding:7px 16px;cursor:pointer;background:transparent;border:1px solid #2e2f34;border-radius:6px;color:#999;font-size:12px;">Cancel</button>
+                        <button id="_confirmCancel" style="padding:7px 16px;cursor:pointer;background:transparent;border:1px solid #2e2f34;border-radius:6px;color:#999;font-size:12px;">${cancelLabel || 'Cancel'}</button>
                         <button id="_confirmOk" style="padding:7px 16px;cursor:pointer;background:#ef4444;border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:500;">${confirmLabel}</button>
                     </div>
                 </div>`;
             document.body.appendChild(overlay);
-            const cancel = () => overlay.remove();
-            document.getElementById('_confirmCancel').onclick = cancel;
-            overlay.addEventListener('click', e => { if (e.target === overlay) cancel(); });
-            document.getElementById('_confirmOk').onclick = () => {
+            /* One exit for every path: Confirm, Cancel, backdrop and Escape
+             * all come through here, the key hook is always unhooked, and a
+             * stray second event can't fire a callback twice. */
+            const close = (confirmed) => {
+                if (!overlay.parentNode) return;
                 overlay.remove();
-                onConfirm();
+                document.removeEventListener('keydown', onKey, true);
+                if (confirmed) { if (onConfirm) onConfirm(); }
+                else if (onCancel) onCancel();
             };
-            document.addEventListener('keydown', function handler(e) {
-                if (e.key === 'Escape') { cancel(); document.removeEventListener('keydown', handler); }
-            });
+            /* Capture phase: the editor has its own Escape/Enter handlers
+             * (deselect, modal close) that must not also fire. Enter is
+             * swallowed because the button that opened this overlay may still
+             * hold focus — Enter would "click" it again through the dialog. */
+            const onKey = (e) => {
+                if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); close(false); }
+                else if (e.key === 'Enter') { e.stopPropagation(); e.preventDefault(); }
+            };
+            document.addEventListener('keydown', onKey, true);
+            document.getElementById('_confirmCancel').onclick = () => close(false);
+            document.getElementById('_confirmOk').onclick = () => close(true);
+            overlay.addEventListener('mousedown', e => { if (e.target === overlay) close(false); });
+            document.getElementById('_confirmCancel').focus();
+        }
+
+        /* Promise form — `if (!(await confirmAsync(...))) return;` reads like
+         * the confirm() guard it replaces. Resolves true only on the red
+         * button; Cancel, Escape and the backdrop all resolve false. */
+        function confirmAsync(title, message, confirmLabel, cancelLabel) {
+            return new Promise(resolve => _showConfirmOverlay(
+                title, message, confirmLabel || 'Confirm',
+                () => resolve(true), () => resolve(false), cancelLabel));
         }
 
         function layoutEditorNew() {
@@ -13902,7 +13860,7 @@
                 showToast('No image selected to delete', 'error');
                 return;
             }
-            if (!confirm(`Delete image "${name}" from device storage?`)) return;
+            if (!(await confirmAsync('Delete Image', `Delete image "${name}" from device storage?`, 'Delete'))) return;
             try {
                 const resp = await fetch(`/api/image/delete?name=${encodeURIComponent(name)}`, { method: 'POST' });
                 if (!resp.ok) throw new Error(await resp.text());
@@ -15220,12 +15178,12 @@
              * it. Avoids tearing the input focus on every keystroke. */
         }
 
-        function deleteSignal(idx) {
+        async function deleteSignal(idx) {
             if (!currentLayout.signals) return;
             const sig = currentLayout.signals[idx];
             const boundWidgets = (currentLayout.widgets || []).filter(w => w.signal === sig.name);
             if (boundWidgets.length > 0) {
-                if (!confirm(`Signal "${sig.name}" is bound to ${boundWidgets.length} widget(s). Delete anyway?`)) return;
+                if (!(await confirmAsync('Delete Signal', `Signal "${sig.name}" is bound to ${boundWidgets.length} widget(s). Delete anyway?`, 'Delete'))) return;
             }
             pushHistory();
             currentLayout.signals.splice(idx, 1);
@@ -15703,7 +15661,7 @@
             return `${base}_${Date.now()}`;
         }
 
-        function _resolveProtectedName(intendedName, isSplash, silent) {
+        async function _resolveProtectedName(intendedName, isSplash, silent) {
             const dashGuarded = (!isSplash && intendedName === 'default');
             const splashGuarded = (isSplash && intendedName === '_splash_Default');
             if (!dashGuarded && !splashGuarded) return intendedName;
@@ -15740,13 +15698,14 @@
                 const msg = isSplash
                     ? `Save widget changes to a new splash layout "${displayName}"?\n\nFactory "_splash_Default" stays untouched.`
                     : `Save widget changes to a new layout "${displayName}"?\n\nFactory "default" stays untouched.`;
-                return confirm(msg) ? base : null;
+                return (await confirmAsync('Save to New Layout', msg, 'Save')) ? base : null;
             }
-            /* base already exists → overwrite vs. next-numbered. */
-            const overwrite = confirm(
-                `"${displayName}" already exists.\n\n` +
-                `OK  = Overwrite "${displayName}"\n` +
-                `Cancel = Save as "${displayNext}" instead`
+            /* base already exists → overwrite vs. next-numbered. Both buttons
+             * save; Escape/backdrop takes the safe branch (the fresh name). */
+            const overwrite = await confirmAsync(
+                'Layout Already Exists',
+                `"${displayName}" already exists.\nOverwrite it, or save as "${displayNext}" instead?`,
+                'Overwrite', `Save as "${displayNext}"`
             );
             return overwrite ? base : nextFree;
         }
@@ -15774,7 +15733,7 @@
              * widget changes are about to overwrite a factory file. Null
              * return = user cancelled the manual save prompt. */
             const intended = payload.name;
-            const resolved = _resolveProtectedName(intended, isSplash, silent);
+            const resolved = await _resolveProtectedName(intended, isSplash, silent);
             if (resolved === null) {
                 updateStatus('Save cancelled');
                 return;
@@ -15803,7 +15762,7 @@
             if (!isSplash && !silent && !wasRedirected) {
                 const deviceActive = layoutSelect.value || '';
                 if (deviceActive && deviceActive !== layoutName) {
-                    if (!confirm(`This will save and overwrite "${layoutName}" (not "${deviceActive}"). Continue?`)) return;
+                    if (!(await confirmAsync('Overwrite Layout', `This will save and overwrite "${layoutName}" (not "${deviceActive}"). Continue?`, 'Overwrite'))) return;
                 }
             }
 
@@ -16625,7 +16584,7 @@
         }
 
         async function _smDeleteFromSD(type, name) {
-            if (!confirm(`Delete ${name} from SD card?`)) return;
+            if (!(await confirmAsync('Delete from SD Card', `Delete ${name} from SD card?`, 'Delete'))) return;
             try {
                 const resp = await fetch('/api/sd/delete', {
                     method: 'POST',
@@ -16642,7 +16601,7 @@
 
         async function _smDeleteInternal(type, name) {
             const typeLabel = type === 'layout' ? 'layout' : type === 'image' ? 'image' : 'font';
-            if (!confirm(`Delete ${typeLabel} "${name}" from internal storage?`)) return;
+            if (!(await confirmAsync('Delete from Internal Storage', `Delete ${typeLabel} "${name}" from internal storage?`, 'Delete'))) return;
             try {
                 let url;
                 if (type === 'layout') {
@@ -17318,7 +17277,7 @@
                         for (const fnt of fonts) {
                             const exists = existingFonts.includes(fnt.name);
                             if (exists) {
-                                const overwrite = confirm(`Font "${fnt.name}" already exists on device. Overwrite it?`);
+                                const overwrite = await confirmAsync('Font Already Exists', `Font "${fnt.name}" already exists on device. Overwrite it?`, 'Overwrite');
                                 if (!overwrite) {
                                     uploadedFonts++;
                                     continue;
@@ -17396,7 +17355,7 @@
             /* Warn if there are unsaved edits */
             if (hasUnsavedEdits()) {
                 const prevName = currentLayout.name || 'default';
-                if (!confirm(`You have unsaved changes to "${prevName}". Switch to "${name}" and lose them?`)) {
+                if (!(await confirmAsync('Unsaved Changes', `You have unsaved changes to "${prevName}". Switch to "${name}" and lose them?`, 'Switch'))) {
                     /* Revert dropdown selection */
                     layoutSelect.value = prevName;
                     return;
@@ -18174,7 +18133,7 @@
             const confirmMsg = isRdmInternal
                 ? 'Switch to RDM-7 Internal? Your existing signals are preserved; the Gear Setup will open so you can configure ratios.'
                 : `Apply ${make} ${version}? This overwrites your layout's signals with the ECU's default decode.`;
-            if (!confirm(confirmMsg)) return;
+            if (!(await confirmAsync(isRdmInternal ? 'Switch to RDM-7 Internal' : 'Apply ECU Preset', confirmMsg, isRdmInternal ? 'Switch' : 'Apply'))) return;
             try {
                 const r = await fetch('/api/ecu/set', {
                     method: 'POST',
@@ -19459,10 +19418,10 @@
             updateStatus('Custom PID saved — Save Layout to push to device');
         }
 
-        function customPidDelete(index) {
+        async function customPidDelete(index) {
             const arr = _customPidsArray();
             if (index < 0 || index >= arr.length) return;
-            if (!confirm('Delete ' + (arr[index].signal_name || 'this PID') + '?')) return;
+            if (!(await confirmAsync('Delete Custom PID', 'Delete ' + (arr[index].signal_name || 'this PID') + '?', 'Delete'))) return;
             arr.splice(index, 1);
             _renderCustomPidsTable();
             updateStatus('Custom PID deleted — Save Layout to push to device');
@@ -22496,7 +22455,7 @@
         }
 
         async function _chResetDefaults(id) {
-            if (!confirm('Reset this channel to canonical defaults?')) return;
+            if (!(await confirmAsync('Reset Channel', 'Reset this channel to canonical defaults?', 'Reset'))) return;
             /* No dedicated endpoint yet — emulate by sending nulls for every
              * field that has a canonical default. Server resolves "null" as
              * "clear back to default" for thresholds + colors. Range is
@@ -22522,7 +22481,7 @@
         }
 
         async function _chDelete(id) {
-            if (!confirm('Delete this custom channel? Widgets bound to it will show "—".')) return;
+            if (!(await confirmAsync('Delete Custom Channel', 'Delete this custom channel? Widgets bound to it will show "—".', 'Delete'))) return;
             await fetch('/api/channels/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id})});
             _chSelectedId = null;
             await _fetchChannelsActive();
@@ -22670,7 +22629,7 @@
         }
 
         async function deleteLogFile(name) {
-            if (!confirm(`Delete ${name}?`)) return;
+            if (!(await confirmAsync('Delete Log File', `Delete ${name}?`, 'Delete'))) return;
             try {
                 /* Firmware expects ?name= as a query param (not a JSON body). */
                 await fetch('/api/log/delete?name=' + encodeURIComponent(name), {
@@ -22930,7 +22889,7 @@
         }
 
         async function fuelSetEmpty() {
-            if (!confirm('Set current raw reading as empty calibration?')) return;
+            if (!(await confirmAsync('Fuel Calibration', 'Set current raw reading as empty calibration?', 'Set Empty'))) return;
             try {
                 const r = await fetch('/api/fuel/set-empty', { method: 'POST' });
                 if (!r.ok) throw new Error(r.status);
@@ -22940,7 +22899,7 @@
         }
 
         async function fuelSetFull() {
-            if (!confirm('Set current raw reading as full calibration?')) return;
+            if (!(await confirmAsync('Fuel Calibration', 'Set current raw reading as full calibration?', 'Set Full'))) return;
             try {
                 const r = await fetch('/api/fuel/set-full', { method: 'POST' });
                 if (!r.ok) throw new Error(r.status);
@@ -23956,185 +23915,6 @@
 
         /* Re-sync on viewport change (rotation / resize) */
         window.addEventListener('resize', _wstUpdate);
-
-        /* ── Lap Timing modal ───────────────────────────────────────────
-         * Configuration + live view for the GPS lap timer. Bound to:
-         *   GET  /api/lap/status         presence, fix, track, live timing
-         *   GET  /api/lap/track          full track detail
-         *   POST /api/lap/track          replace track / {"clear":true}
-         *   POST /api/lap/capture        set a line from the car's position
-         *   POST /api/lap/session/reset  clear times, keep track
-         * The capture flow is the product: no coordinate entry, no map. */
-        let _lapTimer = null;
-        let _lapTrack = null;   /* last GET /api/lap/track payload, or null */
-        let _lapPollInFlight = false;   /* guard: never stack /api/lap/status calls */
-        let _lapModalOpen = false;      /* drives the self-rescheduling poll loop */
-
-        function _lapFmtTime(s) {
-            if (!s || s <= 0) return '—';
-            const m = Math.floor(s / 60);
-            const r = s - m * 60;
-            return m > 0 ? `${m}:${r.toFixed(3).padStart(6, '0')}` : r.toFixed(3);
-        }
-
-        async function _lapRefreshTrack() {
-            try {
-                const r = await fetch('/api/lap/track');
-                if (!r.ok) return;
-                const t = await r.json();
-                _lapTrack = t.empty ? null : t;
-                const nameEl = document.getElementById('lapTrackName');
-                const minEl  = document.getElementById('lapMinLap');
-                /* Don't clobber in-progress typing: only fill when blank/unfocused */
-                if (_lapTrack) {
-                    if (document.activeElement !== nameEl) nameEl.value = _lapTrack.name || '';
-                    if (document.activeElement !== minEl)  minEl.value  = _lapTrack.min_lap_time_s || '';
-                }
-                const n = _lapTrack ? (_lapTrack.sectors || []).length : 0;
-                document.getElementById('lapSectorSummary').textContent = _lapTrack
-                    ? `Start/finish set · ${n} sector split${n === 1 ? '' : 's'} (${n + 1} sector${n ? 's' : ''} per lap, max 8 splits)`
-                    : 'No track yet — capture a start/finish line to begin.';
-            } catch (e) { /* silent */ }
-        }
-
-        async function _lapPoll() {
-            /* In-flight guard + self-reschedule instead of setInterval: the dash
-             * round-trips at ~1-1.5 s under load, and a fixed 1 s interval would
-             * stack requests and multiply device latency (see the channels-probe
-             * lesson). Only the NEXT poll is scheduled once this one settles. */
-            if (_lapPollInFlight) return;
-            _lapPollInFlight = true;
-            try {
-                const r = await fetch('/api/lap/status');
-                if (!r.ok) return;
-                const st = await r.json();
-
-                const gps = document.getElementById('lapGpsBadge');
-                gps.textContent = st.gps_present ? 'GPS: connected' : 'GPS: not detected';
-                gps.style.color = st.gps_present ? 'hsl(152,60%,55%)' : 'hsl(0,60%,60%)';
-
-                const fix = document.getElementById('lapFixBadge');
-                if (st.fix) {
-                    fix.style.display = '';
-                    fix.textContent = `${st.fix.speed_kph.toFixed(1)} km/h · hdg ${Math.round(st.fix.heading)}°`;
-                } else {
-                    fix.style.display = st.gps_present ? '' : 'none';
-                    fix.textContent = 'no fix yet';
-                }
-
-                document.getElementById('lapTrackBadge').textContent =
-                    st.has_track ? `Track: ${st.track_name}` : 'No track configured';
-
-                const live = document.getElementById('lapLiveRow');
-                const t = st.timing || {};
-                if (t.armed) {
-                    live.style.display = '';
-                    const delta = (t.lap_delta === undefined) ? '—'
-                        : (t.lap_delta >= 0 ? '+' : '') + t.lap_delta.toFixed(2);
-                    live.textContent =
-                        `Lap ${t.lap_number}  cur ${_lapFmtTime(t.lap_time_current)}  ` +
-                        `last ${_lapFmtTime(t.lap_time_last)}  best ${_lapFmtTime(t.lap_time_best)}  Δ ${delta}`;
-                } else {
-                    live.style.display = 'none';
-                }
-
-                const stat = document.getElementById('setupLapStat');
-                if (stat) stat.textContent = st.gps_present
-                    ? (st.has_track ? st.track_name : 'GPS connected')
-                    : 'RDM GPS';
-            } catch (e) { /* silent */ }
-            finally {
-                _lapPollInFlight = false;
-                /* Reschedule only while the modal is open — a settled poll queues
-                 * the next one 1 s out, so calls never overlap. */
-                if (_lapModalOpen) _lapTimer = setTimeout(_lapPoll, 1000);
-            }
-        }
-
-        function openLapTiming() {
-            document.getElementById('lapTimingModal').style.display = 'flex';
-            _lapModalOpen = true;
-            _lapRefreshTrack();
-            if (_lapTimer) { clearTimeout(_lapTimer); _lapTimer = null; }
-            _lapPoll();   /* self-reschedules while _lapModalOpen */
-        }
-
-        function closeLapTiming() {
-            document.getElementById('lapTimingModal').style.display = 'none';
-            _lapModalOpen = false;
-            if (_lapTimer) { clearTimeout(_lapTimer); _lapTimer = null; }
-        }
-
-        async function lapCapture(what) {
-            const hw = parseFloat(document.getElementById('lapHalfWidth').value) || 15;
-            try {
-                const r = await fetch('/api/lap/capture', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({what, half_width_m: hw}),
-                });
-                if (!r.ok) {
-                    const msg = await r.text().catch(() => '');
-                    throw new Error(msg || ('HTTP ' + r.status));
-                }
-                const d = await r.json();
-                const label = what === 'start_finish' ? 'Start/finish' : `Sector split ${d.sector_count}`;
-                showToast(`${label} captured`, 'success');
-                if (d.heading_reliable === false) {
-                    showToast('Captured while stationary — direction unknown. Re-capture while driving across the line.', 'info');
-                }
-                _lapRefreshTrack();
-            } catch (e) {
-                showToast('Capture failed: ' + e.message, 'error');
-            }
-        }
-
-        async function lapSaveTrackMeta() {
-            if (!_lapTrack) { showToast('Capture a start/finish line first', 'error'); return; }
-            /* Empty field → keep the current value; an explicit "0" must pass
-             * through (firmware reads 0 as "use the default gate"), so don't let
-             * the falsy-OR chain swallow a typed zero. */
-            const _mlRaw = document.getElementById('lapMinLap').value.trim();
-            const _ml = _mlRaw === '' ? (_lapTrack.min_lap_time_s || 0)
-                                      : (parseFloat(_mlRaw) || 0);
-            const body = Object.assign({}, _lapTrack, {
-                name: document.getElementById('lapTrackName').value.trim() || _lapTrack.name,
-                min_lap_time_s: _ml,
-            });
-            try {
-                const r = await fetch('/api/lap/track', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(body),
-                });
-                if (!r.ok) throw new Error('HTTP ' + r.status);
-                showToast('Track saved', 'success');
-                _lapRefreshTrack();
-            } catch (e) { showToast('Save failed: ' + e.message, 'error'); }
-        }
-
-        async function lapClearTrack() {
-            if (!confirm('Remove the configured track? Lap and sector times will be lost.')) return;
-            try {
-                const r = await fetch('/api/lap/track', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({clear: true}),
-                });
-                if (!r.ok) throw new Error('HTTP ' + r.status);
-                showToast('Track cleared', 'success');
-                _lapRefreshTrack(); _lapPoll();
-            } catch (e) { showToast('Clear failed: ' + e.message, 'error'); }
-        }
-
-        async function lapResetSession() {
-            try {
-                const r = await fetch('/api/lap/session/reset', {method: 'POST'});
-                if (!r.ok) throw new Error('HTTP ' + r.status);
-                showToast('Session reset — best times cleared', 'success');
-                _lapPoll();
-            } catch (e) { showToast('Reset failed: ' + e.message, 'error'); }
-        }
 
     </script>
 </body>

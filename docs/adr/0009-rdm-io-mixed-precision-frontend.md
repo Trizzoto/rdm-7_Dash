@@ -2,7 +2,8 @@
 
 Status: Accepted (2026-07-21) — spec decision for the Phase 3 hardware; sim in
 RDM Studio updated to match. Supersedes the flat "8× analog 12-bit" line of
-`PLATFORM_PLAN_2026-07.md` §6.3 (plan doc not yet re-issued).
+`PLATFORM_PLAN_2026-07.md` §6.3 (plan doc amended in the same commit — see the
+§6.3 blockquote there).
 
 ## Context
 

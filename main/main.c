@@ -833,10 +833,11 @@ void app_main(void) {
     ESP_LOGW(TAG, "channel_manager_init reported non-OK — dash will continue with empty channel table");
   }
 
-  /* Lap engine: activates the lap channels and loads the saved track. Must
-   * come after channel_manager_init (it activates channels) and before
-   * can_init (frames start arriving). Inert on a dash with no GPS on the
-   * bus — no track, no fixes, no output. */
+  /* Lap engine: activates the lap + GPS channels. Must come after
+   * channel_manager_init (it activates channels) and before can_init (frames
+   * start arriving). Inert on a dash with no GPS on the bus — no frames, no
+   * output. The puck owns the track; the dash only decodes what it
+   * broadcasts (ADR-0008, 2026-07-30). */
   if (lap_engine_init() != ESP_OK) {
     ESP_LOGW(TAG, "lap_engine_init reported non-OK — lap timing unavailable");
   }

@@ -59,11 +59,11 @@ We do not currently fail-fast when this drops; the reading just streams to a sig
 
 **Symptom of violation**: Removing this would visibly drop FPS at high CAN frame rates, even when on-screen values haven't changed. Has been tested by temporarily disabling the gate during refactor work.
 
-### 1.6 Signals registered — ≤ 128
+### 1.6 Signals registered — ≤ 200
 
-**Source**: [main/widgets/signal.h:23](../../main/widgets/signal.h) — `MAX_SIGNALS 128`. Allocated as a `heap_caps_calloc` array in [main/widgets/signal.c:43](../../main/widgets/signal.c); registration past the cap returns an error and logs `Signal registry full`.
+**Source**: [main/widgets/signal.h:32](../../main/widgets/signal.h) — `MAX_SIGNALS 200` (raised from the 128 this ADR originally documented, most likely to make room for the GPS and lap-timing channels [ADR 0008](0008-gps-lap-timing-integration.md) added). Allocated as a `heap_caps_calloc` array in [main/widgets/signal.c](../../main/widgets/signal.c); registration past the cap returns an error and logs `Signal registry full`.
 
-**Rationale**: Signal lookup by name is a linear scan, used at layout-load time only (widget `from_json` resolves name→index once, then keeps the index). 128 entries × ~140 bytes of `signal_t` = ~18 KB of PSRAM. Most layouts use 30–80 signals; 128 gives ~50 % headroom. Pushing this higher would require either a hash-map lookup or accepting longer load times.
+**Rationale**: Signal lookup by name is a linear scan, used at layout-load time only (widget `from_json` resolves name→index once, then keeps the index). 200 entries × ~140 bytes of `signal_t` = ~28 KB of PSRAM. Most layouts use 30–80 signals; 200 gives generous headroom for the growing set of internal/GPS/lap-timing signals plus a full layout's worth. Pushing this higher would require either a hash-map lookup or accepting longer load times.
 
 **Symptom of violation**: New signals fail to register at layout load. Surfaced as `ESP_LOGE` only — should also surface in `/api/system/health` (§6).
 
@@ -71,7 +71,7 @@ We do not currently fail-fast when this drops; the reading just streams to a sig
 
 **Source**: [main/widgets/signal.h:24, 76](../../main/widgets/signal.h) — `MAX_SIGNAL_SUBSCRIBERS 16` and the inline `signal_subscriber_t subscribers[MAX_SIGNAL_SUBSCRIBERS]` array on every `signal_t`.
 
-**Rationale**: A real-world signal has 1–4 subscribers (a panel, maybe an alert, maybe a meter). 16 covers pathological cases (e.g. `RPM` could feed an RPM bar, a meter, a shift light, a panel, a redline alert, plus night-mode mirrors of each). Inline storage avoids allocator pressure on subscribe paths that run during layout load. 16 × 16 bytes × 128 signals = 32 KB of unused-slot tax in the worst case.
+**Rationale**: A real-world signal has 1–4 subscribers (a panel, maybe an alert, maybe a meter). 16 covers pathological cases (e.g. `RPM` could feed an RPM bar, a meter, a shift light, a panel, a redline alert, plus night-mode mirrors of each). Inline storage avoids allocator pressure on subscribe paths that run during layout load. 16 × 16 bytes × 200 signals (§1.6) = 51 KB of unused-slot tax in the worst case.
 
 **Symptom of violation**: `signal_subscribe` fails with `ESP_LOGW` and the widget silently never updates. The user sees a frozen value; serial log shows the warning.
 
@@ -81,7 +81,7 @@ We do not currently fail-fast when this drops; the reading just streams to a sig
 
 **Rationale**: Empirical. A typical 800×480 dashboard shows ~12–18 widgets. 64 is generous and lets us keep `widget_t *s_widgets[WIDGET_REGISTRY_MAX]` as a flat fixed array — the registry is iterated on every layout reload, every night-mode toggle, and every signal-clear-test path, so flat-array iteration is the right shape.
 
-**Symptom of violation**: Layout load silently truncates after the 32nd widget. Should also surface in `/api/system/health` (§6).
+**Symptom of violation**: Layout load silently truncates after the 64th widget (this cap was itself raised from 32 — see the header comment on `WIDGET_REGISTRY_MAX`). Should also surface in `/api/system/health` (§6).
 
 ### 1.9 Per-type slot caps — panel 16, indicator 2, warning 8, others unbounded by-type
 
@@ -99,13 +99,13 @@ The defaults-only `to_json` discipline ([widget code §to_json patterns](../../m
 
 **Symptom of violation**: HTTP 413 from `/api/layout/save` with a JSON body explaining the exact byte counts.
 
-### 1.11 HTTP handler registrations — ≤ 128
+### 1.11 HTTP handler registrations — ≤ 160
 
-**Source**: [main/net/web_server.c:4593](../../main/net/web_server.c) — `config.max_uri_handlers = 128`. Currently 87 `REGISTER_URI(server, …)` calls, leaving ~40 slots of headroom.
+**Source**: [main/net/web_server.c:326](../../main/net/web_server.c) — `config.max_uri_handlers = 160` (raised from the 128 this ADR originally documented, which had itself been raised from 80). Currently 144 `REGISTER_URI(` calls counted across all `web_server_*.c` files combined, leaving 16 slots of headroom.
 
-**Rationale**: ESP-IDF's `httpd` rejects new handler registrations once the cap is hit, **silently** — the registration call fails but server start continues. Late-registered handlers fall through to the wildcard CORS preflight handler and return 405. Diagnosed once via `/api/signal/simulate` POST returning 405 in production. The fix was to bump from 80 to 128 and add a register-tally log line at the end of `web_server_start`. Each slot is ~32 bytes of static RAM; 128 costs ~4 KB.
+**Rationale**: ESP-IDF's `httpd` rejects new handler registrations once the cap is hit, **silently** — the registration call fails but server start continues. Late-registered handlers fall through to the wildcard CORS preflight handler and return 405. Diagnosed once via `/api/signal/simulate` POST returning 405 in production. Each bump added to the register-tally log line at the end of `web_server_start`. Each slot is ~32 bytes of static RAM; 160 costs ~5 KB.
 
-**Effective sub-budget**: ≤ 110 actual `REGISTER_URI` calls. 18 slots of headroom for the next round of endpoint adds before this needs revisiting.
+**Effective sub-budget**: 144 actual `REGISTER_URI` calls today — tighter than the original "18 slots of headroom" framing, because [ADR 0002](0002-web-server-split-roadmap.md)'s split later grew whole new domains (`web_server_lap.c`, `web_server_obd2.c`, `web_server_test.c`, `web_server_channels.c`) that didn't exist when this budget was first written. The next new endpoint domain should come with a cap bump in the same commit.
 
 **Symptom of violation**: Specific endpoints return 405. Boot log shows `URI registration: X/N FAILED — bump max_uri_handlers`.
 
@@ -151,109 +151,21 @@ The defaults-only `to_json` discipline ([widget code §to_json patterns](../../m
 
 ## 2. Budgets we should commit to but haven't
 
-These are not encoded anywhere. The numbers are proposals; the symptom of violation is what would let us validate the proposal.
+These are not encoded anywhere. The numbers are proposals, not decisions — per §9, no instrumentation has landed for any of them. Each should land as two commits: first the measurement, run it a few days to see the real distribution, *then* add the threshold (§7 has the trade-offs on why).
 
-### 2.1 LVGL frame time, p99 — ≤ 14 ms
+| # | Budget | Proposed value | Why | Symptom of violation |
+|---|---|---|---|---|
+| 2.1 | LVGL frame time, p99 | ≤ 14 ms | Driven by §1.1's refresh period; 1% of frames missing it (~42/minute at 70 fps) is the empirical "still looks smooth" line. Measured informally today at ~11 ms p50 / 17 ms p99 — the 14 ms target is aspirational, not yet met | "The meter feels laggy when I rev"; needles take >2 frames to advance |
+| 2.2 | LVGL idle | ≥ 30% over a 5 s window | See §1.2 — below it, the next transient (reload, font load, screenshot) risks the §1.13 TWDT | TWDT triggers or FPS dropouts during routine operations |
+| 2.3 | CAN dispatch latency, p99 | ≤ 23 ms | [docs/handover/01-architecture.md](../handover/01-architecture.md)'s worst case: 5 ms recv + 2 ms dispatch + 16 ms next refresh. Never measured — could be much better or worse in practice | Visible lag between a real-world event and the on-screen response; usually first noticed against a co-driver's GoPro |
+| 2.4 | Steady-state heap floors | Internal ≥ 50 KB, PSRAM ≥ 1 MB | Below internal: `fopen`/image/OTA failures (newlib stdio buffers come from internal RAM). Below PSRAM: layout reloads truncate, fonts fail, screenshots degrade | Symptoms above, often misread as unrelated hardware faults ("the SD card stopped working") |
+| 2.5 | Boot-to-dashboard time | ≤ 5 s | ~3 s feels instant, ~7 s feels broken. Observed ~3.5–4.0 s today with a typical 18-widget layout | User-perceived "this thing takes ages to start" |
+| 2.6 | LVGL task stack high-water | ≥ 2 KB headroom | 16 KB total stack ([main.c](../../main/main.c) §step 11); deep widget/font/JSON call chains eat it. Never overflowed in production, never measured either — 2 KB is a guess, could reasonably be 1 KB | `Guru Meditation Error … Cause: 0x36 (StoreProhibited)` |
+| 2.7 | Per-widget redraw count | ≤ 1 per frame | A hyperactive widget calling `lv_obj_invalidate` from every frame's signal callback dominates redraw cost; unmeasured today | FPS drops when a specific widget is on-screen, currently unattributable without reading LVGL source |
+| 2.8 | Signal dispatch latency, p99 | ≤ 1 ms | 16 subscribers (§1.7) × a cheap callback ≈ 62 μs each; past 1 ms means a subscriber is doing real work on the LVGL hot path (allocating, LittleFS, a mutex) | A specific signal causes FPS dips, found today only by removing widgets one at a time |
+| 2.9 | LittleFS free space | ≥ 500 KB | Covers one image upload (~200 KB) + one font upload (~200 KB) + margin | Uploads fail with a vague "Upload failed" toast |
 
-**Proposed value**: p99 frame interval ≤ 14 ms. Equivalent to "no more than 1 % of frames miss the refresh deadline."
-
-**Rationale**: Driven by §1.1's refresh period. Each missed deadline = one dropped frame = potentially-visible jank. 1 % at 70 fps is ~42 missed frames per minute, the empirical threshold below which a sweep looks "smooth" rather than "subtly choppy."
-
-**Symptom of violation**: User reports of "the meter feels laggy when I rev." Meter needles take >2 frames to advance.
-
-**How it could be measured**: A new `FRAME_TIME_MS_P99` internal signal that records flush-callback intervals into a 256-entry ring, computes the p99 every 500 ms, and clamps when the ring underflows. Cost: ~1 KB SRAM, a few μs per flush.
-
-**Uncertainty**: The 14 ms target is conservative; in practice the ESP32-S3 + LVGL v8 + 800×480 RGB565 panel combination delivers around 11 ms p50 / 17 ms p99 today, so the budget would be flagged "amber" most of the time. Tightening the budget to 17 ms would make the alarm real-world useful; 14 ms is what the architecture aspires to.
-
-### 2.2 LVGL idle — ≥ 30 %
-
-**Proposed value**: `lv_timer_get_idle() ≥ 30` over a 5 s window.
-
-**Rationale**: See §1.2. Below 30 % the next transient (layout reload, font load, screenshot) can push us into TWDT territory.
-
-**Symptom of violation**: TWDT triggers, FPS dropouts during routine operations like opening Device Settings.
-
-**How it could be measured**: Already streamed as the `CPU_PERCENT` internal signal. Currently shown as a number on the diagnostics SYSTEM card. Proposal in §6 is to colour the card amber when it crosses 70 % CPU (i.e. < 30 % idle) for ≥ 5 s.
-
-### 2.3 CAN dispatch latency, p99 — ≤ 23 ms
-
-**Proposed value**: time from `can_receive_task` enqueue to last subscriber callback completion, p99 ≤ 23 ms.
-
-**Rationale**: [docs/handover/01-architecture.md](../handover/01-architecture.md) calculates the worst case as `5 ms (CAN recv) + 2 ms (queue dispatch) + 16 ms (next refresh) ≈ 23 ms`. p99 at this number means we're meeting the architecture's stated SLA.
-
-**Symptom of violation**: Visible lag between a real-world event (you blip the throttle) and the on-screen response. Hard to detect from the dash alone — usually first noticed by users comparing against a co-driver's GoPro.
-
-**How it could be measured**: Stamp `xQueueSendToBack` time into the `twai_message_t` (we don't use the spare bytes), record the delta in `can_process_queued_frames` after dispatch, log p99 every second. Cost: 8 bytes per queued frame plus a small histogram in PSRAM.
-
-**Uncertainty**: We have never actually measured this. It could be much better than 23 ms in practice (queue is rarely full, dispatch costs are cheap), or much worse if a single noisy signal has many subscribers.
-
-### 2.4 Steady-state heap floors — internal ≥ 50 KB, PSRAM ≥ 1 MB
-
-**Proposed values**:
-- `esp_get_free_heap_size()` ≥ 50 KB after dashboard is up, no transient operations in flight.
-- `heap_caps_get_free_size(MALLOC_CAP_SPIRAM)` ≥ 1 MB at the same point.
-
-**Rationale**:
-- 50 KB internal floor leaves room for: one HTTP-request body buffer (up to LAYOUT_MAX_FILE_BYTES — see §1.10 — but most allocs land in PSRAM), TLS handshake state for OTA, a font load, a JSON parse. Below 50 KB we hit `fopen` failures because newlib opens stdio buffers from internal RAM.
-- 1 MB PSRAM floor leaves room for: a layout reload (allocates a new layout-string buffer), a screenshot full-resolution encode (~960 KB transient), and one deferred `lv_async_call` queue. Below 1 MB the screenshot fall-back to half-res kicks in (already coded), but some other PSRAM-hungry path will fail next.
-
-**Symptom of violation**:
-- Internal < 50 KB: `fopen` fails, image loads fail, OTA fails to start. Often shows as "the SD card stopped working" because `f_open` is the visible call that errors.
-- PSRAM < 1 MB: layout reloads start truncating, font loads fail, screenshots silently degrade.
-
-**How it could be measured**: Both are already reported every 500 ms via `FREE_HEAP_KB` and `FREE_PSRAM_KB` internal signals. The work is: define "steady state" (proposed: 30 s of no `dashboard_init`, no `/api/screenshot`, no OTA, no layout save), watch the floor over that window, alarm when the floor dips below the budget. Currently nothing alarms.
-
-### 2.5 Boot-to-dashboard time — ≤ 5 s
-
-**Proposed value**: Time from `app_main` entry to the first frame painted by `dashboard_init`, ≤ 5 s.
-
-**Rationale**: The user feels anything beyond ~3 s as a long boot; ~7 s is when they start to wonder whether the device is broken. 5 s is the comfortable middle. We're observed to land at ~3.5–4.0 s on a warm flash with a typical 18-widget layout; the budget gives ~1 s of headroom for adding a widget type or a new boot-time subsystem.
-
-**Symptom of violation**: User-perceived "this thing takes ages to start." Manifests differently on cold-boot SD-card init delays.
-
-**How it could be measured**: Stamp `esp_timer_get_time` at `app_main` entry; emit on `dashboard_init` first-frame; `signal_inject_test_value("BOOT_MS", …)` once per boot. Reference value would land in `/api/system/health`.
-
-### 2.6 LVGL task stack high-water — ≥ 2 KB headroom
-
-**Proposed value**: `uxTaskGetStackHighWaterMark(lvgl_task_handle)` ≥ 2 KB at steady state.
-
-**Rationale**: The LVGL task is 16 KB stack ([main.c](../../main/main.c) §step 11). Calling deep into widget hierarchies, font cache, image loaders, and `cJSON_Parse` (during `apply_overrides` rule eval) all eat stack. A 2 KB floor catches creeping stack growth before it overflows. We've never had an LVGL stack overflow in production, but we've also never measured the headroom.
-
-**Symptom of violation**: Stack overflow → `Guru Meditation Error: ... Cause: 0x36 (StoreProhibited)`. Different error from a canonical TWDT.
-
-**How it could be measured**: Sample `uxTaskGetStackHighWaterMark` every 5 s in `signal_internal.c`; expose as `LVGL_STACK_FREE` internal signal.
-
-**Uncertainty**: 2 KB is a guess. We could reasonably hold the line at 1 KB; below that, a single recursive call could clip the canary.
-
-### 2.7 Per-widget redraw count — ≤ 1 per frame
-
-**Proposed value**: Each widget root invalidates the LVGL framebuffer at most once per refresh period.
-
-**Rationale**: LVGL coalesces multiple invalidations of the same region within a single refresh cycle into one redraw, but the bookkeeping cost grows with invalidation count. A single hyperactive widget that calls `lv_obj_invalidate` from every frame's signal callback can dominate redraw cost. We have no data on how often this happens.
-
-**Symptom of violation**: FPS drops when a specific widget is on-screen. Currently impossible to attribute without staring at LVGL source.
-
-**How it could be measured**: New per-widget invalidation counter incremented from a wrapper on `lv_obj_invalidate`; reset every refresh; expose top-3 offenders via a debug endpoint. Significant work — defer until we have a reproducible FPS-drop case.
-
-### 2.8 Signal dispatch latency, p99 — ≤ 1 ms
-
-**Proposed value**: p99 time from `notify_subscribers` entry to last subscriber callback exit ≤ 1 ms.
-
-**Rationale**: At 16 subscribers per signal (§1.7) and a typical signal callback (a label `set_text`, maybe a colour change, no allocation), 1 ms gives ~62 μs per subscriber — a comfortable budget. Anything past 1 ms means a subscriber is doing real work it shouldn't be doing on the LVGL hot path (allocating, calling into LittleFS, holding a mutex).
-
-**Symptom of violation**: A specific signal causes FPS dips. Caught today only by removing widgets one at a time until the dip stops.
-
-**How it could be measured**: Wrap `notify_subscribers` with `esp_timer_get_time` deltas; histogram per-signal in PSRAM; expose top offenders via `/api/diagnostics/signals`.
-
-### 2.9 LittleFS free space — ≥ 500 KB
-
-**Proposed value**: LittleFS partition free ≥ 500 KB at steady state.
-
-**Rationale**: 500 KB headroom covers: one full image upload (currently capped at ~200 KB), one font upload (TTF can be ~200 KB), a few layouts, with margin. Below this the user starts hitting `ENOSPC` on uploads and the editor's error UX is poor.
-
-**Symptom of violation**: Uploads fail. Surfaces today as a vague "Upload failed" toast in the editor; would benefit from a pre-upload size check against `/api/storage/info`.
-
-**How it could be measured**: `/api/storage/info` already returns LittleFS free bytes; the budget would be enforced in the editor's pre-upload check rather than on the firmware.
+What it would take to measure each: 2.1 a 256-entry ring of flush intervals; 2.2 already streamed as `CPU_PERCENT`, just needs a threshold; 2.3 a timestamp stamped into `twai_message_t` at enqueue; 2.4 already streamed as `FREE_HEAP_KB`/`FREE_PSRAM_KB`, needs a "steady state" definition (30 s with no reload/screenshot/OTA/save) and a floor alarm; 2.5 a timer stamp at `app_main` entry vs. `dashboard_init` first frame; 2.6 `uxTaskGetStackHighWaterMark` polled every 5 s; 2.7 a counting wrapper on `lv_obj_invalidate` (significant overhead — defer until there's a reproducible case); 2.8 a timing wrapper on `notify_subscribers`; 2.9 `/api/storage/info` already returns this, enforce the floor as a pre-upload check in the editor.
 
 ## 3. Instruments we have
 
@@ -403,20 +315,21 @@ grep -A2 'was_stale ||' main/widgets/signal.c
 
 # §1.6, §1.7 — verify signal caps
 grep -E 'MAX_SIGNALS |MAX_SIGNAL_SUBSCRIBERS' main/widgets/signal.h
-# expected: MAX_SIGNALS 128, MAX_SIGNAL_SUBSCRIBERS 16
+# expected: MAX_SIGNALS 200, MAX_SIGNAL_SUBSCRIBERS 16
 
 # §1.8 — verify widget cap
 grep WIDGET_REGISTRY_MAX main/widgets/widget_registry.h
-# expected: 32
+# expected: 64
 
 # §1.10 — verify layout JSON cap
 grep LAYOUT_MAX_FILE_BYTES main/layout/layout_manager.h
 # expected: 32768
 
-# §1.11 — verify URI handler cap + actual count
+# §1.11 — verify URI handler cap + actual count (endpoints are now split across
+# main/net/web_server_*.c per ADR 0002, not just web_server.c)
 grep max_uri_handlers main/net/web_server.c
-grep -c 'REGISTER_URI(server' main/net/web_server.c
-# expected: 128, ~87
+grep -c 'REGISTER_URI(' main/net/web_server*.c
+# expected: 160, ~144 total across all web_server_*.c files
 
 # §1.12, §1.13 — verify sdkconfig values
 grep -E 'HTTPD_MAX_REQ_HDR_LEN|TASK_WDT_TIMEOUT_S' sdkconfig

@@ -7,6 +7,8 @@
 
 Part of the **RDM project**: this firmware + RDM Desktop Studio (Tauri) + RDM Web Studio + RDM Marketplace. They share layout JSON format, API contracts, and asset pipelines.
 
+For deep dives, active plans, and one-off guides, start at [`docs/README.md`](docs/README.md) — it maps each doc under `docs/` to the question it answers, so you can load only the one the current task needs.
+
 ## Build
 
 - ESP-IDF v5.3.1 at `C:\Espressif\frameworks\esp-idf-v5.3.1`. **Each shell call is fresh** — prefix every `idf.py` invocation with `. "$env:IDF_PATH\export.ps1" *> $null;` to load the toolchain. After that, run `idf.py build` / `idf.py -p COM27 flash monitor` directly.
@@ -52,7 +54,7 @@ tests/native/     Unity C unit tests (CAN decode, layout migration, widget rules
 
 ## Widget System
 
-16 types in `widget_type_t` (`widget_types.h` — `WIDGET_TYPE_COUNT` is the authority; don't restate the number elsewhere). Slot limits (per `SLOT_LIMITS` in `main/web/index.html` and firmware-side caps):
+17 types in `widget_type_t` (`widget_types.h` — `WIDGET_TYPE_COUNT` is the authority; don't restate the number elsewhere). One, `WIDGET_ANIM`, is experimental and compiled out unless `RDM_WIDGET_ANIM_ENABLED`. Slot limits (per `SLOT_LIMITS` in `main/web/index.html` and firmware-side caps):
 
 | Type | Web cap | Firmware cap | Notes |
 |---|---|---|---|
@@ -95,6 +97,8 @@ layouts portable — decode no longer travels in the layout JSON (ADR-0005/0006)
 - `canonical_channels.c/h` — the built-in canonical registry (id, label, units, default thresholds).
 - `channel_manager.c/h` — live channel store, persisted to `/lfs/channels.json` (atomic tmp+fsync+rename+`.bak` idiom — the durability reference for the rest of the FW). All API requires the LVGL lock.
 - `channel_source_apply.c/h` — shared "bind this channel to a preset/OBD2/custom source" path used by the web picker and the wizard.
+- `channel_math.c/h` — derived/"calculated" channels (e.g. `boost = manifold_pressure - barometric_pressure`); a 5 Hz LVGL timer evaluates each and pushes the result through the normal signal pipeline.
+- `unit_convert.c/h` — native→display unit conversion for channel readouts (linear only: `out = v*scale+offset`; unknown pairs pass through unchanged).
 - On layout load, inline `signals[]` decode is migrated into channels (decode adopted, thresholds stripped). `channels.json` is device-local and NOT in the portable/marketplace layout.
 
 ## Layout Manager (`main/layout/`)
@@ -102,7 +106,7 @@ layouts portable — decode no longer travels in the layout JSON (ADR-0005/0006)
 - `layout_manager.c/h` — load/save layouts, register widget factories, drive `dashboard_init()`, JSON parse + widget instantiation
 - `default_layout.c/h` — built-in fallback layout
 - `ecu_presets.c/h` — OEM CAN signal presets (8 ECUs)
-- Schema version: `LAYOUT_SCHEMA_VERSION` in `layout_manager.h` (currently **v15** — that macro is the authority; don't restate the number)
+- Schema version: `LAYOUT_SCHEMA_VERSION` in `layout_manager.h` (currently **v17** — that macro is the authority; don't restate the number)
 - Hot-reload path: `POST /api/layout/save` → LittleFS → `lv_async_call()` → `dashboard_init()`
 
 ## Storage

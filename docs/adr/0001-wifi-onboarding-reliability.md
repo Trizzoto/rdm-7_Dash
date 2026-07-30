@@ -38,7 +38,7 @@ HT40 negotiation fails on weak phone clients and on routers that don't have a cl
 
 ### 4. Captive-portal HTTP probe handlers
 
-**File**: [main/net/web_server.c](../../main/net/web_server.c) — 9 URIs registered.
+**File**: [main/net/web_server_captive.c](../../main/net/web_server_captive.c) — 9 URIs registered. (Split out of the monolithic `web_server.c` by [ADR 0002](0002-web-server-split-roadmap.md); this ADR predates that split, which is why older references point at the old location.)
 
 iOS, Android, Windows, and Firefox each probe a different URL after joining a Wi-Fi network to detect captive portals. We answer all of them with **HTTP 302 + non-empty body** pointing at `/`:
 
@@ -99,7 +99,7 @@ If any of those fail, the most common cause in our experience is mismatched buil
 ## Related
 
 - [main/net/wifi_manager.c](../../main/net/wifi_manager.c) — items 1–3.
-- [main/net/web_server.c](../../main/net/web_server.c) — item 4.
+- [main/net/web_server_captive.c](../../main/net/web_server_captive.c) — item 4.
 - [main/net/dns_hijack.c](../../main/net/dns_hijack.c) — item 5.
 - [sdkconfig](../../sdkconfig) — items 6–7.
 - [docs/handover/07-web-server-api.md](../handover/07-web-server-api.md) §captive-portal-probes for endpoint detail.

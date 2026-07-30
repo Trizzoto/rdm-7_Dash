@@ -1,14 +1,21 @@
 # RDM Platform Plan — from dash designer to device suite
 
 **Date:** 2026-07-10
-**Status:** Proposal — for Tommy's review
+**Status:** Proposal — for Tommy's review. Section 7's "Phase 0" rename already
+landed same-day (see note below); Phase 2's GPS/lap-timing software has since
+progressed well past what this document describes — for the current state and
+forward plan there, see `rdm7-desktop/docs/LAP_ANALYSIS_REDESIGN_2026-07.md`
+and this repo's `docs/STUDIO_ANALYSIS_PLAN_2026-07.md`. The Studio shell/nav
+ideas in §5.3 were superseded by `docs/STUDIO_SHELL_PLAN_2026-07.md`
+(2026-07-27) — read that first if you're touching navigation or workspace
+placement. Keypad (§6.1) and IO (§6.3) remain unstarted proposals as written.
 **Research inputs:** `docs/research/2026-07-keypad-market.md`, `docs/research/2026-07-gps-laptimer-market.md`, `docs/research/2026-07-io-expander-and-suite-ux.md`
 
 ---
 
 ## 1. Executive summary
 
-RDM is expanding from one product (RDM-7 dash) to four: the dash, **Blink Marine CAN keypad support** (later an RDM-badged keypad), a **GPS lap timer**, and a **CAN IO expander**. The desktop program ("RDM-7 Visual Designer", v0.2.5) must grow from a dash editor into the configuration suite for all of them.
+RDM is expanding from one product (RDM-7 dash) to four: the dash, **Blink Marine CAN keypad support** (later an RDM-badged keypad), a **GPS lap timer**, and a **CAN IO expander**. The desktop program — "RDM-7 Visual Designer" v0.2.5 at the time of writing, **renamed "RDM Studio" the same day** (bundle identifier kept as `com.rdm7.designer` so self-update carries over) — must grow from a dash editor into the configuration suite for all of them.
 
 Three decisions fall out of the market research, and everything else follows from them:
 
@@ -96,7 +103,7 @@ New firmware surface (all built on the existing CAN manager):
 
 ### 5.3 Suite shell (desktop + web)
 
-The desktop app becomes **RDM Studio** (rename at suite launch; "RDM-7 Visual Designer" is dash-specific):
+The desktop app is **RDM Studio** (renamed 2026-07-10, the day this plan was written; "RDM-7 Visual Designer" was dash-specific):
 
 - **Device tree sidebar — "This car"**: the dash (WiFi) plus everything it sees on the bus. Sources: WiFi discovery (exists) + `GET /api/bus/devices` (new). ECUMaster Light Client is the reference, done over WiFi instead of a dongle.
 - **Workspaces** (tabs/views per device type):
@@ -104,7 +111,19 @@ The desktop app becomes **RDM Studio** (rename at suite launch; "RDM-7 Visual De
   - *Keypad* — WYSIWYG grid, per-button config, live LED preview (Section 6.1).
   - *Lap Timing* — track DB, start/finish editor, race-page setup, session analysis (Section 6.2).
   - *IO* — pin→function→calibration→broadcast wizard (Section 6.3).
-- **Placement rule:** device-config workspaces (keypad, IO, lap setup) belong in the **firmware web editor first** — they're device features and must be phone-configurable (a differentiator; nobody configures a keypad from a phone). The desktop inherits them for free via ADR-0007 sync. Desktop-only: session analysis (heavy compute/plots), fleet firmware manager, car-project management UI.
+- **Placement rule — superseded 2026-07-27, corrected here 2026-07-30:** this
+  originally said device-config workspaces (keypad, IO, lap setup) belong in
+  the firmware web editor first, attributing that constraint to ADR-0007.
+  **ADR-0007 never said this** — it is 92 lines about one problem (three
+  copies of the dash layout editor HTML drifting), and never mentions
+  workspace placement. See `docs/STUDIO_SHELL_PLAN_2026-07.md` §2.0 for the
+  full account. The rule is retired. Current policy: **the device serves an
+  API; every configurator and workspace is authored in its client** — Studio
+  now, a mobile app later — built to be the best version of itself, with no
+  mirroring obligation. The device's embedded editor becomes a frozen
+  limp-home page (bug fixes only), not the canonical UI for anything new.
+  Desktop-only, unaffected by this either way: session analysis (heavy
+  compute/plots), fleet firmware manager, car-project management UI.
 - **Car project file (`.rdmcar`)**: bundles dash layout(s) + channel registry + keypad map + IO config + lap settings + track overrides. Offline-editable against the local dash (v0.2.5 pattern, extended), synced on connect, shareable on the marketplace ("full car setups", not just layouts). The existing `.rdm` layout bundle remains for layout-only sharing.
 - **Fleet firmware manager**: one screen listing every RDM device + version + update badge (RS3's Connected Devices pattern), updating through the dash gateway, with an explicit compat matrix (suite vs device firmware N/N−1) to dodge Holley-style lockstep pain.
 - **CAN hygiene at project level**: auto-assigned IDs with conflict validation across all devices in the project; **DBC import (exists conceptually via presets) + DBC export** for every RDM device so they drop into non-RDM ecosystems.
@@ -182,7 +201,7 @@ The wedge feature. Blink hardware exists, customers own it, and every competitor
 ## 7. Phased roadmap
 
 **Phase 0 — Suite foundations** (with current momentum, ~now)
-- Rename plan: "RDM Studio" (keep binary/updater identity to preserve self-update chain).
+- **Done 2026-07-10.** ~~Rename plan~~: "RDM Studio" (binary/updater identity preserved — bundle id `com.rdm7.designer` unchanged — so self-update carried over).
 - Device-tree sidebar: WiFi devices + `GET /api/bus/devices` stub.
 - `.rdmcar` project format v1 (dash layout + channels; slots for future device configs).
 - Firmware: `bus_manager` skeleton — passive sniff inventory (heartbeats/address claims), proxy endpoints.
@@ -218,8 +237,8 @@ Dependencies: Phase 1 ships value alone; Phase 2/3 hardware lead times overlap s
 | ESP32 CPU budget | Lap engine + CANopen shim on top of UI | Trivial vs existing 200 Hz logging; heap_monitor exists if needed |
 | RDM-badged keypad inventory risk | Rebrand margin is proven, but stock costs cash | Bundles first (zero inventory risk), badge after demand data |
 | Track DB licensing | AiM proprietary, OSM ODbL | Own curation + community submissions only |
-| Suite rename timing | "RDM-7 Visual Designer" → "RDM Studio" | At Phase-1 launch, keep updater identity/keys unchanged |
-| Desktop repo CLAUDE.md says "MaxxECU systems" | Stale positioning line | Fix during Phase 0 |
+| Suite rename timing | **Done 2026-07-10** — "RDM-7 Visual Designer" → "RDM Studio" | Renamed same day this plan was written; updater identity/keys (`com.rdm7.designer`) kept unchanged as intended |
+| Desktop repo CLAUDE.md says "MaxxECU systems" | **Fixed** — stale positioning line | Confirmed gone from `rdm7-desktop/CLAUDE.md` as of 2026-07-30 |
 | P4 port | Round + JC1060P470 variants pending | Gateway/channel work is display-agnostic by design; port after S3 ships each phase |
 
 ---

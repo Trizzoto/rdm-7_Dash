@@ -81,14 +81,27 @@ The mockup (see artifact "rdm-keypad-workspace-mockup") proves the look.
 - Persistence: `keypads.json`; NOT part of the portable layout (device-local,
   like channels), but INCLUDED in the `.rdmcar` car project bundle.
 
-## 5. Web editor / desktop split (ADR-0007)
+## 5. Where the UI is authored
 
-The workspace is authored in **`main/web/index.html`** (phone-configurable —
-a differentiator) and reaches RDM Studio through the normal
-`tools/sync_firmware.py` pipeline. Desktop adds only: device-tree entry and
-menu items (overlay blocks). Keypad field metadata should live in a schema
-(`schema/keypads.schema.json`) + codegen like widgets do, so the inspector,
-help tooltips, and firmware parser stay in lockstep.
+**Superseded 2026-07-27.** This section originally required the workspace to
+be authored in `main/web/index.html` under a "firmware editor first" rule
+attributed to ADR-0007, reaching desktop through `tools/sync_firmware.py`.
+That rule has been retired (`docs/STUDIO_SHELL_PLAN_2026-07.md` §2.0):
+ADR-0007 never governed workspace placement — it's 92 lines about the dash
+*layout* editor HTML drifting across copies, nothing more. Current policy:
+**the device serves an API; every configurator is authored in its client**
+(Studio now, a mobile app later), with no mirroring obligation.
+
+So the keypad workspace belongs in **RDM Studio**, built directly against the
+firmware API in §4 below (`GET/POST /api/keypads`, `GET /api/bus/devices`,
+`POST /api/bus/adopt`, `POST /api/keypad/test_press`). The firmware's embedded
+editor doesn't need a keypad screen — it's a frozen limp-home page, not a
+second client to keep in sync.
+
+Keypad field metadata should still live in a schema
+(`schema/keypads.schema.json`) + codegen, the same discipline widgets use —
+that keeps Studio's inspector and help tooltips in lockstep with the
+firmware's parser regardless of which client authors the config screen.
 
 ## 6. Phasing
 

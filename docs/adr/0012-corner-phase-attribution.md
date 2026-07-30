@@ -192,25 +192,20 @@ lap *indices*, which mean different laps after a re-download.
 
 ## Addendum 2026-07-28 (evening): the map answers "where", at a glance
 
-Three colour modes on the session map, switched from the playback bar and
-persisted across restarts: **Pace** (braking/acceleration, as before),
-**Speed** (sequential cool→warm ramp with real km/h endpoints in the legend),
-and **vs Ref** — the track coloured by the *rate* of time gained or lost
-against the comparison lap. That last one is the channel MoTeC users build by
-hand as a maths expression and paint onto their rainbow map; here it is one
-click, and it falls back to Pace rather than draw a lie when no comparison is
-chosen. Alongside it: the cumulative delta shown at the playback cursor,
-Circuit-Tools-style keyboard driving (space, arrows one sample, shift-arrows
-one second, up/down walk the coach findings — guarded so keys pass through
-untouched anywhere else), and four at-a-glance tiles answering the paddock
-questions before any clicking: best, average, spread, and time left on the
-table against the ideal sectors.
+Three colour modes on the session map — Pace, Speed, and **vs Ref** (the
+track coloured by the *rate* of time gained or lost against the comparison
+lap, the channel MoTeC users build by hand as a maths expression) — plus
+cumulative delta at the playback cursor, keyboard scrubbing, and four
+at-a-glance summary tiles (best, average, spread, time left on the table).
+The one decision worth recording: **vs Ref** falls back to Pace rather than
+draw a lie when no comparison lap is chosen — a track coloured by a delta
+that doesn't exist would look exactly as confident as one that does.
 
-Two defects the harness caught in the same pass, recorded because both would
-have shipped: `gpCoachJump` reached `gpScrubTo` as a bare identifier, which
-only works because a browser's `window` is the global object — real coupling,
-now explicit; and `gpTrackById` dereferenced `gp.tracks.tracks` unguarded
-while its own caller guarded `gp.tracks &&` one line earlier.
+Two defects the harness caught before shipping, both real coupling made
+explicit rather than newly introduced: `gpCoachJump` reached `gpScrubTo` as a
+bare identifier (works only because a browser's `window` is the global
+object), and `gpTrackById` dereferenced `gp.tracks.tracks` unguarded one line
+after its own caller guarded `gp.tracks &&`.
 
 ## Addendum 2026-07-29: the lane rack, and what the recording cannot tell us
 
