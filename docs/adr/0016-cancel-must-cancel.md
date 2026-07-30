@@ -69,12 +69,14 @@ plain DOM — no environment detection, no plugin.
   are dead code and were left alone; the live pair (~line 22860) is converted.
 - rdm7-desktop must re-sync (`python tools/sync_firmware.py`) — done the same
   day on the desktop side.
-- **Still open, desktop repo:** four raw `confirm(` guards live in
+- **Closed same day, desktop repo:** the four raw `confirm(` guards in
   `../rdm7-desktop/src/tauri-overlay.html` outside the GPS workspace (revert
-  layout, transfer overwrite, reboot device, restore layouts). They need the
-  same conversion — to base `confirmAsync` now that the base exports it — but
-  that file carries uncommitted WIP today, so they are tracked as a follow-up
-  rather than edited under it.
+  layout, transfer overwrite, reboot device, restore layouts) are converted to
+  base `confirmAsync` — desktop commit `39332c3` on
+  `claude/youthful-gagarin-330d33`, after the overlay WIP had landed. All four
+  enclosing functions were already async, so no caller changed. Probed in the
+  merged dist: Cancel on "Reboot Device" leaves `RDM.reboot` uncalled; Confirm
+  fires it.
 
 ## Verification
 
