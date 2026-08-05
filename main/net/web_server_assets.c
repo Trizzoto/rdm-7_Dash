@@ -1104,40 +1104,45 @@ static void _ensure_track_dir(void) {
 		mkdir(LFS_TRACK_DIR, 0755);
 }
 
+/* Reject a track upload BEFORE its body has been read.
+ *
+ * web_server.c's own comment spells out the hazard: httpd closes the socket
+ * when a handler responds with RX data still unconsumed, so the client sees a
+ * TCP reset instead of the 4xx that explains itself. Proven against the real
+ * dash -- posting an 804-byte track under the name "../escape" produced
+ * ConnectionResetError, not "Invalid name". Every early return in the upload
+ * path has to drain first, not just the too-large one. */
+static esp_err_t _track_reject(httpd_req_t *req, httpd_err_code_t code, const char *why) {
+	web_server_drain_body(req, 1024 * 1024);
+	httpd_resp_send_err(req, code, why);
+	return ESP_FAIL;
+}
+
 /* POST /api/track/upload?name=<name>   Body: raw RDMTRK binary */
 static esp_err_t track_upload_handler(httpd_req_t *req) {
 	_ensure_track_dir();
 
 	char query[64] = {0};
-	if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing query string");
-		return ESP_FAIL;
-	}
+	if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK)
+		return _track_reject(req, HTTPD_400_BAD_REQUEST, "Missing query string");
+
 	char name[32] = {0};
-	if (httpd_query_key_value(query, "name", name, sizeof(name)) != ESP_OK || name[0] == '\0') {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'name' parameter");
-		return ESP_FAIL;
-	}
+	if (httpd_query_key_value(query, "name", name, sizeof(name)) != ESP_OK || name[0] == '\0')
+		return _track_reject(req, HTTPD_400_BAD_REQUEST, "Missing 'name' parameter");
+
 	web_server_url_decode(name);
-	if (!web_server_name_is_safe(name)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
-		return ESP_FAIL;
-	}
+	if (!web_server_name_is_safe(name))
+		return _track_reject(req, HTTPD_400_BAD_REQUEST, "Invalid name");
 
 	size_t content_len = req->content_len;
-	if (content_len < TRACK_MAP_HEADER || content_len > TRACK_MAX_SIZE) {
-		if (content_len > TRACK_MAX_SIZE) web_server_drain_body(req, 1024 * 1024);
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid content length");
-		return ESP_FAIL;
-	}
+	if (content_len < TRACK_MAP_HEADER || content_len > TRACK_MAX_SIZE)
+		return _track_reject(req, HTTPD_400_BAD_REQUEST, "Invalid content length");
 
 	size_t total_bytes = 0, used_bytes = 0;
 	if (esp_littlefs_info("littlefs", &total_bytes, &used_bytes) == ESP_OK) {
 		size_t free_bytes = (total_bytes > used_bytes) ? (total_bytes - used_bytes) : 0;
-		if (content_len > free_bytes) {
-			httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Not enough storage");
-			return ESP_FAIL;
-		}
+		if (content_len > free_bytes)
+			return _track_reject(req, HTTPD_400_BAD_REQUEST, "Not enough storage");
 	}
 
 	char path[96], tmp_path[112], bak_path[112];
@@ -1150,10 +1155,9 @@ static esp_err_t track_upload_handler(httpd_req_t *req) {
 	 * that still passes the magic check would draw a circuit with its back half
 	 * missing -- which looks like a track, not like a failure. */
 	uint8_t *buf = malloc(content_len);
-	if (!buf) {
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
-		return ESP_FAIL;
-	}
+	if (!buf)
+		return _track_reject(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+
 	size_t received = 0;
 	while (received < content_len) {
 		int ret = httpd_req_recv(req, (char *)buf + received, content_len - received);
