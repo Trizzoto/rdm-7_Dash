@@ -53,3 +53,6 @@ main/web/ford_ref.jpg
 
 # Cloudflare wrangler local state
 tools/cloudflare-ota-proxy/.wrangler/
+
+# native test fixtures are generated from the Studio encoder
+tests/native/fixtures/track_map/
