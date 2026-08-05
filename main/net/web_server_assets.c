@@ -29,6 +29,8 @@
 #include <stdlib.h>
 #include <unistd.h>        /* fsync, fileno */
 
+#include "widgets/track_map_geo.h"   /* one point cap, shared with the loader */
+
 static const char *TAG = "web_server_assets";
 
 /* ── Image endpoints ─────────────────────────────────────────────────────── */
@@ -1082,6 +1084,274 @@ static const httpd_uri_t sd_delete_uri = {
     .uri = "/api/sd/delete", .method = HTTP_POST,
     .handler = sd_delete_handler, .user_ctx = NULL};
 
+/* -- Track-map endpoints -------------------------------------------------- */
+
+/* An .rdmtrk is a circuit outline: a few hundred geographic points that the
+ * track_map widget projects onto the screen. It is a device ASSET rather than
+ * layout config so that pushing a new circuit is ONE upload instead of
+ * re-pushing a whole dash design.
+ *
+ * The size bound comes from the widget's own header, not from a number typed
+ * twice. This file already carries the scar for that mistake in the font path:
+ * "The upload cap MUST match the loader's limit, or a font in (limit, old-4MB]
+ * uploads OK but silently fails to load." */
+#define LFS_TRACK_DIR   "/lfs/tracks"
+#define TRACK_MAX_SIZE  (TRACK_MAP_HEADER + TRACK_MAP_MAX_POINTS * 8)
+
+static void _ensure_track_dir(void) {
+	struct stat st;
+	if (stat(LFS_TRACK_DIR, &st) != 0)
+		mkdir(LFS_TRACK_DIR, 0755);
+}
+
+/* POST /api/track/upload?name=<name>   Body: raw RDMTRK binary */
+static esp_err_t track_upload_handler(httpd_req_t *req) {
+	_ensure_track_dir();
+
+	char query[64] = {0};
+	if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing query string");
+		return ESP_FAIL;
+	}
+	char name[32] = {0};
+	if (httpd_query_key_value(query, "name", name, sizeof(name)) != ESP_OK || name[0] == '\0') {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'name' parameter");
+		return ESP_FAIL;
+	}
+	web_server_url_decode(name);
+	if (!web_server_name_is_safe(name)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
+		return ESP_FAIL;
+	}
+
+	size_t content_len = req->content_len;
+	if (content_len < TRACK_MAP_HEADER || content_len > TRACK_MAX_SIZE) {
+		if (content_len > TRACK_MAX_SIZE) web_server_drain_body(req, 1024 * 1024);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid content length");
+		return ESP_FAIL;
+	}
+
+	size_t total_bytes = 0, used_bytes = 0;
+	if (esp_littlefs_info("littlefs", &total_bytes, &used_bytes) == ESP_OK) {
+		size_t free_bytes = (total_bytes > used_bytes) ? (total_bytes - used_bytes) : 0;
+		if (content_len > free_bytes) {
+			httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Not enough storage");
+			return ESP_FAIL;
+		}
+	}
+
+	char path[96], tmp_path[112], bak_path[112];
+	snprintf(path, sizeof(path), "%s/%s.rdmtrk", LFS_TRACK_DIR, name);
+	snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+	snprintf(bak_path, sizeof(bak_path), "%s.bak", path);
+
+	/* A whole track is at most ~3 KB, so unlike an image it is read in one go.
+	 * It is still staged in a .tmp and renamed, because a half-written outline
+	 * that still passes the magic check would draw a circuit with its back half
+	 * missing -- which looks like a track, not like a failure. */
+	uint8_t *buf = malloc(content_len);
+	if (!buf) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+		return ESP_FAIL;
+	}
+	size_t received = 0;
+	while (received < content_len) {
+		int ret = httpd_req_recv(req, (char *)buf + received, content_len - received);
+		if (ret <= 0) {
+			free(buf);
+			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Receive failed");
+			return ESP_FAIL;
+		}
+		received += (size_t)ret;
+	}
+
+	/* Validate with the SAME parser the widget will use, before anything is
+	 * published. Rejecting here turns "the widget silently shows nothing" into
+	 * a 400 with a reason, at the only moment someone is watching. */
+	track_map_file_t parsed;
+	track_map_err_t perr = track_map_parse(buf, received, &parsed);
+	if (perr != TRACK_MAP_OK) {
+		free(buf);
+		const char *why =
+			perr == TRACK_MAP_ERR_MAGIC   ? "Not an RDMTRK file" :
+			perr == TRACK_MAP_ERR_VERSION ? "RDMTRK version not supported by this firmware" :
+			perr == TRACK_MAP_ERR_POINTS  ? "Track has too few or too many points" :
+			perr == TRACK_MAP_ERR_RANGE   ? "Track contains an impossible coordinate" :
+			                                "Track file is truncated";
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, why);
+		return ESP_FAIL;
+	}
+
+	FILE *f = fopen(tmp_path, "wb");
+	if (!f) {
+		free(buf);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Cannot write file");
+		return ESP_FAIL;
+	}
+	bool ok = (fwrite(buf, 1, received, f) == received);
+	free(buf);
+	if (ok) ok = (fflush(f) == 0 && fsync(fileno(f)) == 0);
+	if (fclose(f) != 0) ok = false;
+	if (!ok) {
+		remove(tmp_path);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Write incomplete");
+		return ESP_FAIL;
+	}
+
+	rename(path, bak_path);
+	if (rename(tmp_path, path) != 0) {
+		rename(bak_path, path);
+		remove(tmp_path);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Cannot write file");
+		return ESP_FAIL;
+	}
+	remove(bak_path);
+
+	ESP_LOGI(TAG, "Uploaded track '%s' (%s, %u points, %u bytes)",
+	         name, parsed.name, (unsigned)parsed.n_points, (unsigned)received);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	char resp[192];
+	snprintf(resp, sizeof(resp),
+	         "{\"status\":\"ok\",\"name\":\"%s\",\"points\":%u,\"bytes\":%u}",
+	         name, (unsigned)parsed.n_points, (unsigned)received);
+	return httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+}
+
+static const httpd_uri_t track_upload_uri = {.uri = "/api/track/upload",
+                                              .method = HTTP_POST,
+                                              .handler = track_upload_handler,
+                                              .user_ctx = NULL};
+
+/* GET /api/track/list -- [{name, track, points, version, size}]
+ * `name` is the filename (what a widget references); `track` is the circuit's
+ * own name from inside the file, which is what a human recognises. */
+static esp_err_t track_list_handler(httpd_req_t *req) {
+	_ensure_track_dir();
+
+	cJSON *arr = cJSON_CreateArray();
+	DIR *d = opendir(LFS_TRACK_DIR);
+	if (d) {
+		struct dirent *ent;
+		while ((ent = readdir(d)) != NULL) {
+			const char *dot = strrchr(ent->d_name, '.');
+			if (!dot || strcmp(dot, ".rdmtrk") != 0) continue;
+
+			char base[64] = {0};
+			size_t blen = (size_t)(dot - ent->d_name);
+			if (blen >= sizeof(base)) blen = sizeof(base) - 1;
+			memcpy(base, ent->d_name, blen);
+
+			char path[128];
+			snprintf(path, sizeof(path), "%s/%s", LFS_TRACK_DIR, ent->d_name);
+
+			cJSON *o = cJSON_CreateObject();
+			cJSON_AddStringToObject(o, "name", base);
+
+			/* Only the header is read: the list is drawn far more often than a
+			 * track is loaded, and the points are not needed to name one. */
+			FILE *f = fopen(path, "rb");
+			if (f) {
+				uint8_t hdr[TRACK_MAP_HEADER];
+				size_t got = fread(hdr, 1, sizeof(hdr), f);
+				fclose(f);
+				struct stat st;
+				long sz = (stat(path, &st) == 0) ? (long)st.st_size : 0;
+				if (got == sizeof(hdr) &&
+				    memcmp(hdr, TRACK_MAP_MAGIC, TRACK_MAP_MAGIC_LEN) == 0) {
+					char tname[TRACK_MAP_NAME_LEN];
+					memcpy(tname, hdr + 8, TRACK_MAP_NAME_LEN - 1);
+					tname[TRACK_MAP_NAME_LEN - 1] = '\0';
+					cJSON_AddStringToObject(o, "track", tname);
+					cJSON_AddNumberToObject(o, "points",
+					    (double)((uint16_t)hdr[48] | ((uint16_t)hdr[49] << 8)));
+					cJSON_AddNumberToObject(o, "version", hdr[6]);
+				} else {
+					cJSON_AddStringToObject(o, "track", "");
+					cJSON_AddBoolToObject(o, "unreadable", true);
+				}
+				cJSON_AddNumberToObject(o, "size", (double)sz);
+			}
+			cJSON_AddItemToArray(arr, o);
+		}
+		closedir(d);
+	}
+
+	char *json = cJSON_PrintUnformatted(arr);
+	cJSON_Delete(arr);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	esp_err_t r = httpd_resp_send(req, json ? json : "[]", HTTPD_RESP_USE_STRLEN);
+	if (json) free(json);
+	return r;
+}
+
+static const httpd_uri_t track_list_uri = {.uri = "/api/track/list",
+                                            .method = HTTP_GET,
+                                            .handler = track_list_handler,
+                                            .user_ctx = NULL};
+
+/* GET /api/track/data?name=<name> -- the raw .rdmtrk */
+static esp_err_t track_data_handler(httpd_req_t *req) {
+	char query[64] = {0};
+	if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing query string");
+		return ESP_FAIL;
+	}
+	char name[32] = {0};
+	if (httpd_query_key_value(query, "name", name, sizeof(name)) != ESP_OK || name[0] == '\0') {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'name' parameter");
+		return ESP_FAIL;
+	}
+	web_server_url_decode(name);
+	if (!web_server_name_is_safe(name)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
+		return ESP_FAIL;
+	}
+	char path[96];
+	snprintf(path, sizeof(path), "%s/%s.rdmtrk", LFS_TRACK_DIR, name);
+	return _send_file_chunked(req, path, TRACK_MAX_SIZE, "Track not found");
+}
+
+static const httpd_uri_t track_data_uri = {.uri = "/api/track/data",
+                                            .method = HTTP_GET,
+                                            .handler = track_data_handler,
+                                            .user_ctx = NULL};
+
+/* POST /api/track/delete?name=<name> */
+static esp_err_t track_delete_handler(httpd_req_t *req) {
+	char query[64] = {0};
+	if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing query string");
+		return ESP_FAIL;
+	}
+	char name[32] = {0};
+	if (httpd_query_key_value(query, "name", name, sizeof(name)) != ESP_OK || name[0] == '\0') {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'name' parameter");
+		return ESP_FAIL;
+	}
+	web_server_url_decode(name);
+	if (!web_server_name_is_safe(name)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
+		return ESP_FAIL;
+	}
+	char path[96];
+	snprintf(path, sizeof(path), "%s/%s.rdmtrk", LFS_TRACK_DIR, name);
+	if (remove(path) != 0) {
+		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Track not found");
+		return ESP_FAIL;
+	}
+	ESP_LOGI(TAG, "Deleted track '%s'", name);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
+}
+
+static const httpd_uri_t track_delete_uri = {.uri = "/api/track/delete",
+                                              .method = HTTP_POST,
+                                              .handler = track_delete_handler,
+                                              .user_ctx = NULL};
+
 /* ── URI registration ────────────────────────────────────────────────────── */
 
 void web_server_assets_register(httpd_handle_t server) {
@@ -1098,4 +1368,8 @@ void web_server_assets_register(httpd_handle_t server) {
 	REGISTER_URI(server, &sd_files_uri);
 	REGISTER_URI(server, &sd_copy_uri);
 	REGISTER_URI(server, &sd_delete_uri);
+	REGISTER_URI(server, &track_upload_uri);
+	REGISTER_URI(server, &track_list_uri);
+	REGISTER_URI(server, &track_data_uri);
+	REGISTER_URI(server, &track_delete_uri);
 }
