@@ -5203,6 +5203,16 @@
           "enabled_by": "show_dot"
         },
         {
+          "name": "show_trail",
+          "label": "Show Trail",
+          "type": "checkbox",
+          "default": true,
+          "category": "appearance",
+          "group": "Car",
+          "help": "Draw a short fading tail behind the car, so you can see the line you just took.",
+          "enabled_by": "show_dot"
+        },
+        {
           "name": "dot_radius",
           "label": "Car Size",
           "type": "stepper",
