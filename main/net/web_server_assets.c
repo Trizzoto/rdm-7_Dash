@@ -1095,8 +1095,8 @@ static const httpd_uri_t sd_delete_uri = {
  * twice. This file already carries the scar for that mistake in the font path:
  * "The upload cap MUST match the loader's limit, or a font in (limit, old-4MB]
  * uploads OK but silently fails to load." */
-#define LFS_TRACK_DIR   "/lfs/tracks"
-#define TRACK_MAX_SIZE  (TRACK_MAP_HEADER + TRACK_MAP_MAX_POINTS * 8)
+#define LFS_TRACK_DIR   TRACK_MAP_LFS_DIR
+#define TRACK_MAX_SIZE  TRACK_MAP_MAX_FILE
 
 static void _ensure_track_dir(void) {
 	struct stat st;

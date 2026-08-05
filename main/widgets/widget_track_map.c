@@ -35,7 +35,7 @@
 
 static const char *TAG = "track_map";
 
-#define LFS_TRACK_DIR   "/lfs/tracks"
+#define LFS_TRACK_DIR   TRACK_MAP_LFS_DIR
 #define TM_NAME_LEN     32
 #define TM_CHAN_LEN     32
 
@@ -140,7 +140,7 @@ static void _tm_load(track_map_data_t *td) {
     if (!td->asset[0]) return;
 
     char path[128];
-    snprintf(path, sizeof(path), LFS_TRACK_DIR "/%s.rdmtrk", td->asset);
+    snprintf(path, sizeof(path), LFS_TRACK_DIR "/%s" TRACK_MAP_EXT, td->asset);
     FILE *f = fopen(path, "rb");
     if (!f) { ESP_LOGW(TAG, "no such track asset: %s", path); return; }
 
@@ -376,6 +376,7 @@ static void _tm_open_settings(widget_t *w) { (void)w; }
 static void _tm_to_json(widget_t *w, cJSON *out) {
     track_map_data_t *td = (track_map_data_t *)w->type_data;
     if (!td || !out) return;
+    widget_base_to_json(w, out);        /* type, id, x, y, w, h, group */
     cJSON *cfg = cJSON_AddObjectToObject(out, "config");
     if (!cfg) return;
     cJSON_AddStringToObject(cfg, "track_asset", td->asset);
@@ -396,6 +397,13 @@ static void _tm_to_json(widget_t *w, cJSON *out) {
 static void _tm_from_json(widget_t *w, cJSON *in) {
     track_map_data_t *td = (track_map_data_t *)w->type_data;
     if (!td || !in) return;
+    /* Position and size live at the TOP level, not in config — and this must
+     * run before the early return below, or a track_map with no config block
+     * silently lands at (0,0) 320x240 no matter where the editor put it.
+     * Every other widget calls this first; this one did not, and the dash
+     * proved it by drawing the circuit in the top-left corner. */
+    widget_base_from_json(w, in);
+
     cJSON *cfg = cJSON_GetObjectItemCaseSensitive(in, "config");
     if (!cJSON_IsObject(cfg)) return;
     cJSON *it;

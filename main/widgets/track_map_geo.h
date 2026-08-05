@@ -50,6 +50,17 @@ extern "C" {
  * silently fails to load. One constant, included by both. */
 #define TRACK_MAP_MAX_POINTS  400
 
+/* The largest a well-formed file can be. Derived, never typed. */
+#define TRACK_MAP_MAX_FILE    (TRACK_MAP_HEADER + TRACK_MAP_MAX_POINTS * 8)
+
+/* Where the dash keeps its circuits. Here, with the format, because FOUR
+ * places open these files — the HTTP upload, the HTTP list/read/delete, the
+ * serial upload and the widget's loader — and a path spelled four times is
+ * three chances to disagree. A widget looking in the wrong directory reports
+ * "no such track asset" for a track that is plainly in the list. */
+#define TRACK_MAP_LFS_DIR     "/lfs/tracks"
+#define TRACK_MAP_EXT         ".rdmtrk"
+
 #define TRACK_MAP_FLAG_CLOSED 0x01u
 
 typedef enum {
