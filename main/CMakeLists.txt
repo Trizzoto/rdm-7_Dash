@@ -56,6 +56,7 @@ idf_component_register(
         "net/serial_commands_fuel.c"
         "net/serial_commands_capture.c"
         "net/serial_commands_upload.c"
+        "net/serial_commands_tracks.c"
         "net/sd_file_ops.c"
         "system/device_id.c"
         "system/screen_config.c"

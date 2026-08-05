@@ -16,6 +16,7 @@
 #include "uart_protocol.h"
 #include "storage/boot_assets.h"
 #include "widgets/font_manager.h"   /* FONT_MAX_FILE_SIZE */
+#include "widgets/track_map_geo.h"  /* the RDMTRK cap, and its parser */
 
 #include "cJSON.h"
 #include "esp_heap_caps.h"
@@ -58,12 +59,13 @@ void _handle_upload_start(int id, cJSON *params)
     bool is_ota = (strcmp(type, "ota") == 0);
     bool is_image = (strcmp(type, "image") == 0);
     bool is_font = (strcmp(type, "font") == 0);
-    if (!is_ota && !is_image && !is_font) {
-        _send_error(id, "Invalid upload type (image/font/ota)");
+    bool is_track = (strcmp(type, "track") == 0);
+    if (!is_ota && !is_image && !is_font && !is_track) {
+        _send_error(id, "Invalid upload type (image/font/track/ota)");
         return;
     }
 
-    if ((is_image || is_font) && !_name_is_safe(name)) {
+    if ((is_image || is_font || is_track) && !_name_is_safe(name)) {
         _send_error(id, "Invalid name");
         return;
     }
@@ -88,6 +90,13 @@ void _handle_upload_start(int id, cJSON *params)
      * no cap, so an oversized font could waste flash or fill the partition. */
     if (is_font && total_size > FONT_MAX_FILE_SIZE) {
         _send_error(id, "Font too large");
+        return;
+    }
+    /* Both bounds, not just the upper one: a 3-byte "track" would allocate a
+     * 3-byte buffer, pass every chunk check, and only fail at parse time after
+     * the transfer. Rejecting at start costs the sender nothing. */
+    if (is_track && (total_size < TRACK_MAP_HEADER || total_size > TRACK_MAP_MAX_FILE)) {
+        _send_error(id, "Track file size out of range");
         return;
     }
 
@@ -151,6 +160,7 @@ void _handle_upload_finish(int id, cJSON *params)
     bool is_ota = (strcmp(s_upload.type, "ota") == 0);
     bool is_image = (strcmp(s_upload.type, "image") == 0);
     bool is_font = (strcmp(s_upload.type, "font") == 0);
+    bool is_track = (strcmp(s_upload.type, "track") == 0);
 
     if (is_ota) {
         esp_ota_handle_t handle = (esp_ota_handle_t)(uintptr_t)s_upload.ota_handle;
@@ -206,6 +216,30 @@ void _handle_upload_finish(int id, cJSON *params)
         _ensure_dir(LFS_FONT_DIR);
         snprintf(path, sizeof(path), "%s/%s.ttf", LFS_FONT_DIR,
                  s_upload.name);
+    } else if (is_track) {
+        _ensure_dir(TRACK_MAP_LFS_DIR);
+        /* Validate with the SAME parser the widget will use, before anything
+         * is published — identical to the HTTP path. A track that fails here
+         * would not fail visibly on the dash: it would just draw nothing,
+         * which is indistinguishable from a widget pointed at the wrong name. */
+        track_map_file_t parsed;
+        track_map_err_t perr = track_map_parse(s_upload.buffer,
+                                               s_upload.received, &parsed);
+        if (perr != TRACK_MAP_OK) {
+            const char *why =
+                perr == TRACK_MAP_ERR_MAGIC   ? "Not an RDMTRK file" :
+                perr == TRACK_MAP_ERR_VERSION ? "RDMTRK version not supported by this firmware" :
+                perr == TRACK_MAP_ERR_POINTS  ? "Track has too few or too many points" :
+                perr == TRACK_MAP_ERR_RANGE   ? "Track contains an impossible coordinate" :
+                                                "Track file is truncated";
+            free(s_upload.buffer);
+            s_upload.buffer = NULL;
+            s_upload.active = false;
+            _send_error(id, why);
+            return;
+        }
+        snprintf(path, sizeof(path), "%s/%s" TRACK_MAP_EXT, TRACK_MAP_LFS_DIR,
+                 s_upload.name);
     } else {
         free(s_upload.buffer);
         s_upload.buffer = NULL;
@@ -257,7 +291,7 @@ void _handle_upload_finish(int id, cJSON *params)
     remove(bak_path);                       /* best-effort space reclaim */
 
     ESP_LOGI(TAG, "Upload complete: %s '%s' (%u bytes)",
-             is_image ? "image" : "font", s_upload.name,
+             is_image ? "image" : is_track ? "track" : "font", s_upload.name,
              (unsigned)s_upload.received);
     _send_ok(id);
 }

@@ -196,6 +196,8 @@ void _handle_download_start(int id, cJSON *params);
 void _handle_download_chunk(int id, cJSON *params);
 void _handle_font_list(int id, cJSON *params);
 void _handle_font_delete(int id, cJSON *params);
+void _handle_track_list(int id, cJSON *params);
+void _handle_track_delete(int id, cJSON *params);
 
 void _handle_brightness_get(int id, cJSON *params);
 void _handle_brightness_set(int id, cJSON *params);
@@ -258,7 +260,10 @@ static const cmd_entry_t s_dispatch_table[] = {
     /* Images */
     { "image.list",         _handle_image_list },
     { "image.delete",       _handle_image_delete },
-    /* Chunked downloads (images + fonts) */
+    /* Track maps */
+    { "track.list",         _handle_track_list },
+    { "track.delete",       _handle_track_delete },
+    /* Chunked downloads (images + fonts + tracks) */
     { "download.start",     _handle_download_start },
     { "download.chunk",     _handle_download_chunk },
     /* Fonts */

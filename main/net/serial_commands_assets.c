@@ -12,6 +12,7 @@
 #include "cJSON.h"
 #include "storage/boot_assets.h"
 #include "widgets/font_manager.h"
+#include "widgets/track_map_geo.h"
 
 #include <dirent.h>
 #include <string.h>
@@ -94,7 +95,23 @@ void _handle_image_delete(int id, cJSON *params)
     _send_ok(id);
 }
 
-/* ── download.start (returns metadata for chunked download) ─────────────── */
+/* ── download.start / download.chunk ────────────────────────────────────── */
+
+/* One place that turns (type, name) into a path. download.start and
+ * download.chunk MUST agree: start reports the size, chunk serves the bytes,
+ * and if they ever resolved to different files the transfer would succeed
+ * while delivering the wrong asset — silently, at the right length. */
+static void _download_path(char *out, size_t out_len, bool is_image,
+                           bool is_track, const char *name)
+{
+    if (is_image)
+        snprintf(out, out_len, "%s/%s.rdmimg", LFS_IMAGE_DIR, name);
+    else if (is_track)
+        snprintf(out, out_len, "%s/%s" TRACK_MAP_EXT, TRACK_MAP_LFS_DIR, name);
+    else
+        snprintf(out, out_len, "%s/%s.ttf", LFS_FONT_DIR, name);
+}
+
 
 void _handle_download_start(int id, cJSON *params)
 {
@@ -110,20 +127,19 @@ void _handle_download_start(int id, cJSON *params)
     const char *name = name_item->valuestring;
     bool is_image = (strcmp(type, "image") == 0);
     bool is_font  = (strcmp(type, "font") == 0);
-    if (!is_image && !is_font) {
-        _send_error(id, "Invalid download type (image/font)");
+    bool is_track = (strcmp(type, "track") == 0);
+    if (!is_image && !is_font && !is_track) {
+        _send_error(id, "Invalid download type (image/font/track)");
         return;
     }
 
     char path[80];
-    if (is_image)
-        snprintf(path, sizeof(path), "%s/%s.rdmimg", LFS_IMAGE_DIR, name);
-    else
-        snprintf(path, sizeof(path), "%s/%s.ttf", LFS_FONT_DIR, name);
+    _download_path(path, sizeof(path), is_image, is_track, name);
 
     struct stat st;
     if (stat(path, &st) != 0) {
-        _send_error(id, is_image ? "Image not found" : "Font not found");
+        _send_error(id, is_image ? "Image not found"
+                                 : is_track ? "Track not found" : "Font not found");
         return;
     }
 
@@ -159,16 +175,14 @@ void _handle_download_chunk(int id, cJSON *params)
 
     bool is_image = (strcmp(type, "image") == 0);
     bool is_font  = (strcmp(type, "font") == 0);
-    if (!is_image && !is_font) {
+    bool is_track = (strcmp(type, "track") == 0);
+    if (!is_image && !is_font && !is_track) {
         _send_error(id, "Invalid download type");
         return;
     }
 
     char path[80];
-    if (is_image)
-        snprintf(path, sizeof(path), "%s/%s.rdmimg", LFS_IMAGE_DIR, name);
-    else
-        snprintf(path, sizeof(path), "%s/%s.ttf", LFS_FONT_DIR, name);
+    _download_path(path, sizeof(path), is_image, is_track, name);
 
     FILE *f = fopen(path, "rb");
     if (!f) {
