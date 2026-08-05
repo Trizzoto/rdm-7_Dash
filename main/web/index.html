@@ -8172,6 +8172,24 @@
                             { name: "loop_fps", label: "Loop Speed (fps)", type: "stepper", def: 12, cat: "data", group: "Behaviour", help: "Loop mode: how fast the frames play, in frames per second.", min: 1, max: 30 },
                             { name: "hyst_pct", label: "Hysteresis %", type: "slider", def: 2, cat: "data", group: "Behaviour", help: "Stops the animation flickering when the reading sits right on a frame boundary or the threshold. Raise it if the frame chatters.", min: 0, max: 10, step: 1 }
                         ]
+                    },
+                    "track_map": {
+                        displayName: "Track Map", defW: 320, defH: 240,
+                        fields: [
+                            { name: "track_asset", label: "Track", type: "text", def: "", cat: "data", group: "Track", help: "Which track shape to draw. Push one from RDM Studio (GPS workspace -> Tracks -> Shape) and type its name here. The circuit's own name is stored inside the file, so this is just the filename." },
+                            { name: "rotation", label: "Rotation", type: "slider", def: 0, cat: "appearance", group: "Track", help: "Turn the whole circuit on screen. 0 puts north at the top.", min: 0, max: 359, step: 1 },
+                            { name: "line_color", label: "Track Color", type: "color", def: 0x5A6472, cat: "appearance", group: "Track", help: "Colour of the circuit outline.", nightOverridable: true },
+                            { name: "line_width", label: "Track Width", type: "stepper", def: 3, cat: "appearance", group: "Track", help: "How thick the outline is drawn.", min: 1, max: 20 },
+                            { name: "show_start_finish", label: "Show Start/Finish", type: "checkbox", def: true, cat: "appearance", group: "Track", help: "Draw a tick across the track where the lap starts." },
+                            { name: "sf_color", label: "Start/Finish Color", type: "color", def: 0xF5F7FA, cat: "appearance", group: "Track", help: "Colour of the start/finish tick.", enabledBy: "show_start_finish", nightOverridable: true },
+                            { name: "show_dot", label: "Show Car", type: "checkbox", def: true, cat: "appearance", group: "Car", help: "Show where the car is on the track. Needs an RDM GPS on the bus; the marker dims when the position goes stale." },
+                            { name: "dot_color", label: "Car Color", type: "color", def: 0xFF453A, cat: "appearance", group: "Car", help: "Colour of the moving car marker.", enabledBy: "show_dot", nightOverridable: true },
+                            { name: "dot_radius", label: "Car Size", type: "stepper", def: 5, cat: "appearance", group: "Car", help: "Radius of the car marker in pixels.", min: 2, max: 24, enabledBy: "show_dot" },
+                            { name: "lat_channel", label: "Latitude Channel", type: "text", def: "gps_latitude", cat: "data", group: "Car", help: "Channel carrying latitude. The default matches the RDM GPS; change it only if your position comes from something else.", enabledBy: "show_dot" },
+                            { name: "lon_channel", label: "Longitude Channel", type: "text", def: "gps_longitude", cat: "data", group: "Car", help: "Channel carrying longitude.", enabledBy: "show_dot" },
+                            { name: "show_name", label: "Show Track Name", type: "checkbox", def: true, cat: "appearance", group: "Label", help: "Print the circuit's name under the map. The name comes from the track file, not from this layout." },
+                            { name: "name_color", label: "Name Color", type: "color", def: 0x8A93A0, cat: "appearance", group: "Label", help: "Colour of the track name.", enabledBy: "show_name", nightOverridable: true }
+                        ]
                     }
                 };
         // AUTO-GENERATED END: WIDGET_DEFS

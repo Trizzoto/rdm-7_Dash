@@ -22,6 +22,7 @@
 #include "widget_line.h"
 #include "widget_banner.h"
 #include "widget_pathbar.h"
+#include "widget_track_map.h"
 #include "widget_anim.h"
 #include "widget_rules.h"
 
@@ -163,6 +164,8 @@ static widget_type_t _type_from_str(const char *s) {
 		return WIDGET_PATHBAR;
 	if (strcmp(s, "anim") == 0)
 		return WIDGET_ANIM;
+	if (strcmp(s, "track_map") == 0)
+		return WIDGET_TRACK_MAP;
 	return WIDGET_TYPE_COUNT;
 }
 
@@ -239,6 +242,9 @@ static widget_t *_factory(widget_type_t type, cJSON *widget_json) {
 		w = widget_anim_create_instance(slot);
 		break;
 #endif
+	case WIDGET_TRACK_MAP:
+		w = widget_track_map_create_instance(slot);
+		break;
 	default:
 		return NULL;
 	}

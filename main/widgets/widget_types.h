@@ -56,6 +56,8 @@ typedef enum {
     WIDGET_ANIM        = 16,  /* EXPERIMENTAL — module gated by RDM_WIDGET_ANIM_ENABLED
                                * (widget_anim.h); enum entry stays so the generated
                                * inspector table + name/constraint rows keep compiling. */
+    WIDGET_TRACK_MAP   = 17,  /* circuit outline + live car position; geometry
+                               * comes from an .rdmtrk asset, not the layout. */
     WIDGET_TYPE_COUNT
 } widget_type_t;
 

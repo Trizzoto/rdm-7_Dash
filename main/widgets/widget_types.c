@@ -98,6 +98,7 @@ const widget_size_constraints_t widget_constraints[WIDGET_TYPE_COUNT] = {
     /* WIDGET_BANNER      */ { .min_w = 100, .min_h = 24, .max_w = SCREEN_W, .max_h = 160 },
     /* WIDGET_PATHBAR     */ { .min_w =  20, .min_h = 20, .max_w = SCREEN_W, .max_h = SCREEN_H },
     /* WIDGET_ANIM        */ { .min_w =  20, .min_h = 20, .max_w = SCREEN_W, .max_h = SCREEN_H },
+    /* WIDGET_TRACK_MAP   */ { .min_w =  60, .min_h = 60, .max_w = SCREEN_W, .max_h = SCREEN_H },
 };
 
 /* ─── Type name lookup ───────────────────────────────────────────────────── */
@@ -122,6 +123,7 @@ const char *widget_type_name(widget_type_t type)
         "banner",
         "pathbar",
         "anim",
+        "track_map",
     };
     if ((unsigned)type >= (unsigned)WIDGET_TYPE_COUNT) return "unknown";
     return names[type];
