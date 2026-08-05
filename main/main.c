@@ -1335,7 +1335,7 @@ void app_main(void) {
    * takeover so boot logs stay visible on the USB-UART bridge (the desktop app
    * can't connect while that override is set). */
 #ifndef RDM7_DEBUG_KEEP_CONSOLE
-#define RDM7_DEBUG_KEEP_CONSOLE 1   /* TEMP debug: keep UART0 console live to capture crash backtrace — REVERT to 0 */
+#define RDM7_DEBUG_KEEP_CONSOLE 0
 #endif
 #if RDM7_DEBUG_KEEP_CONSOLE
   ESP_LOGW(TAG, "RDM7_DEBUG_KEEP_CONSOLE=1 — skipping uart_protocol_init "
