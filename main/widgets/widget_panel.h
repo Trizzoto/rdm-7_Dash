@@ -22,6 +22,9 @@ typedef struct {
 	char       label[64];
 	char       custom_text[32];
 	uint8_t    decimals;
+	bool       decimals_from_layout; /* layout carried an explicit decimals, or the
+	                                  * user set one in Widget settings → keep it and
+	                                  * stop following the bound channel's decimals */
 	bool       warning_high_enabled;
 	float      warning_high_threshold;
 	lv_color_t warning_high_color;

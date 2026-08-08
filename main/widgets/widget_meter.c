@@ -190,6 +190,47 @@ static void _meter_inv_shadow(lv_obj_t *m, lv_meter_scale_t *scale,
  * channel's source index changes; the definitions live further down. */
 static void _meter_on_signal(float value, bool is_stale, void *user_data);
 static uint32_t _meter_compute_angle_range(const meter_data_t *md);
+static void _meter_push_scale_range(widget_t *w, meter_data_t *md);
+static void _meter_show_value(widget_t *w, meter_data_t *md, float fv);
+
+/* ── Gauge scale vs. channel display unit ────────────────────────────
+ * Re-derive the rendered scale (md->min/max, DISPLAY units) from the authored
+ * base (NATIVE units). Idempotent by construction — always converts the base,
+ * never the previous md->min/max — so repeated channel-changed notifications
+ * can't compound the conversion.
+ *
+ * A meter with no explicit layout range tracks the bound channel's range, so
+ * the base follows the channel; that keeps to_json emitting a native-unit
+ * range whichever way the scale was sourced. */
+static void _meter_sync_range(meter_data_t *md) {
+	if (!md) return;
+	const channel_t *c = (const channel_t *)md->channel;
+	if (c && !md->range_from_layout) {
+		md->range_min_base = c->min;
+		md->range_max_base = c->max;
+	}
+	if (c) {
+		md->min = unit_convert(md->range_min_base, c->units_native, c->units_display);
+		md->max = unit_convert(md->range_max_base, c->units_native, c->units_display);
+	} else {
+		md->min = md->range_min_base;
+		md->max = md->range_max_base;
+	}
+}
+
+/* Inspector counterpart: the Min/Max fields show what the dial shows, i.e.
+ * DISPLAY units, so a typed value converts back to the native base the layout
+ * persists. A scale the user typed is theirs to keep, so this pins it the same
+ * way an explicit layout min/max does. */
+static void _meter_set_range_display(meter_data_t *md, float dmin, float dmax) {
+	if (!md) return;
+	const channel_t *c = (const channel_t *)md->channel;
+	md->range_min_base = c ? unit_convert(dmin, c->units_display, c->units_native) : dmin;
+	md->range_max_base = c ? unit_convert(dmax, c->units_display, c->units_native) : dmax;
+	md->range_from_layout =
+		(md->range_min_base != 0.0f || md->range_max_base != 100.0f);
+	_meter_sync_range(md);
+}
 
 /* ── v14 Channel binding ─────────────────────────────────────────────
  * When md->channel_id is non-empty, the meter pulls signal_name, min,
@@ -233,11 +274,12 @@ static void _meter_apply_channel(widget_t *w) {
 		md->signal_index = new_idx;
 	}
 	/* Adopt the channel's range ONLY when the layout didn't set an explicit
-	 * meter min/max — otherwise the user's gauge scale is theirs to keep. */
-	if (!md->range_from_layout) {
-		md->min = unit_convert(c->min, c->units_native, c->units_display);
-		md->max = unit_convert(c->max, c->units_native, c->units_display);
-	}
+	 * meter min/max — otherwise the user's gauge scale is theirs to keep.
+	 * EITHER WAY the scale is re-expressed in the channel's display unit, so it
+	 * shares one unit with the needle (_meter_on_signal) and the redline below.
+	 * Converting only the adopted range left a layout-pinned dial reading kPa
+	 * while the needle and redline had already moved to psi. */
+	_meter_sync_range(md);
 	/* Decimals drive the integer LVGL scale factor: a 0.0..2.0 boost channel
 	 * with decimals=1 maps to an internal 0..20 meter scale, giving 21 needle
 	 * steps instead of 3. Tick labels divide back by value_scale. */
@@ -269,6 +311,11 @@ static void _meter_on_channel_changed(channel_t *c, void *user_data) {
 	if (!md) return;
 
 	_meter_apply_channel(w);
+
+	/* lv_meter bakes the scale bounds in at create, so a range that just moved
+	 * — channel min/max edited, or its display unit switched kPa→psi — has to be
+	 * pushed back into LVGL or the needle keeps mapping against the old bounds. */
+	_meter_push_scale_range(w, md);
 
 	/* Threshold/range edits invalidate the entire meter (cheap relative
 	 * to a user edit — happens at human speed, not per-frame). */
@@ -328,6 +375,98 @@ static float _meter_apply_anchor(const meter_data_t *md, float v) {
 		if (span <= 0.0f) return hi;
 		return pivot + (v - a) * (hi - pivot) / span;
 	}
+}
+
+/* The bound signal's current reading in the meter's DISPLAY domain — converted,
+ * clamped, anchored and reversed, i.e. the same pipeline _meter_on_signal runs.
+ * Falls back to md->min when nothing live is bound, matching a stale needle. */
+static float _meter_current_display_value(const meter_data_t *md) {
+	float fv = md->min;
+	if (md->signal_index >= 0) {
+		signal_t *sig = signal_get_by_index((uint16_t)md->signal_index);
+		if (sig && !sig->is_stale) {
+			fv = sig->current_value;
+			const channel_t *c = (const channel_t *)md->channel;
+			if (c) fv = unit_convert(fv, c->units_native, c->units_display);
+			if (fv < md->min) fv = md->min;
+			if (fv > md->max) fv = md->max;
+		}
+	}
+	fv = _meter_apply_anchor(md, fv);
+	if (md->reverse) fv = md->max + md->min - fv;
+	return fv;
+}
+
+/* Re-push the scale bounds into LVGL after md->min/max moved at runtime. The
+ * lv_meter scale carries its own copy from create time, so without this a range
+ * change only lands on the next layout load. Mirrors widget_bar_sync_range().
+ *
+ * A meter with static_ticks has its face snapshotted into bg_img_src and its
+ * live ticks collapsed to zero width, so its printed tick NUMBERS stay stale
+ * until the layout reloads — re-baking would mean lv_snapshot_take on the LVGL
+ * task, the stall that tripped the task WDT during live preview edits. The
+ * needle still lands correctly, and the redline arc is left collapsed so it
+ * can't double-draw over the baked one. */
+static void _meter_push_scale_range(widget_t *w, meter_data_t *md) {
+	if (!w || !md) return;
+	uint32_t angle_range = _meter_compute_angle_range(md);
+	int32_t lo = lroundf(md->min * (float)md->value_scale);
+	int32_t hi = lroundf(md->max * (float)md->value_scale);
+
+	const struct {
+		lv_obj_t         *meter;
+		lv_meter_scale_t *scale;
+		lv_meter_scale_t *mid;
+		lv_meter_indicator_t *arc;
+		const void       *baked;
+	} faces[2] = {
+		{ md->meter,       md->scale,       md->mid_scale,       md->redline_arc,       md->tick_snapshot_dsc       },
+		{ md->night_meter, md->night_scale, md->night_mid_scale, md->night_redline_arc, md->night_tick_snapshot_dsc },
+	};
+
+	/* Redline arc spans [threshold, max] in value space, through the same
+	 * anchor → reverse transforms the needle goes through (see _meter_build_one). */
+	float arc_start_f = 0.0f, arc_end_f = 0.0f;
+	bool  arc_valid = md->redline_enabled && md->redline_show_arc;
+	if (arc_valid) {
+		float t = _meter_apply_anchor(md, md->redline_threshold);
+		if (t < md->min) t = md->min;
+		if (t > md->max) t = md->max;
+		arc_start_f = t;
+		arc_end_f   = md->max;
+		if (md->reverse) {
+			arc_start_f = md->min;
+			arc_end_f   = md->max + md->min - t;
+		}
+	}
+
+	for (int i = 0; i < 2; i++) {
+		if (!faces[i].meter || !lv_obj_is_valid(faces[i].meter)) continue;
+		if (faces[i].scale)
+			lv_meter_set_scale_range(faces[i].meter, faces[i].scale, lo, hi,
+			                         angle_range, (int32_t)md->start_angle);
+		if (faces[i].mid)
+			lv_meter_set_scale_range(faces[i].meter, faces[i].mid, lo, hi,
+			                         angle_range, (int32_t)md->start_angle);
+		if (arc_valid && faces[i].arc && !faces[i].baked) {
+			lv_meter_set_indicator_start_value(faces[i].meter, faces[i].arc,
+			                                   lroundf(arc_start_f * (float)md->value_scale));
+			lv_meter_set_indicator_end_value(faces[i].meter, faces[i].arc,
+			                                 lroundf(arc_end_f * (float)md->value_scale));
+		}
+	}
+	/* Value→needle-integer mapping just moved — force the next paint. */
+	md->_last_needle_valid = false;
+
+	/* ...and re-seat the needle NOW. lv_meter keeps the indicator's value in the
+	 * OLD integer domain, so rescaling alone leaves it pointing at a stale
+	 * number: a needle holding 101 (of 0..250 kPa) reads as pegged once the
+	 * scale becomes 0..36 psi. Clearing the paint memo only helps if another
+	 * tick arrives, and the signal registry notifies subscribers on a value
+	 * CHANGE — so a steady or stale reading would sit visibly wrong until the
+	 * engine moved it. Confirmed on hardware: the dial rescaled to psi but the
+	 * needle stayed at full deflection until MAP started changing again. */
+	_meter_show_value(w, md, _meter_current_display_value(md));
 }
 
 #define METER_ANIM_PERIOD_MS 16   /* easing tick ≈ display refresh */
@@ -1316,19 +1455,13 @@ static void _meter_add_needle_indicator(meter_data_t *md, lv_obj_t *m,
 	 * bound and fresh, otherwise fall back to md->min. Then apply the
 	 * same anchor + invert transforms _meter_on_signal does, so toggling
 	 * "Invert Direction" on a meter with no live signal still snaps the
-	 * needle to the correct end of the sweep. */
-	float init_f = md->min;
-	if (md->signal_index >= 0) {
-		signal_t *sig = signal_get_by_index((uint16_t)md->signal_index);
-		if (sig && !sig->is_stale) {
-			float fv = sig->current_value;
-			if (fv < md->min) fv = md->min;
-			if (fv > md->max) fv = md->max;
-			init_f = fv;
-		}
-	}
-	init_f = _meter_apply_anchor(md, init_f);
-	if (md->reverse) init_f = md->max + md->min - init_f;
+	 * needle to the correct end of the sweep.
+	 *
+	 * The signal's value is NATIVE, so it goes through the channel's display
+	 * conversion first — md->min/max and the ticks are display units, and
+	 * seeding a raw kPa reading onto a psi scale put the needle on the stop
+	 * until the first live tick corrected it. */
+	float init_f = _meter_current_display_value(md);
 	int32_t init_v = lroundf(init_f * (float)md->value_scale);
 	if (needle) lv_meter_set_indicator_value(m, needle, init_v);
 
@@ -1898,8 +2031,12 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 	if (!cfg)
 		return;
 	cJSON_AddNumberToObject(cfg, "slot", md->value_idx);
-	cJSON_AddNumberToObject(cfg, "min", md->min);
-	cJSON_AddNumberToObject(cfg, "max", md->max);
+	/* Persist the scale in the channel's NATIVE unit (range_*_base), never the
+	 * display-converted md->min/max. Writing the converted values back would
+	 * round-trip through from_json as if the user had authored them, so a dial
+	 * shown in psi would reload pinned in psi and convert a second time. */
+	cJSON_AddNumberToObject(cfg, "min", md->range_min_base);
+	cJSON_AddNumberToObject(cfg, "max", md->range_max_base);
 	cJSON_AddNumberToObject(cfg, "start_angle", md->start_angle);
 	cJSON_AddNumberToObject(cfg, "end_angle", md->end_angle);
 	if (md->signal_name[0] != '\0')
@@ -2098,11 +2235,18 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 		if (idx < 13)
 			md->value_idx = idx;
 	}
-	if (cJSON_IsNumber(min_item)) md->min = (float)min_item->valuedouble;
-	if (cJSON_IsNumber(max_item)) md->max = (float)max_item->valuedouble;
+	/* The layout's min/max are in the channel's native unit — that's the base.
+	 * md->min/max only become display units once a channel binds at the end of
+	 * from_json (_meter_apply_channel → _meter_sync_range); until then the two
+	 * are the same thing, which is also the right answer for an unbound meter. */
+	if (cJSON_IsNumber(min_item)) md->range_min_base = (float)min_item->valuedouble;
+	if (cJSON_IsNumber(max_item)) md->range_max_base = (float)max_item->valuedouble;
+	md->min = md->range_min_base;
+	md->max = md->range_max_base;
 	/* A non-default range is the user's own gauge scale — keep it over the bound
 	 * channel's. A fresh 0..100 meter still adopts the channel range on bind. */
-	if (md->min != 0.0f || md->max != 100.0f) md->range_from_layout = true;
+	if (md->range_min_base != 0.0f || md->range_max_base != 100.0f)
+		md->range_from_layout = true;
 	if (cJSON_IsNumber(sa_item))
 		md->start_angle = (int16_t)sa_item->valueint;
 	if (cJSON_IsNumber(ea_item))
@@ -2349,6 +2493,11 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 			 * channel_id field stays empty — to_json keeps emitting
 			 * legacy format on save so a v13 dash can still read it. */
 			md->channel = c;
+			/* _meter_on_signal converts through this channel from here on, so
+			 * the scale has to move into the same display unit — the recorded
+			 * channel can default to one (boost defaults to bar) even though
+			 * the legacy widget only ever knew native. */
+			_meter_sync_range(md);
 		}
 	}
 }
@@ -2756,8 +2905,8 @@ static bool _meter_inspector_set(widget_t *w, const char *name,
 	if (strcmp(name, "tick_outline_color") == 0)    { md->tick_outline_color = lv_color_hex(in->color); return true; }
 	if (strcmp(name, "tick_outline_strength") == 0) { md->tick_outline_strength = (uint8_t)in->i; return true; }
 	if (strcmp(name, "tick_outline_fade") == 0)     { md->tick_outline_fade = (uint8_t)in->i; return true; }
-	if (strcmp(name, "min") == 0) { md->min = (int32_t)in->i; return true; }
-	if (strcmp(name, "max") == 0) { md->max = (int32_t)in->i; return true; }
+	if (strcmp(name, "min") == 0) { _meter_set_range_display(md, (float)(int32_t)in->i, md->max); return true; }
+	if (strcmp(name, "max") == 0) { _meter_set_range_display(md, md->min, (float)(int32_t)in->i); return true; }
 	if (strcmp(name, "start_angle_user") == 0) {
 		int v = in->i; v %= 360; if (v < 0) v += 360;
 		md->start_angle = (int16_t)v;
@@ -2964,6 +3113,8 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	md->value_idx = (value_idx < 13) ? value_idx : 0;
 	md->min = 0;
 	md->max = 100;
+	md->range_min_base = 0;     /* native-unit twin of min/max — see the header */
+	md->range_max_base = 100;
 	md->value_scale = 1;        /* 10^decimals; overridden when a channel binds */
 	md->value_decimals = 0;
 

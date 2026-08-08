@@ -34,6 +34,15 @@ typedef struct {
 	bool    range_from_layout;      /* layout carried an explicit min/max → keep the
 	                                 * user's gauge scale; don't let the bound channel
 	                                 * override it in _meter_apply_channel */
+	/* The same gauge scale in the channel's NATIVE unit — what the layout
+	 * persists and what the channel stores its range/thresholds in. min/max
+	 * above are this base re-expressed in the channel's DISPLAY unit, which is
+	 * the unit the needle, redline and tick labels all render in. Keeping the
+	 * base separate is what makes the conversion idempotent: every re-apply
+	 * derives min/max from the base instead of re-converting an already
+	 * converted value. See _meter_sync_range(). */
+	float   range_min_base;
+	float   range_max_base;
 	int32_t value_scale;            /* 10^value_decimals; 1 = no decimals */
 	uint8_t value_decimals;         /* 0..3 — drives tick-label precision */
 	int16_t start_angle;

@@ -18,7 +18,7 @@ LDFLAGS ?= -lm
 # the two drifted apart — test_obd2_pid_table and test_widget_warning_precedence
 # existed for a while but only ever ran on Windows. If you add a test, add it
 # here as well as writing the file.
-TESTS = test_can_decode test_widget_rules test_layout_migration test_widget_arc_precedence test_obd2_freeze_frame test_obd2_one_shot_decode test_obd2_pid_table test_ota_skip_version test_calculated_gear test_web_path_safety test_ecu_preset_match test_widget_fields test_widget_warning_precedence test_hardening_fixes
+TESTS = test_can_decode test_widget_rules test_layout_migration test_widget_arc_precedence test_obd2_freeze_frame test_obd2_one_shot_decode test_obd2_pid_table test_ota_skip_version test_calculated_gear test_web_path_safety test_ecu_preset_match test_widget_fields test_widget_warning_precedence test_hardening_fixes test_meter_display_units test_arc_display_units test_widget_decimals_follow_channel test_track_map_geo
 
 BIN_DIR := build
 BINS    := $(addprefix $(BIN_DIR)/, $(TESTS))
@@ -64,6 +64,30 @@ $(BIN_DIR)/test_layout_migration: test_layout_migration.c unity.c cjson/cJSON.c 
 $(BIN_DIR)/test_widget_fields: test_widget_fields.c unity.c | $(BIN_DIR)
 	$(CC) $(CFLAGS) -Imocks -Icjson -I../../main \
 	    test_widget_fields.c unity.c \
+	    -o $@ $(LDFLAGS)
+
+# meter_display_units mirrors the meter's range logic but links the REAL
+# conversion table (unit_convert.c is pure C11 — no LVGL, no IDF), so the
+# kPa→psi factors under test are the shipping ones.
+$(BIN_DIR)/test_meter_display_units: test_meter_display_units.c unity.c ../../main/data/unit_convert.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -I../../main/data \
+	    test_meter_display_units.c unity.c ../../main/data/unit_convert.c \
+	    -o $@ $(LDFLAGS)
+
+# arc_display_units does the same for widget_arc's value axis (scale, redline,
+# alerts, limiter, anchor, tick window, value text) — real unit_convert.c again.
+$(BIN_DIR)/test_arc_display_units: test_arc_display_units.c unity.c ../../main/data/unit_convert.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -I../../main/data \
+	    test_arc_display_units.c unity.c ../../main/data/unit_convert.c \
+	    -o $@ $(LDFLAGS)
+
+# track_map_geo links the real RDMTRK parser and reads fixtures written by RDM
+# Studio's OWN encoder, so a byte-layout drift between the two repos fails here.
+# Regenerate the fixtures first if they are missing:
+#   node gen_track_fixtures.js <path-to-rdm7-desktop>
+$(BIN_DIR)/test_track_map_geo: test_track_map_geo.c unity.c ../../main/widgets/track_map_geo.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -I../../main \
+	    test_track_map_geo.c unity.c ../../main/widgets/track_map_geo.c \
 	    -o $@ $(LDFLAGS)
 
 # obd2_pid_table compiles the real PID table straight out of the firmware.

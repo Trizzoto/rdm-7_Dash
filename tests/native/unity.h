@@ -76,4 +76,13 @@ void unity_fail(const char *file, int line, const char *msg);
 	         "expected %.6f got %.6f for " #actual, _e, _a); \
 	         TEST_FAIL(_b); } } while (0)
 
+/* Same argument order as stock Unity: delta first. For values whose exact
+ * digits come out of a float conversion factor (kPa→psi and friends), where
+ * EQUAL_FLOAT's fixed 1e-5 is tighter than the result is meaningful. */
+#define TEST_ASSERT_FLOAT_WITHIN(delta, expected, actual) \
+	do { double _d = (double)(delta), _e = (double)(expected), _a = (double)(actual); \
+	     if (fabs(_e - _a) > _d) { char _b[160]; snprintf(_b, sizeof(_b), \
+	         "expected %.6f +/- %.6f got %.6f for " #actual, _e, _d, _a); \
+	         TEST_FAIL(_b); } } while (0)
+
 #endif /* RDM_TEST_UNITY_H */

@@ -18,6 +18,9 @@ typedef struct {
 typedef struct {
 	uint8_t    value_idx;
 	uint8_t    decimals;
+	bool       decimals_from_layout; /* layout carried an explicit decimals, or the
+	                                  * user set one in Widget settings → keep it and
+	                                  * stop following the bound channel's decimals */
 	char       font[32];
 	char       static_text[64];
 	char       signal_name[32];

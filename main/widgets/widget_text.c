@@ -81,6 +81,11 @@ static void _text_on_channel_changed(channel_t *c, void *user_data) {
 		if (new_idx >= 0)
 			signal_subscribe(new_idx, _text_on_signal, w);
 	}
+	/* Decimals follow the channel unless this widget carries its own override,
+	 * exactly as from_json decides it at load — otherwise the re-format below
+	 * repaints with the OLD precision and a decimals edit in the Channels editor
+	 * does nothing until the layout reloads. */
+	if (!td->decimals_from_layout) td->decimals = c->decimals;
 	/* Re-format the displayed value now in case the display unit / decimals
 	 * changed — the signal only re-notifies on a value CHANGE, so a frozen
 	 * signal would otherwise keep the old unit until the value next moves. */
@@ -166,7 +171,11 @@ static void _text_to_json(widget_t *w, cJSON *out) {
 	if (!cfg) return;
 	if (td) {
 		cJSON_AddNumberToObject(cfg, "slot", td->value_idx);
-		cJSON_AddNumberToObject(cfg, "decimals", td->decimals);
+		/* Emit decimals only as a per-widget OVERRIDE — matching what the bound
+		 * channel already says would re-load as a pin and stop the readout
+		 * following later channel edits. Same rule as widget_panel/widget_bar. */
+		if (!td->channel || td->decimals != ((channel_t *)td->channel)->decimals)
+			cJSON_AddNumberToObject(cfg, "decimals", td->decimals);
 		if (td->static_text[0] != '\0')
 			cJSON_AddStringToObject(cfg, "static_text", td->static_text);
 		if (td->signal_name[0] != '\0')
@@ -200,7 +209,8 @@ static void _text_from_json(widget_t *w, cJSON *in) {
 		if (idx < 13) td->value_idx = idx;
 	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "decimals");
-	if (cJSON_IsNumber(item)) td->decimals = (uint8_t)item->valueint;
+	td->decimals_from_layout = cJSON_IsNumber(item);
+	if (td->decimals_from_layout) td->decimals = (uint8_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "static_text");
 	if (cJSON_IsString(item) && item->valuestring) {
 		safe_strncpy(td->static_text, item->valuestring, sizeof(td->static_text));
@@ -243,6 +253,11 @@ static void _text_from_json(widget_t *w, cJSON *in) {
 		td->channel = bound_c;
 		safe_strncpy(td->signal_name, bound_c->signal_name, sizeof(td->signal_name));
 		td->signal_index = bound_c->signal_index;
+		/* Decimals default to the channel; a per-widget override in the layout
+		 * wins. Same rule as widget_panel / widget_bar — a text readout bound to
+		 * a channel should follow that channel's precision unless the user said
+		 * otherwise, instead of being stuck on whatever the layout was saved with. */
+		if (!td->decimals_from_layout) td->decimals = bound_c->decimals;
 	} else if (td->signal_name[0] != '\0') {
 		legacy_widget_data_t legacy = {
 			.signal_name = td->signal_name,
@@ -252,7 +267,10 @@ static void _text_from_json(widget_t *w, cJSON *in) {
 			.color_high_warn = CHANNEL_USE_DEFAULT_COLOR,
 		};
 		channel_t *c = channel_manager_record_legacy_widget(&legacy);
-		if (c) td->channel = c;
+		if (c) {
+			td->channel = c;
+			if (!td->decimals_from_layout) td->decimals = c->decimals;
+		}
 	}
 }
 
@@ -378,6 +396,9 @@ static bool _text_inspector_set(widget_t *w, const char *name,
 	if (strcmp(name, "decimals") == 0) {
 		int v = in->i; if (v < 0) v = 0; if (v > 4) v = 4;
 		td->decimals = (uint8_t)v;
+		/* An explicit per-widget choice — from here on this readout keeps its
+		 * own precision instead of following the channel. */
+		td->decimals_from_layout = true;
 		return true;   /* picked up by the next _text_on_signal call */
 	}
 	if (strcmp(name, "rotation") == 0) {

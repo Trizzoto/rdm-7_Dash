@@ -537,6 +537,16 @@ static void _bar_on_channel_changed(channel_t *c, void *user_data) {
 	/* Bar zone colours are widget-owned (Widget settings → ALERTS) — never
 	 * driven by the channel. Only range/thresholds/signal sync above. */
 
+	/* Decimals follow the channel unless this bar carries its own override,
+	 * exactly as from_json decides it at load. Without this, changing decimals
+	 * in the Channels editor did nothing until the layout was reloaded — and
+	 * the next layout save then baked the stale value in as a per-widget
+	 * override (to_json emits decimals whenever it differs from the channel's),
+	 * pinning the bar to the wrong precision for good. Also feeds
+	 * _bar_resolution_scale (10^decimals), so sync_range below re-scales the
+	 * LVGL range for it. */
+	if (!bd->decimals_from_layout) bd->decimals = c->decimals;
+
 	/* Bounds changed → re-push the LVGL range (standard mode) and re-render the
 	 * current value. The lv_bar's range is set at create from bar_min/max; the
 	 * old code only re-snapshotted the fields and dropped the paint memo, so the
@@ -1319,6 +1329,9 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "decimals");
 	bool decimals_overridden = cJSON_IsNumber(item);
 	if (decimals_overridden) bd->decimals = (uint8_t)item->valueint;
+	/* Remember it past from_json: _bar_apply_channel needs to know whether it
+	 * may adopt the channel's decimals on a later channel-changed notify. */
+	bd->decimals_from_layout = decimals_overridden;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "label_font");
 	if (cJSON_IsString(item) && item->valuestring) {
 		safe_strncpy(bd->label_font, item->valuestring, sizeof(bd->label_font));
@@ -1808,6 +1821,9 @@ static bool _bar_inspector_set(widget_t *w, const char *name,
 	}
 	if (strcmp(name, "decimals") == 0) {
 		bd->decimals = (uint8_t)in->i;
+		/* An explicit per-widget choice — from here on this bar keeps its own
+		 * precision instead of following the channel. */
+		bd->decimals_from_layout = true;
 		widget_bar_sync_range(bd);
 		return true;
 	}

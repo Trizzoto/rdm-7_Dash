@@ -64,6 +64,9 @@ typedef struct {
 	 * Image-mode bars only honour mode 0/1. */
 	uint8_t  fill_dir;
 	uint8_t  decimals;
+	bool     decimals_from_layout;   /* layout carried an explicit decimals, or the
+	                                  * user set one in Widget settings → keep it and
+	                                  * stop following the bound channel's decimals */
 	char     label_font[32];
 	char     value_font[32];
 	/* ── Appearance overrides ── */

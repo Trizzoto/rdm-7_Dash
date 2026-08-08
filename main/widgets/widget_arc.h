@@ -74,6 +74,37 @@ typedef struct {
     int16_t    signal_index;    /* runtime: -1 = unbound */
     float      signal_min;      /* default: 0 */
     float      signal_max;      /* default: 100 */
+    /* ── Value axis: NATIVE bases vs. rendered DISPLAY values ─────────────
+     * A channel decodes in a NATIVE unit (kPa) and renders in whatever
+     * DISPLAY unit the user picked (psi). Everything the arc measures along
+     * its value axis — the scale, the redline, the limiter trip point, the
+     * anchor pivot, the tick window — has to share ONE unit with the value
+     * itself, which _arc_on_signal converts to display units on the way in.
+     *
+     * So each of those quantities exists twice: a *_base field holding what
+     * was AUTHORED, in the channel's native unit, and the live field above
+     * (signal_min/max, redline_threshold, limiter_value, anchor_value,
+     * tick_min/tick_max) holding that base re-expressed in the display unit.
+     * The base is what the layout persists and what the channel stores its
+     * range/thresholds in; the live field is what renders.
+     *
+     * Keeping the base separate is what makes the conversion idempotent:
+     * _arc_sync_units() always derives the live field FROM the base, never by
+     * re-converting an already-converted value, so the channel-changed notify
+     * can fire any number of times without compounding. Persisting the base
+     * (not the converted value) is what stops a save/reload converting twice.
+     * Same pattern as range_min_base/range_max_base in widget_meter.h. */
+    bool       range_from_layout;  /* layout (or Widget settings) carried an explicit
+                                    * signal_min/max → that display scale is the user's
+                                    * own; don't let the bound channel's range replace
+                                    * it in _arc_sync_units */
+    float      range_min_base;     /* native twin of signal_min */
+    float      range_max_base;     /* native twin of signal_max */
+    float      redline_base;       /* native twin of redline_threshold */
+    float      limiter_base;       /* native twin of limiter_value */
+    float      anchor_base;        /* native twin of anchor_value */
+    float      tick_min_base;      /* native twin of tick_min */
+    float      tick_max_base;      /* native twin of tick_max */
     /* ── v14 channel binding ──────────────────────────────────────
      * See widget_meter.h for pattern. signal_min/max ← channel.min/max,
      * redline_threshold ← channel.high_warn. */
@@ -153,6 +184,12 @@ typedef struct {
     int16_t    value_y_offset;          /* default: 0 — vertical offset from center, px */
     uint8_t    value_decimals;          /* default: 0 — decimals shown */
     char       value_unit[16];          /* default: "" — suffix string (e.g. "RPM") */
+    /* A channel-bound arc with no authored suffix labels itself with the
+     * channel's DISPLAY unit, so the unit printed next to the number is the
+     * unit the number is actually in. A suffix the layout or the user supplied
+     * is a per-widget override and wins (that's what this flag records) — an
+     * arc reading "7.2" with "x1000 RPM" underneath keeps saying that. */
+    bool       value_unit_from_layout;
     lv_obj_t  *value_label;             /* runtime: the center label */
 
     /* ── Ticks (meter-parity) — rendered via an OVERLAY lv_meter sibling.
@@ -174,6 +211,17 @@ typedef struct {
     uint16_t   minor_tick_step;         /* value interval, 0 = use count */
     uint16_t   major_tick_step;         /* value interval for major ticks + labels */
     uint16_t   mid_tick_step;           /* value interval for medium ticks, 0 = off */
+    /* Native-unit twins of the three steps, on the same base/render split as the
+     * value-axis fields above — the counts are derived as span/step and the span
+     * is in display units, so a native step would blow the tick density apart
+     * (a 50 kPa step on a 0..36 psi dial leaves one tick). Held as float because
+     * the rendered uint16 rounds: keeping the base exact is what lets a typed
+     * step round-trip instead of eroding a little on every reload. Steps are
+     * INTERVALS, so they convert with _arc_delta_to_display (multiplicative part
+     * only — a 10 °C step is 18 °F, not 50). 0 stays 0 = tier off. */
+    float      minor_tick_step_base;
+    float      major_tick_step_base;
+    float      mid_tick_step_base;
     uint8_t    minor_tick_count;        /* default: 21 (legacy / runtime) */
     uint8_t    major_tick_every;        /* default: 5  (legacy / runtime) */
     uint8_t    minor_tick_length;       /* default: 10 */
@@ -285,9 +333,14 @@ typedef struct {
      * _value_to_angle so the redline marker lands at the right end. */
     bool       reverse;                 /* default: false */
 
-    /* Cached current value — used by redraws (resize, night swap) so they
-     * don't have to wait for the next signal tick to look right. */
+    /* Cached current value (DISPLAY units) — used by redraws (resize, night
+     * swap) so they don't have to wait for the next signal tick to look right. */
     float      _cached_value;
+    /* The same reading in NATIVE units, as it arrived from the signal registry.
+     * Held so a display-unit change can re-render from the true reading (and so
+     * the value→label map, which is keyed on raw signal values, still resolves)
+     * instead of re-converting _cached_value out of a unit we no longer know. */
+    float      _cached_native;
 
     /* Rule-override cached fg color. When a widget_rule overrides arc_color,
      * _arc_apply_fill_color uses this as the "normal" base instead of

@@ -385,6 +385,18 @@ static void _panel_on_channel_changed(channel_t *c, void *user_data) {
 	 * stale captured value (the "always red" bug). Only thresholds / range /
 	 * signal sync from the channel. */
 
+	/* Decimals follow the channel unless this panel carries its own override,
+	 * exactly as from_json decides it at load. Without this the re-render below
+	 * repainted with the OLD precision, so changing decimals in the Channels
+	 * editor did nothing until the layout was reloaded — and worse, the next
+	 * layout save then baked the stale value in as a per-widget override
+	 * (to_json emits decimals whenever it differs from the channel's), pinning
+	 * the panel to the wrong precision for good. */
+	if (!pd->decimals_from_layout && pd->decimals != c->decimals) {
+		pd->decimals = c->decimals;
+		pd->last_peak[0] = '\0';   /* re-render peak with the new precision */
+	}
+
 	/* Re-render the value now: a display-unit (or decimals) change must show
 	 * immediately, but the signal only re-notifies on a value CHANGE, so a
 	 * constant/frozen signal would otherwise keep the old unit until the
@@ -963,6 +975,9 @@ static void _panel_from_json(widget_t *w, cJSON *in) {
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "decimals");
 	bool decimals_overridden = cJSON_IsNumber(item);
 	if (decimals_overridden) pd->decimals = (uint8_t)item->valueint;
+	/* Remember it past from_json: _panel_apply_channel needs to know whether it
+	 * may adopt the channel's decimals on a later channel-changed notify. */
+	pd->decimals_from_layout = decimals_overridden;
 
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "show_peak");
 	if (cJSON_IsNumber(item)) {
@@ -1342,6 +1357,9 @@ static bool _panel_inspector_set(widget_t *w, const char *name,
 
 	if (strcmp(name, "decimals") == 0) {
 		pd->decimals = (uint8_t)in->i;
+		/* An explicit per-widget choice — from here on this panel keeps its own
+		 * precision instead of following the channel. */
+		pd->decimals_from_layout = true;
 		pd->last_peak[0] = '\0';  /* re-render peak with new precision */
 		return true;
 	}

@@ -21,6 +21,7 @@
 #include "gauge_tick.h"
 #include "system/night_mode.h"
 #include "data/channel_manager.h"
+#include "data/unit_convert.h"
 #include "signal.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
@@ -95,12 +96,13 @@ static void _arc_apply_night_mode(widget_t *w, bool active);
 static void _arc_night_cb(bool active, void *user_data);
 static void _arc_apply_fill_color(arc_data_t *d, bool active);
 static void _arc_flash_timer_cb(lv_timer_t *t);
-static void _arc_update_value_label(arc_data_t *d, float value);
+static void _arc_update_value_label(arc_data_t *d, float value, float native);
 static void _arc_recompute_value(widget_t *w, float value, bool is_stale);
 static void _arc_build_overlay(arc_data_t *d, lv_obj_t *cont,
                                lv_coord_t ow, lv_coord_t oh, bool night_active);
 static void _arc_drive_value_needle(arc_data_t *d, float value);
 static void _arc_tick_draw_cb(lv_event_t *e);
+static void _arc_rebuild_overlay(widget_t *w, bool night_active);
 
 /* ── Helpers: mode detection ───────────────────────────────────────────── */
 
@@ -128,6 +130,119 @@ static lv_coord_t _arc_inset_dim(lv_coord_t full, int inset) {
     lv_coord_t v = (lv_coord_t)(full - 2 * inset);
     if (v < 20) v = 20;
     return v;
+}
+
+/* ── Helpers: channel native unit ↔ display unit ─────────────────────────────
+ * A channel decodes in units_native and renders in units_display. The arc draws
+ * everything — scale, needle-line, fill, redline marker, tick labels, value
+ * text — on ONE axis, so every quantity on that axis has to be in the display
+ * unit. These two convert between the authored native base and what renders;
+ * both are identity for an unbound arc and for the (overwhelmingly common) case
+ * where the two units match. See the *_base fields in widget_arc.h. */
+static float _arc_to_display(const arc_data_t *d, float native) {
+    const channel_t *c = (const channel_t *)d->channel;
+    if (!c) return native;
+    return unit_convert(native, c->units_native, c->units_display);
+}
+
+static float _arc_to_native(const arc_data_t *d, float display) {
+    const channel_t *c = (const channel_t *)d->channel;
+    if (!c) return display;
+    return unit_convert(display, c->units_display, c->units_native);
+}
+
+/* Convert a value INTERVAL (a tick step) rather than a point on the axis. A
+ * conversion is affine — out = v*scale + offset — and a delta only picks up the
+ * scale, so a 10 °C step is an 18 °F step, not 50. Differencing two point
+ * conversions cancels the offset exactly, which gets that from unit_convert()
+ * without needing a second entry point into the table. */
+static float _arc_delta_to_display(const arc_data_t *d, float native_delta) {
+    const channel_t *c = (const channel_t *)d->channel;
+    if (!c) return native_delta;
+    float zero = unit_convert(0.0f, c->units_native, c->units_display);
+    return unit_convert(native_delta, c->units_native, c->units_display) - zero;
+}
+
+static float _arc_delta_to_native(const arc_data_t *d, float display_delta) {
+    const channel_t *c = (const channel_t *)d->channel;
+    if (!c) return display_delta;
+    float zero = unit_convert(0.0f, c->units_display, c->units_native);
+    return unit_convert(display_delta, c->units_display, c->units_native) - zero;
+}
+
+/* Round a converted step back into its uint16 render field. Rounds (not
+ * truncates) so a step typed in display units survives the round trip, and
+ * never lets a non-zero step collapse to 0 — that's the "tier off" sentinel. */
+static uint16_t _arc_step_render(float display_step) {
+    if (display_step <= 0.0f) return 0;
+    long v = lroundf(display_step);
+    if (v < 1)     v = 1;
+    if (v > 65535) v = 65535;
+    return (uint16_t)v;
+}
+
+/* Re-derive every rendered value-axis field from its authored NATIVE base.
+ * Idempotent by construction — always converts the base, never the previous
+ * rendered value — so the channel-changed notify (which fires on every channel
+ * metadata edit) can't compound the conversion.
+ *
+ * An arc with no explicit layout scale tracks the bound channel's range, so the
+ * base follows the channel; that keeps to_json emitting a native-unit range
+ * whichever way the scale was sourced. Mirrors _meter_sync_range(). */
+static void _arc_sync_units(arc_data_t *d) {
+    if (!d) return;
+    const channel_t *c = (const channel_t *)d->channel;
+    if (c && !d->range_from_layout) {
+        d->range_min_base = c->min;
+        d->range_max_base = c->max;
+    }
+    d->signal_min        = _arc_to_display(d, d->range_min_base);
+    d->signal_max        = _arc_to_display(d, d->range_max_base);
+    d->redline_threshold = _arc_to_display(d, d->redline_base);
+    d->limiter_value     = _arc_to_display(d, d->limiter_base);
+    d->anchor_value      = _arc_to_display(d, d->anchor_base);
+    /* The tick window is OFF when tick_max <= tick_min, and its "off" state is
+     * the 0/0 default. Converting that pair would turn it into 32/32 under
+     * °C→°F — still off, but only by luck; leave a disabled window alone so no
+     * conversion can ever nudge it into a live (and bogus) window. */
+    if (d->tick_max_base > d->tick_min_base) {
+        d->tick_min = _arc_to_display(d, d->tick_min_base);
+        d->tick_max = _arc_to_display(d, d->tick_max_base);
+    } else {
+        d->tick_min = d->tick_min_base;
+        d->tick_max = d->tick_max_base;
+    }
+    /* Tick SPACING — intervals, so the delta conversion. */
+    d->minor_tick_step = _arc_step_render(_arc_delta_to_display(d, d->minor_tick_step_base));
+    d->major_tick_step = _arc_step_render(_arc_delta_to_display(d, d->major_tick_step_base));
+    d->mid_tick_step   = _arc_step_render(_arc_delta_to_display(d, d->mid_tick_step_base));
+}
+
+/* Adopt the channel's alert thresholds. Channel-owned and never persisted on
+ * the widget, so there's no base to keep — they're re-derived (and converted)
+ * from low_warn/high_warn every time. A side with no warn parks at the range
+ * edge so that alert can never fire, rather than sitting stale mid-range. */
+static void _arc_sync_alert_thresholds(arc_data_t *d) {
+    const channel_t *c = (const channel_t *)d->channel;
+    if (!c) return;
+    d->arc_low  = (c->low_warn  != CHANNEL_THRESHOLD_UNSET_LOW)
+                      ? _arc_to_display(d, c->low_warn)  : d->signal_min;
+    d->arc_high = (c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH)
+                      ? _arc_to_display(d, c->high_warn) : d->signal_max;
+}
+
+/* Widget settings counterpart: Signal Min/Max show what the dial shows, i.e.
+ * DISPLAY units, so a typed value converts back to the native base the layout
+ * persists. A scale the user typed is theirs to keep, so this pins it the same
+ * way an explicit layout signal_min/max does — typing the factory 0..100 back
+ * in un-pins it and hands the scale back to the channel. */
+static void _arc_set_range_display(arc_data_t *d, float dmin, float dmax) {
+    if (!d) return;
+    d->range_min_base = _arc_to_native(d, dmin);
+    d->range_max_base = _arc_to_native(d, dmax);
+    d->range_from_layout = (d->range_min_base != ARC_DEFAULT_SIG_MIN ||
+                            d->range_max_base != ARC_DEFAULT_SIG_MAX);
+    _arc_sync_units(d);
 }
 
 /* ── Helpers: anchor + reverse value transform (ported from widget_meter) ──
@@ -416,15 +531,20 @@ static void _arc_update_flash_state(widget_t *w) {
 }
 
 /* Compose the value-text label content using value_decimals + value_unit.
- * Skips work when show_value is false or label doesn't exist. */
-static void _arc_update_value_label(arc_data_t *d, float value) {
+ * Skips work when show_value is false or label doesn't exist.
+ *
+ * @p value is the reading in DISPLAY units — the number that gets printed, and
+ * the same unit value_unit names. @p native is the same reading as it came off
+ * the signal registry; the value→label map is keyed on raw signal values, so it
+ * has to be looked up with that one, not the converted number. */
+static void _arc_update_value_label(arc_data_t *d, float value, float native) {
     if (!d || !d->value_label || !lv_obj_is_valid(d->value_label)) return;
     char buf[32];
     /* Try the signal's value→label map first (gear positions, drive
      * modes, etc.). On a hit we skip the unit suffix — labels like "N"
      * or "Sport" stand alone. Numeric fallback keeps the existing unit
      * concatenation behaviour. */
-    const char *lbl = signal_value_lookup_label(d->signal_index, value);
+    const char *lbl = signal_value_lookup_label(d->signal_index, native);
     if (lbl) {
         snprintf(buf, sizeof(buf), "%s", lbl);
     } else if (d->value_decimals == 0) {
@@ -448,14 +568,19 @@ static void _arc_update_value_label(arc_data_t *d, float value) {
 
 /* Central per-tick logic. Cache value, update LVGL arc, update label,
  * re-evaluate zone state, repaint fill. Called from the signal callback
- * and from places that need a forced repaint (resize, night swap). */
+ * and from places that need a forced repaint (resize, night swap).
+ *
+ * @p value is in DISPLAY units — _arc_on_signal converts on the way in, so the
+ * scale, redline, limiter and alert thresholds it gets compared against here all
+ * share one unit with it. */
 static void _arc_recompute_value(widget_t *w, float value, bool is_stale) {
     arc_data_t *d = (arc_data_t *)w->type_data;
     if (!d) return;
 
     if (is_stale) {
         /* Stale: collapse fill to 0 and clear limiter state. */
-        d->_cached_value = d->signal_min;
+        d->_cached_value  = d->signal_min;
+        d->_cached_native = d->range_min_base;
         d->in_limiter   = false;
         if (_is_image_mode(d) && d->arc_image_radial && d->img_full_obj) {
             lv_obj_add_flag(d->img_full_obj, LV_OBJ_FLAG_HIDDEN);
@@ -465,7 +590,7 @@ static void _arc_recompute_value(widget_t *w, float value, bool is_stale) {
             _update_arc_value(d, d->signal_min);
         }
         _arc_drive_value_needle(d, d->signal_min);
-        _arc_update_value_label(d, d->signal_min);
+        _arc_update_value_label(d, d->signal_min, d->range_min_base);
         _arc_update_flash_state(w);
         _arc_apply_fill_color(d, night_mode_is_active());
         return;
@@ -488,14 +613,15 @@ static void _arc_recompute_value(widget_t *w, float value, bool is_stale) {
         _arc_update_flash_state(w);
     }
 
-    _arc_update_value_label(d, value);
+    _arc_update_value_label(d, value, d->_cached_native);
     _arc_apply_fill_color(d, night_mode_is_active());
 }
 
 /* ── Signal callback ───────────────────────────────────────────────────── */
 
 /* Smoothing apply: push the eased value straight to the display path (no
- * recursion — _arc_recompute_value isn't the signal entry point). */
+ * recursion — _arc_recompute_value isn't the signal entry point). Already in
+ * display units — the smoother only ever sees converted values. */
 static void _arc_smooth_apply(widget_t *w, float v) {
     _arc_recompute_value(w, v, false);
 }
@@ -504,6 +630,14 @@ static void _arc_on_signal(float value, bool is_stale, void *user_data) {
     widget_t *w = (widget_t *)user_data;
     if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
     arc_data_t *d = (arc_data_t *)w->type_data;
+    /* The registry hands us the channel's NATIVE reading. Convert once, here, so
+     * everything downstream — fill geometry, value-line, redline/limiter/alert
+     * comparisons, the value text, and the smoother's own settle epsilon — works
+     * in the same display unit the scale is drawn in. */
+    if (d) {
+        d->_cached_native = value;
+        value = _arc_to_display(d, value);
+    }
     /* Value smoothing: ease the fill/value-line at the refresh rate. */
     if (d && d->smooth.smoothing_ms != 0) {
         if (is_stale) widget_smooth_reset(&d->smooth);
@@ -531,25 +665,51 @@ static void _arc_on_channel_changed(channel_t *c, void *user_data) {
         if (new_idx >= 0)
             signal_subscribe(new_idx, _arc_on_signal, w);
     }
-    d->signal_min = (float)c->min;
-    d->signal_max = (float)c->max;
+    /* Redline tracks the channel's high threshold, in the channel's NATIVE unit
+     * — _arc_sync_units converts it below alongside the scale. */
     if (c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH) {
         d->redline_enabled = true;
-        d->redline_threshold = (float)c->high_warn;
+        d->redline_base = c->high_warn;
     } else {
         d->redline_enabled = false;
     }
-    /* Channel owns the alert thresholds (same as the bar). When a side has no
-     * warn set, park it at the range edge so that alert can never fire
-     * (reverts to inactive) instead of leaving a stale value mid-range. Alert
-     * COLOURS stay widget-owned — never driven by the channel. */
-    d->arc_low  = (c->low_warn  != CHANNEL_THRESHOLD_UNSET_LOW)  ? (float)c->low_warn  : d->signal_min;
-    d->arc_high = (c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH) ? (float)c->high_warn : d->signal_max;
+    /* Re-derive the whole value axis from its native bases. This used to assign
+     * d->signal_min/max straight from c->min/max, which had two bugs: it ignored
+     * the channel's display unit (so a kPa channel shown as psi kept a kPa dial
+     * under a psi fill), and it overwrote an explicit layout signal_min/max
+     * unconditionally — from_json went to the trouble of honouring that override
+     * and the first channel-changed notify threw it away. */
+    _arc_sync_units(d);
+    /* Channel owns the alert thresholds (same as the bar); alert COLOURS stay
+     * widget-owned — never driven by the channel. */
+    _arc_sync_alert_thresholds(d);
     /* Redline colour is widget-owned — never driven by the channel. */
-    /* Thresholds moved → re-apply the fill so the alert recolor reflects the
-     * new buckets immediately (a parked signal produces no further tick). */
-    _arc_apply_fill_color(d, night_mode_is_active());
-    if (w->root && lv_obj_is_valid(w->root)) lv_obj_invalidate(w->root);
+    /* The scale's span feeds the smoother's settle epsilon, so a range or
+     * display-unit change has to reach it too. */
+    d->smooth.range = d->signal_max - d->signal_min;
+    /* An arc with no authored suffix labels itself with the channel's display
+     * unit, so switching kPa→psi relabels the value text with the number. */
+    if (!d->value_unit_from_layout)
+        safe_strncpy(d->value_unit, c->units_display, sizeof(d->value_unit));
+    if (w->root && lv_obj_is_valid(w->root)) {
+        /* Scale moved → the tick ring and its labels are laid out against the
+         * OLD range (and are baked into a snapshot at build time), so they have
+         * to be rebuilt or the dial keeps counting in the unit we just left.
+         * Cheap enough here: listeners fire on channel METADATA edits, never per
+         * value tick. */
+        _arc_rebuild_overlay(w, night_mode_is_active());
+        /* Re-render from the last true reading, converted into the new unit —
+         * the signal only re-notifies on a value CHANGE, so a frozen signal
+         * would otherwise sit on its old-unit fill until the value next moves.
+         * Also re-applies the fill colour so the alert recolor reflects the new
+         * threshold buckets immediately. */
+        _arc_recompute_value(w, _arc_to_display(d, d->_cached_native), false);
+        lv_obj_invalidate(w->root);
+    } else {
+        /* Pre-create / torn down: no objects to repaint, but the fill-colour
+         * memo still has to see the new thresholds. */
+        _arc_apply_fill_color(d, night_mode_is_active());
+    }
 }
 
 /* Apply per-image styling (opacity / recolor tint / blend mode) to an arc image
@@ -1683,6 +1843,7 @@ static void _arc_create(widget_t *w, lv_obj_t *parent) {
     d->flash_phase     = false;
     d->in_limiter      = false;
     d->_cached_value   = d->signal_min;
+    d->_cached_native  = d->range_min_base;   /* native twin of _cached_value */
     d->_last_fill_valid  = false;  /* paint memo must not gate the first paint */
     d->_last_label_valid = false;  /* of a freshly (re)built arc_obj/value_label */
     d->tick_mid_scale  = NULL;
@@ -1835,10 +1996,20 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
         cJSON_AddStringToObject(cfg, "signal_name", d->signal_name);
     if (d->channel_id[0] != '\0')
         cJSON_AddStringToObject(cfg, "channel", d->channel_id);
-    if (d->signal_min != ARC_DEFAULT_SIG_MIN)
-        cJSON_AddNumberToObject(cfg, "signal_min", (double)d->signal_min);
-    if (d->signal_max != ARC_DEFAULT_SIG_MAX)
-        cJSON_AddNumberToObject(cfg, "signal_max", (double)d->signal_max);
+    /* Scale: emit the NATIVE base, never the display-converted signal_min/max —
+     * persisting the converted number would reload as if the user had authored
+     * it and convert it a SECOND time (0..250 kPa → 0..36 psi → 0..5 psi).
+     *
+     * And emit it only as a per-widget OVERRIDE. An arc that never pinned its
+     * scale tracks the bound channel's range, so writing that range out would
+     * reload as a pin (from_json reads any present signal_min/max as explicit)
+     * and freeze the gauge against later channel edits — the same trap
+     * widget_text hit persisting channel-sourced decimals. */
+    bool pin_range = d->range_from_layout || !d->channel;
+    if (pin_range && d->range_min_base != ARC_DEFAULT_SIG_MIN)
+        cJSON_AddNumberToObject(cfg, "signal_min", (double)d->range_min_base);
+    if (pin_range && d->range_max_base != ARC_DEFAULT_SIG_MAX)
+        cJSON_AddNumberToObject(cfg, "signal_max", (double)d->range_max_base);
     if (d->smooth.smoothing_ms != 20)
         cJSON_AddNumberToObject(cfg, "smoothing_ms", d->smooth.smoothing_ms);
 
@@ -1865,8 +2036,9 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
     /* Redline zone */
     if (d->redline_enabled)
         cJSON_AddBoolToObject(cfg, "redline_enabled", true);
-    if (d->redline_threshold != ARC_DEFAULT_REDLINE)
-        cJSON_AddNumberToObject(cfg, "redline_threshold", (double)d->redline_threshold);
+    /* Native base, not the converted threshold — same reason as the scale. */
+    if (d->redline_base != ARC_DEFAULT_REDLINE)
+        cJSON_AddNumberToObject(cfg, "redline_threshold", (double)d->redline_base);
     if (d->redline_color.full != lv_color_hex(ARC_DEFAULT_REDLINE_COLOR).full)
         cJSON_AddNumberToObject(cfg, "redline_color", (int)d->redline_color.full);
     if (d->redline_arc_width != 0)
@@ -1889,8 +2061,8 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
     /* Limiter */
     if (d->limiter_effect != 0)
         cJSON_AddNumberToObject(cfg, "limiter_effect", d->limiter_effect);
-    if (d->limiter_value != ARC_DEFAULT_LIMITER_VAL)
-        cJSON_AddNumberToObject(cfg, "limiter_value", (double)d->limiter_value);
+    if (d->limiter_base != ARC_DEFAULT_LIMITER_VAL)
+        cJSON_AddNumberToObject(cfg, "limiter_value", (double)d->limiter_base);
     if (d->limiter_color.full != lv_color_hex(ARC_DEFAULT_LIMITER_COLOR).full)
         cJSON_AddNumberToObject(cfg, "limiter_color", (int)d->limiter_color.full);
     if (d->flash_speed_ms != ARC_DEFAULT_FLASH_MS)
@@ -1907,7 +2079,13 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
         cJSON_AddNumberToObject(cfg, "value_y_offset", d->value_y_offset);
     if (d->value_decimals != 0)
         cJSON_AddNumberToObject(cfg, "value_decimals", d->value_decimals);
-    if (d->value_unit[0] != '\0')
+    /* Emit the suffix only as a per-widget OVERRIDE. A channel-bound arc adopts
+     * the channel's display unit, so writing that back out would reload as an
+     * authored suffix and stop tracking later unit changes (same rule as
+     * widget_text's decimals). */
+    if (d->value_unit[0] != '\0' &&
+        (!d->channel ||
+         strcmp(d->value_unit, ((const channel_t *)d->channel)->units_display) != 0))
         cJSON_AddStringToObject(cfg, "value_unit", d->value_unit);
 
     /* Ticks (overlay meter) — defaults-only; bool only when true. */
@@ -1916,9 +2094,10 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
     /* Tick spacing: prefer STEPS (range-independent). Emit counts only for
      * legacy widgets that never set a step. */
     if (d->minor_tick_step > 0) {
-        cJSON_AddNumberToObject(cfg, "minor_tick_step", d->minor_tick_step);
+        /* Native bases, like the rest of the value axis. */
+        cJSON_AddNumberToObject(cfg, "minor_tick_step", (double)d->minor_tick_step_base);
         if (d->major_tick_step > 0)
-            cJSON_AddNumberToObject(cfg, "major_tick_step", d->major_tick_step);
+            cJSON_AddNumberToObject(cfg, "major_tick_step", (double)d->major_tick_step_base);
     } else {
         if (d->minor_tick_count != ARC_DEFAULT_MINOR_TICK_COUNT)
             cJSON_AddNumberToObject(cfg, "minor_tick_count", d->minor_tick_count);
@@ -1939,7 +2118,7 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
         cJSON_AddNumberToObject(cfg, "major_tick_color", (int)d->major_tick_color.full);
     /* Medium (3rd) tick tier — prefer step, fall back to legacy count. */
     if (d->mid_tick_step > 0)
-        cJSON_AddNumberToObject(cfg, "mid_tick_step", d->mid_tick_step);
+        cJSON_AddNumberToObject(cfg, "mid_tick_step", (double)d->mid_tick_step_base);
     else if (d->mid_tick_count != 0)
         cJSON_AddNumberToObject(cfg, "mid_tick_count", d->mid_tick_count);
     if (d->mid_tick_length != ARC_DEFAULT_MID_TICK_LENGTH)
@@ -1979,9 +2158,9 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
     /* ticks_on_top defaults to TRUE — emit only when the user forced it OFF. */
     if (!d->ticks_on_top)
         cJSON_AddBoolToObject(cfg, "ticks_on_top", false);
-    if (d->tick_max > d->tick_min) {
-        cJSON_AddNumberToObject(cfg, "tick_min", (double)d->tick_min);
-        cJSON_AddNumberToObject(cfg, "tick_max", (double)d->tick_max);
+    if (d->tick_max_base > d->tick_min_base) {
+        cJSON_AddNumberToObject(cfg, "tick_min", (double)d->tick_min_base);
+        cJSON_AddNumberToObject(cfg, "tick_max", (double)d->tick_max_base);
     }
     if (d->label_gap != ARC_DEFAULT_LABEL_GAP)
         cJSON_AddNumberToObject(cfg, "label_gap", d->label_gap);
@@ -2005,8 +2184,8 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
     /* Anchor curve */
     if (d->anchor_enabled)
         cJSON_AddBoolToObject(cfg, "anchor_enabled", true);
-    if (d->anchor_value != ARC_DEFAULT_ANCHOR_VALUE)
-        cJSON_AddNumberToObject(cfg, "anchor_value", (double)d->anchor_value);
+    if (d->anchor_base != ARC_DEFAULT_ANCHOR_VALUE)
+        cJSON_AddNumberToObject(cfg, "anchor_value", (double)d->anchor_base);
     if (d->anchor_position != ARC_DEFAULT_ANCHOR_POSITION)
         cJSON_AddNumberToObject(cfg, "anchor_position", d->anchor_position);
 
@@ -2102,16 +2281,23 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
     if (cJSON_IsString(item) && item->valuestring)
         safe_strncpy(d->signal_name, item->valuestring, sizeof(d->signal_name));
 
-    /* Track explicit presence: an explicit widget signal_min/max is a DISPLAY
-     * SCALE choice and overrides the bound channel's data range below, so the
-     * scale can start below the channel min (e.g. a negative min to raise where
-     * the 0 mark sits on a tacho). Absent → fall back to the channel range. */
+    /* Track explicit presence: an explicit widget signal_min/max is a SCALE
+     * choice and overrides the bound channel's data range below, so the scale
+     * can start below the channel min (e.g. a negative min to raise where the 0
+     * mark sits on a tacho). Absent → fall back to the channel range.
+     *
+     * The layout carries the scale in the channel's NATIVE unit, so it lands in
+     * the base; _arc_sync_units re-expresses it in the display unit once the
+     * channel binding resolves at the bottom of this function. range_from_layout
+     * has to OUTLIVE from_json — _arc_on_channel_changed needs to know it may
+     * not replace a user-authored scale on a later channel-changed notify. */
     bool sig_min_explicit = false, sig_max_explicit = false;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_min");
-    if (cJSON_IsNumber(item)) { d->signal_min = (float)item->valuedouble; sig_min_explicit = true; }
+    if (cJSON_IsNumber(item)) { d->range_min_base = (float)item->valuedouble; sig_min_explicit = true; }
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_max");
-    if (cJSON_IsNumber(item)) { d->signal_max = (float)item->valuedouble; sig_max_explicit = true; }
+    if (cJSON_IsNumber(item)) { d->range_max_base = (float)item->valuedouble; sig_max_explicit = true; }
+    d->range_from_layout = sig_min_explicit || sig_max_explicit;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "smoothing_ms");
     if (cJSON_IsNumber(item)) d->smooth.smoothing_ms = (uint16_t)item->valueint;
 
@@ -2148,7 +2334,7 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
     item = cJSON_GetObjectItemCaseSensitive(cfg, "redline_enabled");
     if (cJSON_IsBool(item)) d->redline_enabled = cJSON_IsTrue(item);
     item = cJSON_GetObjectItemCaseSensitive(cfg, "redline_threshold");
-    if (cJSON_IsNumber(item)) d->redline_threshold = (float)item->valuedouble;
+    if (cJSON_IsNumber(item)) d->redline_base = (float)item->valuedouble;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "redline_color");
     if (cJSON_IsNumber(item)) d->redline_color.full = (uint16_t)item->valueint;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "redline_arc_width");
@@ -2175,7 +2361,7 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
         d->limiter_effect = (uint8_t)v;
     }
     item = cJSON_GetObjectItemCaseSensitive(cfg, "limiter_value");
-    if (cJSON_IsNumber(item)) d->limiter_value = (float)item->valuedouble;
+    if (cJSON_IsNumber(item)) d->limiter_base = (float)item->valuedouble;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "limiter_color");
     if (cJSON_IsNumber(item)) d->limiter_color.full = (uint16_t)item->valueint;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "flash_speed_ms");
@@ -2199,8 +2385,12 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
     item = cJSON_GetObjectItemCaseSensitive(cfg, "value_decimals");
     if (cJSON_IsNumber(item)) d->value_decimals = (uint8_t)item->valueint;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "value_unit");
-    if (cJSON_IsString(item) && item->valuestring)
+    if (cJSON_IsString(item) && item->valuestring) {
         safe_strncpy(d->value_unit, item->valuestring, sizeof(d->value_unit));
+        /* An authored suffix outranks the channel's display unit — remembered
+         * past from_json so a later channel-changed notify won't relabel it. */
+        d->value_unit_from_layout = true;
+    }
 
     /* Ticks (overlay lv_meter) */
     item = cJSON_GetObjectItemCaseSensitive(cfg, "show_ticks");
@@ -2208,11 +2398,11 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
     /* Tick spacing: STEPS preferred (range-independent). Counts kept for
      * legacy layouts that predate the step fields. */
     item = cJSON_GetObjectItemCaseSensitive(cfg, "minor_tick_step");
-    if (cJSON_IsNumber(item)) d->minor_tick_step = (uint16_t)item->valueint;
+    if (cJSON_IsNumber(item)) d->minor_tick_step_base = (float)item->valuedouble;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "major_tick_step");
-    if (cJSON_IsNumber(item)) d->major_tick_step = (uint16_t)item->valueint;
+    if (cJSON_IsNumber(item)) d->major_tick_step_base = (float)item->valuedouble;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "mid_tick_step");
-    if (cJSON_IsNumber(item)) d->mid_tick_step = (uint16_t)item->valueint;
+    if (cJSON_IsNumber(item)) d->mid_tick_step_base = (float)item->valuedouble;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "minor_tick_count");
     if (cJSON_IsNumber(item)) d->minor_tick_count = (uint8_t)item->valueint;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "major_tick_every");
@@ -2295,9 +2485,9 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
     item = cJSON_GetObjectItemCaseSensitive(cfg, "ticks_on_top");
     if (cJSON_IsBool(item)) d->ticks_on_top = cJSON_IsTrue(item);
     item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_min");
-    if (cJSON_IsNumber(item)) d->tick_min = (float)item->valuedouble;
+    if (cJSON_IsNumber(item)) d->tick_min_base = (float)item->valuedouble;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_max");
-    if (cJSON_IsNumber(item)) d->tick_max = (float)item->valuedouble;
+    if (cJSON_IsNumber(item)) d->tick_max_base = (float)item->valuedouble;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "label_gap");
     if (cJSON_IsNumber(item)) d->label_gap = (int16_t)item->valueint;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_label_font");
@@ -2330,7 +2520,7 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
     item = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_enabled");
     if (cJSON_IsBool(item)) d->anchor_enabled = cJSON_IsTrue(item);
     item = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_value");
-    if (cJSON_IsNumber(item)) d->anchor_value = (float)item->valuedouble;
+    if (cJSON_IsNumber(item)) d->anchor_base = (float)item->valuedouble;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_position");
     if (cJSON_IsNumber(item)) {
         int v = item->valueint;
@@ -2378,41 +2568,47 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
         safe_strncpy(d->signal_name, bound_c->signal_name, sizeof(d->signal_name));
         d->signal_index = bound_c->signal_index;
         /* Channel range is the default scale; an explicit widget signal_min/max
-         * (display-scale override) wins so the gauge can extend below/above the
-         * channel's data range. */
-        if (!sig_min_explicit) d->signal_min = (float)bound_c->min;
-        if (!sig_max_explicit) d->signal_max = (float)bound_c->max;
+         * (scale override) wins so the gauge can extend below/above the
+         * channel's data range. _arc_sync_units honours range_from_layout for
+         * exactly that, and converts whichever range it ends up with into the
+         * channel's display unit. */
         if (bound_c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH) {
             d->redline_enabled = true;
-            d->redline_threshold = (float)bound_c->high_warn;
+            d->redline_base = bound_c->high_warn;
         } else {
             d->redline_enabled = false;
         }
-        /* Channel owns the alert thresholds (single source of truth). A side
-         * with no channel warn parks at the range edge = alert inactive. Same
-         * pattern as the bar. Alert colours stay widget-owned. */
-        d->arc_low  = (bound_c->low_warn  != CHANNEL_THRESHOLD_UNSET_LOW)  ? (float)bound_c->low_warn  : d->signal_min;
-        d->arc_high = (bound_c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH) ? (float)bound_c->high_warn : d->signal_max;
         /* Redline colour stays widget-owned — never overridden by the channel. */
     } else if (d->signal_name[0] != '\0') {
+        /* Legacy layout: no channel yet, so the widget's own numbers ARE the
+         * native ones — seed the new channel straight from the bases. */
         legacy_widget_data_t legacy = {
             .signal_name = d->signal_name,
-            .min = (int32_t)d->signal_min,
-            .max = (int32_t)d->signal_max,
-            .high_warn = d->redline_enabled ? (int32_t)d->redline_threshold : INT32_MIN,
+            .min = (int32_t)d->range_min_base,
+            .max = (int32_t)d->range_max_base,
+            .high_warn = d->redline_enabled ? (int32_t)d->redline_base : INT32_MIN,
             .color_normal = lv_color_to32(d->arc_color) & 0xFFFFFF,
             .color_high_warn = d->redline_enabled ?
                 (lv_color_to32(d->redline_color) & 0xFFFFFF) : CHANNEL_USE_DEFAULT_COLOR,
         };
         channel_t *c = channel_manager_record_legacy_widget(&legacy);
-        if (c) {
-            d->channel = c;
-            /* Adopt the channel's alert thresholds (single source of truth); a
-             * side with no channel warn parks at the range edge = inactive. */
-            d->arc_low  = (c->low_warn  != CHANNEL_THRESHOLD_UNSET_LOW)  ? (float)c->low_warn  : d->signal_min;
-            d->arc_high = (c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH) ? (float)c->high_warn : d->signal_max;
-        }
+        if (c) d->channel = c;
     }
+
+    /* Derive the rendered value axis from the bases now the binding is resolved.
+     * Unconditional: an unbound arc (and one whose legacy record failed) still
+     * has to pick up whatever the layout put in the bases, and _arc_sync_units
+     * is identity without a channel. */
+    _arc_sync_units(d);
+    /* Channel owns the alert thresholds (single source of truth); a side with no
+     * channel warn parks at the range edge = alert inactive. Same pattern as the
+     * bar; alert colours stay widget-owned. No-op when unbound. */
+    _arc_sync_alert_thresholds(d);
+    /* No authored suffix → label the value with the channel's display unit so
+     * the printed unit matches the printed number. */
+    if (d->channel && !d->value_unit_from_layout)
+        safe_strncpy(d->value_unit, ((const channel_t *)d->channel)->units_display,
+                     sizeof(d->value_unit));
 }
 
 static void _arc_destroy(widget_t *w) {
@@ -2751,17 +2947,22 @@ static bool _arc_inspector_set(widget_t *w, const char *name,
 		_arc_apply_sector_crop(w);
 		return true;
 	}
-	/* signal_min/max define the display scale (may be negative). Rebuild the
-	 * overlay so the tick scale + labels + needle re-lay-out, and re-snap the
-	 * fill to the cached value against the new range. */
+	/* signal_min/max define the display scale (may be negative). The field shows
+	 * what the dial shows, so the typed value is in DISPLAY units and converts
+	 * back to the native base the layout persists; setting it also pins the scale
+	 * so the bound channel's range stops overriding it. Rebuild the overlay so
+	 * the tick scale + labels + needle re-lay-out, and re-snap the fill to the
+	 * cached value against the new range. */
 	if (strcmp(name, "signal_min") == 0) {
-		d->signal_min = (float)in->i;
+		_arc_set_range_display(d, (float)in->i, d->signal_max);
+		d->smooth.range = d->signal_max - d->signal_min;
 		_arc_rebuild_overlay(w, night_mode_is_active());
 		_arc_recompute_value(w, d->_cached_value, false);
 		return true;
 	}
 	if (strcmp(name, "signal_max") == 0) {
-		d->signal_max = (float)in->i;
+		_arc_set_range_display(d, d->signal_min, (float)in->i);
+		d->smooth.range = d->signal_max - d->signal_min;
 		_arc_rebuild_overlay(w, night_mode_is_active());
 		_arc_recompute_value(w, d->_cached_value, false);
 		return true;
@@ -2858,13 +3059,17 @@ static bool _arc_inspector_set(widget_t *w, const char *name,
 		_arc_rebuild_overlay(w, night_mode_is_active());
 		return true;
 	}
+	/* Tick window: typed against the dial, so DISPLAY units in, native base
+	 * stored (same rule as Signal Min/Max above). */
 	if (strcmp(name, "tick_min") == 0) {
-		d->tick_min = (float)in->i;
+		d->tick_min_base = _arc_to_native(d, (float)in->i);
+		_arc_sync_units(d);
 		_arc_rebuild_overlay(w, night_mode_is_active());
 		return true;
 	}
 	if (strcmp(name, "tick_max") == 0) {
-		d->tick_max = (float)in->i;
+		d->tick_max_base = _arc_to_native(d, (float)in->i);
+		_arc_sync_units(d);
 		_arc_rebuild_overlay(w, night_mode_is_active());
 		return true;
 	}
@@ -2923,22 +3128,27 @@ static bool _arc_inspector_set(widget_t *w, const char *name,
 	}
 	/* VALUE-SPACING tick fields. Stored as STEPS (value intervals) — range-
 	 * independent, so they survive signal_min/max edits. The overlay derives
-	 * counts from these over the active range at build time. */
+	 * counts from these over the active range at build time. Typed against the
+	 * dial, so DISPLAY units in and a native base stored — as an INTERVAL, via
+	 * the delta conversion. */
 	if (strcmp(name, "minor_tick_step") == 0) {
 		int v = in->i; if (v < 0) v = 0; if (v > 65535) v = 65535;
-		d->minor_tick_step = (uint16_t)v;
+		d->minor_tick_step_base = _arc_delta_to_native(d, (float)v);
+		_arc_sync_units(d);
 		_arc_rebuild_overlay(w, night_mode_is_active());
 		return true;
 	}
 	if (strcmp(name, "major_tick_step") == 0) {
 		int v = in->i; if (v < 0) v = 0; if (v > 65535) v = 65535;
-		d->major_tick_step = (uint16_t)v;
+		d->major_tick_step_base = _arc_delta_to_native(d, (float)v);
+		_arc_sync_units(d);
 		_arc_rebuild_overlay(w, night_mode_is_active());
 		return true;
 	}
 	if (strcmp(name, "mid_tick_step") == 0) {
 		int v = in->i; if (v < 0) v = 0; if (v > 65535) v = 65535;
-		d->mid_tick_step = (uint16_t)v;   /* 0 = medium tier off */
+		d->mid_tick_step_base = _arc_delta_to_native(d, (float)v);   /* 0 = tier off */
+		_arc_sync_units(d);
 		_arc_rebuild_overlay(w, night_mode_is_active());
 		return true;
 	}
@@ -3074,6 +3284,12 @@ widget_t *widget_arc_create_instance(uint8_t slot) {
     d->arc_image_radial = false; d->reveal_mask_id = -1; d->reveal_angle = 0; d->reveal_raw = 0;
     d->arc_obj       = NULL;
     d->signal_index  = -1;
+    /* Native-unit twins of the rendered value-axis fields — see widget_arc.h.
+     * Seeded to the same defaults so an unbound arc (where base == rendered)
+     * behaves exactly as it did before display units existed. */
+    d->range_min_base = ARC_DEFAULT_SIG_MIN;
+    d->range_max_base = ARC_DEFAULT_SIG_MAX;
+    d->range_from_layout = false;
     d->signal_min    = ARC_DEFAULT_SIG_MIN;
     d->signal_max    = ARC_DEFAULT_SIG_MAX;
     d->smooth.smoothing_ms = 20;   /* default: gentle 20 ms glide (snappy, no lag) */
@@ -3081,6 +3297,7 @@ widget_t *widget_arc_create_instance(uint8_t slot) {
     /* Redline defaults — disabled by default; threshold/color match
      * widget_rpm_bar so users muscle-memory carries over. */
     d->redline_enabled       = false;
+    d->redline_base          = ARC_DEFAULT_REDLINE;
     d->redline_threshold     = ARC_DEFAULT_REDLINE;
     d->redline_color         = lv_color_hex(ARC_DEFAULT_REDLINE_COLOR);
     d->redline_arc_width     = 0;     /* 0 = follow arc_width */
@@ -3096,6 +3313,7 @@ widget_t *widget_arc_create_instance(uint8_t slot) {
 
     /* Limiter defaults */
     d->limiter_effect = 0;
+    d->limiter_base   = ARC_DEFAULT_LIMITER_VAL;
     d->limiter_value  = ARC_DEFAULT_LIMITER_VAL;
     d->limiter_color  = lv_color_hex(ARC_DEFAULT_LIMITER_COLOR);
     d->flash_speed_ms = ARC_DEFAULT_FLASH_MS;
@@ -3113,7 +3331,10 @@ widget_t *widget_arc_create_instance(uint8_t slot) {
 
     /* Ticks (overlay meter) defaults — OFF by default. */
     d->show_ticks         = ARC_DEFAULT_SHOW_TICKS;
-    d->minor_tick_step    = 0;   /* 0 = use count fields (legacy default) */
+    d->minor_tick_step_base = 0; /* 0 = use count fields (legacy default) */
+    d->major_tick_step_base = 0;
+    d->mid_tick_step_base   = 0;
+    d->minor_tick_step    = 0;
     d->major_tick_step    = 0;
     d->mid_tick_step      = 0;
     d->minor_tick_count   = ARC_DEFAULT_MINOR_TICK_COUNT;
@@ -3148,7 +3369,9 @@ widget_t *widget_arc_create_instance(uint8_t slot) {
     /* Numeric tick label defaults — labels ON (only drawn when ticks are on). */
     d->show_tick_labels   = ARC_DEFAULT_SHOW_TICK_LABELS;
     d->ticks_on_top       = true;   /* fill behind ticks/labels — see header note */
-    d->tick_min           = 0;   /* tick window off (tick_max <= tick_min) */
+    d->tick_min_base      = 0;   /* tick window off (tick_max <= tick_min) */
+    d->tick_max_base      = 0;
+    d->tick_min           = 0;
     d->tick_max           = 0;
     d->label_gap          = ARC_DEFAULT_LABEL_GAP;
     d->tick_label_color   = lv_color_hex(ARC_DEFAULT_TICK_LABEL_COLOR);
@@ -3163,6 +3386,7 @@ widget_t *widget_arc_create_instance(uint8_t slot) {
 
     /* Anchor + reverse defaults — OFF by default. */
     d->anchor_enabled     = false;
+    d->anchor_base        = ARC_DEFAULT_ANCHOR_VALUE;
     d->anchor_value       = ARC_DEFAULT_ANCHOR_VALUE;
     d->anchor_position    = ARC_DEFAULT_ANCHOR_POSITION;
     d->reverse            = false;
