@@ -142,7 +142,7 @@ static const ecu_alias_t ECU_SIGNAL_ALIASES[] = {
 
     /* Barometric — no ECU slot exists; binds the canonical channel
      * directly (no rename, since there's no legacy slot name). */
-    { "BARO_PRESSURE",     "barometric_pressure" },  /* Ford, MaxxECU, Link */
+    { "BARO_PRESSURE",     "barometric_pressure" },  /* Ford, MaxxECU, Link, Haltech */
 
     /* ── Wizard 100%-coverage aliases ──────────────────────────────────────
      * Preset signals whose derived name doesn't exact-match a canonical id
@@ -403,12 +403,14 @@ const ecu_preset_t ECU_PRESETS[] = {
      * The v1.2 DBC marks ALL fields `@1+` (Intel unsigned).
      *
      * SIGN — same deliberate deviation as the 1.3 preset (see below):
-     * COOLANT_TEMP, INTAKE_AIR_TEMP and IGNITION are forced is_signed=true
-     * so sub-zero temps / ignition retard (which the ECU sends as
-     * two's-complement) decode correctly instead of reading ~6500. Signed
-     * is identical to unsigned for their positive range (raw never sets
-     * bit 15 below 3276.7), so this is safe. FUEL_TRIM stays unsigned
-     * (positive multiplier, 100% = no correction). Confirmed in-vehicle.
+     * COOLANT_TEMP, INTAKE_AIR_TEMP, IGNITION, GEAR and FUEL_TRIM are
+     * forced is_signed=true so sub-zero temps, ignition retard, reverse
+     * gear and negative trims (which the ECU sends as two's-complement)
+     * decode correctly instead of reading ~6500/65535. Signed is
+     * identical to unsigned for every field's legitimate positive range
+     * (raw never sets bit 15 below 3276.7), so this is safe even where
+     * the value happens to always be positive. Confirmed in-vehicle
+     * (gear/fuel-trim misreads field-reported 2026-08).
      * ══════════════════════════════════════════════════════════════════ */
     {
         .make = "MaxxECU",
@@ -426,11 +428,11 @@ const ecu_preset_t ECU_PRESETS[] = {
             [ECU_SIG_FUEL_PRESSURE]   = SIG_UNSUPPORTED,
             [ECU_SIG_IGNITION]        = { 0x521, 32, 16, 0.1f,       0.0f,     true,  1, "deg",    1 },
             [ECU_SIG_VEHICLE_SPEED]   = { 0x522, 48, 16, 0.1f,       0.0f,     false, 1, "km/h",   0 },
-            [ECU_SIG_GEAR]            = { 0x536,  0, 16, 1.0f,       0.0f,     false, 1, "",       0 },
+            [ECU_SIG_GEAR]            = { 0x536,  0, 16, 1.0f,       0.0f,     true,  1, "",       0 },
             [ECU_SIG_BATTERY_VOLTAGE] = { 0x530,  0, 16, 0.01f,      0.0f,     false, 1, "V",      1 },
-            /* FuelTrimTotal: scale 0.1 unsigned (multiplier-style percentage
-             * where 100% = no correction, matching the MTune display). */
-            [ECU_SIG_FUEL_TRIM]       = { 0x531,  0, 16, 0.1f,       0.0f,     false, 1, "%",      1 },
+            /* FuelTrimTotal: two's-complement ±% on the wire (0 = no
+             * correction); signed decode is identity for positives. */
+            [ECU_SIG_FUEL_TRIM]       = { 0x531,  0, 16, 0.1f,       0.0f,     true,  1, "%",      1 },
             [ECU_SIG_EGT]             = { 0x533, 48, 16, 1.0f,       0.0f,     false, 1, "degC",   0 },
         },
     },
@@ -595,16 +597,19 @@ const ecu_preset_t ECU_PRESETS[] = {
      * sets bit 15 in range (120°C = 1200, 50° adv = 500), so reading them
      * SIGNED is identical for all positive values and correct for the
      * negatives. We therefore force is_signed=true on COOLANT_TEMP,
-     * INTAKE_AIR_TEMP and IGNITION (matching the DBC's own treatment of
-     * Engine_Oil_Temperature — the same kind of sensor). Confirmed
-     * in-vehicle on a MaxxECU. GearPosn stays unsigned: it's a 0..N index,
-     * never two's-complement negative, so signed would gain nothing.
+     * INTAKE_AIR_TEMP, IGNITION and OIL_TEMP (the DBC's own `@1-` field).
+     * Confirmed in-vehicle on a MaxxECU.
      *
-     * FUEL_TRIM stays UNSIGNED (matches DBC): MaxxECU's FuelTrimTotal is a
-     * multiplier where 100% = no correction (range [0..6553.5], always
-     * positive), matching MTune's display. A ±delta (OBD2 STFT/LTFT) style
-     * comes from an offset=-100 override in the Signals modal, not the
-     * sign bit.
+     * GEAR and FUEL_TRIM are ALSO signed (field-reported 2026-08):
+     * reverse gear arrives as two's-complement -1 (unsigned decode showed
+     * 65535) and FuelTrimTotal goes negative when trimming fuel out
+     * (unsigned decode showed ~6500). Both stay bit-identical to unsigned
+     * across their positive range, so configs that never see a negative
+     * are unaffected. The same rule is applied to every bidirectional
+     * quantity in the preconfig catalog (preset_picker.c): knock/ignition
+     * compensation, lambda corrections, accelerometer axes, cam positions,
+     * slip and the gearbox/diff temps — keep the two tables in lockstep
+     * (tools/check_preset_signedness.py enforces this).
      * ══════════════════════════════════════════════════════════════════ */
     {
         .make = "MaxxECU",
@@ -623,10 +628,10 @@ const ecu_preset_t ECU_PRESETS[] = {
             [ECU_SIG_FUEL_PRESSURE]   = { 0x537,  0, 16, 0.1f,       0.0f,     false, 1, "kPa",    0 },
             [ECU_SIG_IGNITION]        = { 0x521, 32, 16, 0.1f,       0.0f,     true,  1, "deg",    1 },
             [ECU_SIG_VEHICLE_SPEED]   = { 0x522, 48, 16, 0.1f,       0.0f,     false, 1, "km/h",   0 },
-            [ECU_SIG_GEAR]            = { 0x536,  0, 16, 1.0f,       0.0f,     false, 1, "",       0 },
+            [ECU_SIG_GEAR]            = { 0x536,  0, 16, 1.0f,       0.0f,     true,  1, "",       0 },
             [ECU_SIG_BATTERY_VOLTAGE] = { 0x530,  0, 16, 0.01f,      0.0f,     false, 1, "V",      1 },
-            /* FuelTrimTotal: multiplier-style % (100% = no correction). */
-            [ECU_SIG_FUEL_TRIM]       = { 0x531,  0, 16, 0.1f,       0.0f,     false, 1, "%",      1 },
+            /* FuelTrimTotal: two's-complement ±% (0 = no correction). */
+            [ECU_SIG_FUEL_TRIM]       = { 0x531,  0, 16, 0.1f,       0.0f,     true,  1, "%",      1 },
             [ECU_SIG_EGT]             = { 0x533, 48, 16, 1.0f,       0.0f,     false, 1, "degC",   0 },
         },
     },
@@ -650,7 +655,9 @@ const ecu_preset_t ECU_PRESETS[] = {
             [ECU_SIG_OIL_TEMP]        = { 0x3F0, 16, 16, 1.0f,  -50.0f,  false, 1, "degC",   0 },
             [ECU_SIG_OIL_PRESSURE]    = { 0x3F0, 32, 16, 1.0f,  0.0f,    false, 1, "kPa",    0 },
             [ECU_SIG_FUEL_PRESSURE]   = { 0x3EF, 48, 16, 1.0f,  0.0f,    false, 1, "kPa",    0 },
-            [ECU_SIG_IGNITION]        = { 0x3EC, 48, 16, 0.1f,  -100.0f, true,  1, "deg",    1 },
+            /* Timing is offset-encoded unsigned on the wire: raw =
+             * (deg + 100) * 10, so the -100 offset does the sign work. */
+            [ECU_SIG_IGNITION]        = { 0x3EC, 48, 16, 0.1f,  -100.0f, false, 1, "deg",    1 },
             [ECU_SIG_VEHICLE_SPEED]   = { 0x3F0, 48, 16, 0.1f,  0.0f,    false, 1, "km/h",   0 },
             [ECU_SIG_GEAR]            = { 0x3EC, 16, 16, 1.0f,  0.0f,    false, 1, "",       0 },
             [ECU_SIG_BATTERY_VOLTAGE] = { 0x3EB, 32, 16, 0.01f, 0.0f,    false, 1, "V",      1 },
@@ -713,7 +720,15 @@ const ecu_preset_t ECU_PRESETS[] = {
             [ECU_SIG_OIL_PRESSURE]    = SIG_UNSUPPORTED,
             [ECU_SIG_FUEL_PRESSURE]   = SIG_UNSUPPORTED,
             [ECU_SIG_IGNITION]        = SIG_UNSUPPORTED,  /* OBD2 PID 0x0E -> TIMING_ADVANCE */
-            [ECU_SIG_VEHICLE_SPEED]   = { 0x0D1, 0, 16, 0.05625f, 0.0f,  false, 1, "km/h",   0 },
+            /* SIGN: signed, matching the "Toyota"/"GT86 Gen 1" preconfig rows
+             * (preset_picker.c) and their four 0x0D4 wheel-speed siblings —
+             * same 1/64 m/s field format. Speed never goes negative and never
+             * reaches the signed ceiling (32767/64 = 1843 km/h), so signed and
+             * unsigned decode identically for every real value; signed is the
+             * safer read of the 0xFFFF "not available" sentinel OEM buses send
+             * (-0.06 km/h instead of 3686 km/h). The two tables MUST agree —
+             * they're aliased in tools/check_preset_signedness.py. */
+            [ECU_SIG_VEHICLE_SPEED]   = { 0x0D1, 0, 16, 0.05625f, 0.0f,  true,  1, "km/h",   0 },
             [ECU_SIG_GEAR]            = SIG_UNSUPPORTED,  /* not broadcast — use CALCULATED_GEAR */
             [ECU_SIG_BATTERY_VOLTAGE] = SIG_UNSUPPORTED,  /* OBD2 PID 0x42 */
             [ECU_SIG_FUEL_TRIM]       = SIG_UNSUPPORTED,  /* OBD2 PID 0x06 -> SHORT_FUEL_TRIM_1 */

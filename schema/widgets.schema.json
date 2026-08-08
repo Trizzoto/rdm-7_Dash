@@ -1139,8 +1139,8 @@
       "display_name": "Turn Indicator",
       "singleton": false,
       "default_size": {
-        "w": 50,
-        "h": 50
+        "w": 40,
+        "h": 40
       },
       "default_position": null,
       "constraints": {
@@ -1192,7 +1192,7 @@
           "name": "color_on",
           "label": "Active Color",
           "type": "color",
-          "default": "#FFBF00",
+          "default": "#00C853",
           "category": "appearance",
           "night_overridable": true,
           "group": "Fill",
@@ -1213,7 +1213,7 @@
           "name": "color_off",
           "label": "Inactive Color",
           "type": "color",
-          "default": "#333333",
+          "default": "#06300A",
           "category": "appearance",
           "night_overridable": true,
           "group": "Fill",
@@ -1223,7 +1223,7 @@
           "name": "opa_off",
           "label": "Inactive Opacity",
           "type": "stepper",
-          "default": 70,
+          "default": 255,
           "category": "appearance",
           "min": 0,
           "max": 255,
@@ -1243,7 +1243,7 @@
           "name": "is_momentary",
           "label": "Momentary",
           "type": "checkbox",
-          "default": false,
+          "default": true,
           "category": "data",
           "group": "Behaviour",
           "help": "Only stay on while the signal is active, instead of latching on."

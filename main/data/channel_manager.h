@@ -161,6 +161,10 @@ channel_t *channel_manager_get(const char *id);
 /** Total number of channels currently active in the manager. */
 size_t channel_manager_count(void);
 
+/** Hard cap on active channels (CHM_MAX). Lets callers and the web UI
+ * surface "N of MAX used" and distinguish cap-exhaustion from bad ids. */
+size_t channel_manager_capacity(void);
+
 /**
  * Format a channel value for DISPLAY in a widget. When the channel's
  * display unit differs from its native unit (and a conversion is known),

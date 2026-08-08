@@ -290,6 +290,10 @@ size_t channel_manager_count(void) {
 	return s_count;
 }
 
+size_t channel_manager_capacity(void) {
+	return CHM_MAX;
+}
+
 void channel_format_display_value(const channel_t *c, int16_t signal_index,
                                   float native_value, uint8_t decimals,
                                   char *buf, size_t cap) {
@@ -415,6 +419,11 @@ channel_t *channel_manager_create_custom(
 }
 
 bool channel_manager_delete(const char *id) {
+	/* Canonical channels are builtin-locked (see the header contract):
+	 * deactivating one means clearing its signal, not deleting it. This
+	 * guard used to live only in the HTTP handler, which left any new
+	 * firmware caller able to delete canonical channels. */
+	if (!id || !channel_id_is_custom(id)) return false;
 	for (size_t i = 0; i < s_count; ++i) {
 		if (strcmp(s_channels[i]->id, id) == 0) {
 			channel_free(s_channels[i]);

@@ -28,8 +28,11 @@ on:
       - 'tools/codegen_*.py'
       - 'tools/check_widget_codegen.py'
       - 'tools/check_widget_field_coverage.py'
+      - 'tools/check_preset_signedness.py'
       - 'tools/validate_widget_schema.py'
       - 'tools/requirements.txt'
+      - 'main/layout/ecu_presets.c'
+      - 'main/ui/settings/preset_picker.c'
 
   pull_request:
     branches:
@@ -42,8 +45,11 @@ on:
       - 'tools/codegen_*.py'
       - 'tools/check_widget_codegen.py'
       - 'tools/check_widget_field_coverage.py'
+      - 'tools/check_preset_signedness.py'
       - 'tools/validate_widget_schema.py'
       - 'tools/requirements.txt'
+      - 'main/layout/ecu_presets.c'
+      - 'main/ui/settings/preset_picker.c'
 
   workflow_dispatch:
 
@@ -77,6 +83,13 @@ jobs:
         id: coverage
         if: ${{ !cancelled() }}
         run: python tools/check_widget_field_coverage.py
+
+      # Wire-format lockstep between the two ECU signal tables
+      # (ecu_presets.c vs preset_picker.c) — they have diverged before.
+      - name: Check preset signedness lockstep
+        id: signedness
+        if: ${{ !cancelled() }}
+        run: python tools/check_preset_signedness.py
 
       - name: Summarise codegen failure
         if: ${{ !cancelled() && steps.codegen.outcome == 'failure' }}

@@ -180,17 +180,18 @@ esp_err_t generate_default_layout(void) {
 		_add_widget(arr, "panel", "panel_gear", 0, 178, 92, 92, cfg);
 	}
 
-	/* ── Indicators (2 slots) ───────────────────────────────────────────── */
+	/* ── Indicators (2 slots) ───────────────────────────────────────────
+	 * Factory look: 40x40 drawn rounded-rect lamps, green (0x00C853) when
+	 * active, dark dark green (0x06300A) when idle — those are the widget
+	 * factory defaults, so only the slot needs emitting. */
 	{
 		cJSON *cfgL = cJSON_CreateObject();
 		cJSON_AddNumberToObject(cfgL, "slot", 0);
-		cJSON_AddNumberToObject(cfgL, "opa_off", 180);
-		_add_widget(arr, "indicator", "indicator_0", -95, -133, 35, 35, cfgL);
+		_add_widget(arr, "indicator", "indicator_0", -95, -133, 40, 40, cfgL);
 
 		cJSON *cfgR = cJSON_CreateObject();
 		cJSON_AddNumberToObject(cfgR, "slot", 1);
-		cJSON_AddNumberToObject(cfgR, "opa_off", 180);
-		_add_widget(arr, "indicator", "indicator_1", 95, -133, 35, 35, cfgR);
+		_add_widget(arr, "indicator", "indicator_1", 95, -133, 40, 40, cfgR);
 	}
 
 	/* ── Warnings (8 slots) ─────────────────────────────────────────────── */

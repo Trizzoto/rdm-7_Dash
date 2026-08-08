@@ -24,6 +24,7 @@
 #include "can/can_manager.h"
 #include "can/dtc_monitor.h"
 #include "data/channel_math.h"
+#include "io/can_forward.h"
 #include "lap/lap_engine.h"
 
 #include "esp_log.h"
@@ -360,6 +361,10 @@ loaded:
 	 * tick. Output signals were (re-)registered during the layout load via
 	 * channel_manager_register_decoded_signals. */
 	channel_math_start();
+
+	/* Fuel-over-CAN forwarder (io/can_forward.c). Idempotent — loads its
+	 * NVS config once and keeps its own timer across layout reloads. */
+	can_forward_init();
 
 	/* Lap timing. Idempotent like channel_math_start(); it is driven by CAN
 	 * frames rather than a timer, so this only marks it live. */

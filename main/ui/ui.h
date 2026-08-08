@@ -38,8 +38,6 @@ extern lv_obj_t *ui_Layout_Next_Button;
 LV_IMG_DECLARE(ui__temporary_image);
 LV_IMG_DECLARE(ui_img_daihatsu_logo_png); // assets/daihatsu logo.png
 LV_IMG_DECLARE(ui_img_rdm_logo_dash_png);
-LV_IMG_DECLARE(ui_img_indicator_left_png);	// assets/indicator left.png
-LV_IMG_DECLARE(ui_img_indicator_right_png); // assets/indicator right.png
 LV_IMG_DECLARE(ui_img_handbrake_png);		// assets/handbrake.png
 LV_IMG_DECLARE(ui_img_check_engine_png);	// assets/check engine.png
 LV_IMG_DECLARE(ui_img_launch_control_png);	// assets/launch control.png

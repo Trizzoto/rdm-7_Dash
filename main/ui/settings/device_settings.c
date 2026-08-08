@@ -20,6 +20,7 @@
 #include "screens/ui_can_list.h"
 #include "layout/ecu_presets.h"
 #include "layout/layout_manager.h"
+#include "layout/default_layout.h"
 #include "data/channel_manager.h"
 #include "obd2_picker.h"
 #include "obd2.h"
@@ -2364,6 +2365,81 @@ static void _ecuname_done(bool ok, const char *name, void *user)
     }
 }
 
+/* ── Reset Default Layout (layout-only, NOT factory reset) ───────────── */
+
+static void _layout_reset_confirm_cb(lv_event_t *e) {
+    lv_obj_t *mbox = lv_event_get_current_target(e);
+    const char *btn_txt = lv_msgbox_get_active_btn_text(mbox);
+    if (!btn_txt) return;
+
+    if (strcmp(btn_txt, "RESET") == 0) {
+        ESP_LOGW("RESET", "User confirmed default-layout reset");
+        if (generate_default_layout() == ESP_OK) {
+            /* Re-apply the remembered ECU preset so the fresh default
+             * comes back with live bindings. */
+            char make[32] = {0}, ver[32] = {0};
+            if (config_store_load_ecu(make, sizeof(make), ver, sizeof(ver)) == ESP_OK &&
+                make[0] && ver[0]) {
+                const ecu_preset_t *p = ecu_preset_find(make, ver);
+                if (p) ecu_preset_apply_to_layout("default", p);
+            }
+            layout_manager_bump_version();
+
+            /* If "default" is the active dash, show the result immediately —
+             * rebuild Screen3 and leave settings (we ARE the LVGL task here).
+             * The settings screen's LV_EVENT_DELETE cleanup tears down its
+             * timers, same as every other exit path. */
+            char active[LAYOUT_MAX_NAME];
+            layout_manager_get_active(active, sizeof(active));
+            if (strcmp(active, "default") == 0) {
+                lv_msgbox_close(mbox);
+                lv_obj_t *old = lv_disp_get_scr_act(lv_disp_get_default());
+                ui_Screen3_screen_init();
+                lv_scr_load(ui_Screen3);
+                if (old && old != ui_Screen3 && lv_obj_is_valid(old))
+                    lv_obj_del(old);
+                return;
+            }
+        }
+    }
+    lv_msgbox_close(mbox);
+}
+
+static void _layout_reset_btn_cb(lv_event_t *e) {
+    (void)e;
+    static const char *btns[] = {"RESET", "Cancel", ""};
+    lv_obj_t *mbox = lv_msgbox_create(
+        NULL,
+        "Reset Default Layout",
+        "Restores the factory \"default\" layout.\n"
+        "Your other layouts and your channel\n"
+        "setup are not touched.",
+        btns, true);
+
+    lv_obj_set_style_bg_color(mbox, THEME_COLOR_SURFACE, LV_PART_MAIN);
+    lv_obj_set_style_border_color(mbox, THEME_COLOR_BORDER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(mbox, 1, LV_PART_MAIN);
+    lv_obj_set_style_radius(mbox, THEME_RADIUS_NORMAL, LV_PART_MAIN);
+    lv_obj_set_style_text_color(mbox, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN);
+    lv_obj_set_style_text_font(mbox, THEME_FONT_SMALL, LV_PART_MAIN);
+    lv_obj_set_width(mbox, 380);
+    lv_obj_center(mbox);
+
+    lv_obj_t *btn_area = lv_msgbox_get_btns(mbox);
+    lv_obj_set_style_bg_color(btn_area, THEME_COLOR_SECTION_BG,
+                              LV_PART_ITEMS | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(btn_area, THEME_COLOR_STATUS_ERROR,
+                                LV_PART_ITEMS | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(btn_area, 1,
+                                  LV_PART_ITEMS | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(btn_area, THEME_COLOR_BORDER,
+                                  LV_PART_ITEMS | LV_STATE_DEFAULT);
+    lv_obj_set_style_radius(btn_area, THEME_RADIUS_NORMAL,
+                            LV_PART_ITEMS | LV_STATE_DEFAULT);
+
+    lv_obj_add_event_cb(mbox, _layout_reset_confirm_cb, LV_EVENT_VALUE_CHANGED, NULL);
+}
+
 /* ── Factory Reset ────────────────────────────────────────────────────── */
 
 static void _factory_reset_confirm_cb(lv_event_t *e) {
@@ -3614,6 +3690,24 @@ static void _build_action_buttons(lv_obj_t *content) {
     lv_obj_set_style_text_color(wizard_label, THEME_COLOR_TEXT_PRIMARY, 0);
     lv_obj_add_event_cb(wizard_btn, _run_wizard_btn_cb, LV_EVENT_CLICKED, NULL);
 
+    /* Layout-only reset — restores the factory "default" layout, nothing
+     * else. Sits above the full factory reset with a clearly scoped label
+     * so the two "reset" actions can't be confused. */
+    lv_obj_t *lreset_btn = lv_btn_create(content);
+    lv_obj_set_size(lreset_btn, lv_pct(100), 34);
+    lv_obj_set_style_bg_color(lreset_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(lreset_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(lreset_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_color(lreset_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(lreset_btn, 1, 0);
+    lv_obj_set_style_shadow_width(lreset_btn, 0, 0);
+    lv_obj_t *lreset_label = lv_label_create(lreset_btn);
+    lv_label_set_text(lreset_label, "Reset Default Layout");
+    lv_obj_center(lreset_label);
+    lv_obj_set_style_text_font(lreset_label, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(lreset_label, THEME_COLOR_STATUS_ERROR, 0);
+    lv_obj_add_event_cb(lreset_btn, _layout_reset_btn_cb, LV_EVENT_CLICKED, NULL);
+
     lv_obj_t *reset_btn = lv_btn_create(content);
     lv_obj_set_size(reset_btn, lv_pct(100), 34);
     lv_obj_set_style_bg_color(reset_btn, THEME_COLOR_SECTION_BG, 0);
@@ -3623,7 +3717,9 @@ static void _build_action_buttons(lv_obj_t *content) {
     lv_obj_set_style_border_width(reset_btn, 1, 0);
     lv_obj_set_style_shadow_width(reset_btn, 0, 0);
     lv_obj_t *reset_label = lv_label_create(reset_btn);
-    lv_label_set_text(reset_label, "Reset to Default");
+    /* Renamed from "Reset to Default" — that label was ambiguous next to
+     * the layout-only reset above (this one wipes EVERYTHING). */
+    lv_label_set_text(reset_label, "Factory Reset");
     lv_obj_center(reset_label);
     lv_obj_set_style_text_font(reset_label, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(reset_label, THEME_COLOR_STATUS_ERROR, 0);

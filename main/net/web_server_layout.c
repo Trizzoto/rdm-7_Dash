@@ -11,6 +11,7 @@
 #include "cJSON.h"
 #include "data/channel_source_apply.h"
 #include "layout/layout_manager.h"
+#include "layout/default_layout.h"
 #include "layout/ecu_presets.h"
 #include "lvgl.h"
 #include "ui/dashboard.h"
@@ -1307,6 +1308,53 @@ static const httpd_uri_t layout_delete_uri = {.uri = "/api/layout/delete",
 											  .handler = layout_delete_handler,
 											  .user_ctx = NULL};
 
+/* POST /api/layout/reset_default — regenerate the factory "default" layout.
+ * Body ignored. Scope: rewrites /lfs/layouts/default.json only — other
+ * layouts, channels.json (CAN decode/thresholds live there since ADR-0005)
+ * and any "default_modified" forks are untouched. The stored ECU preset is
+ * re-applied afterwards so the reset dash comes back with live signal
+ * bindings instead of a screen full of "--". */
+static esp_err_t layout_reset_default_handler(httpd_req_t *req) {
+	esp_err_t err = generate_default_layout();
+	if (err != ESP_OK) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+							"Could not regenerate default layout");
+		return ESP_FAIL;
+	}
+
+	/* Re-apply the remembered ECU preset (wizard/settings choice). */
+	char make[32] = {0}, ver[32] = {0};
+	if (config_store_load_ecu(make, sizeof(make), ver, sizeof(ver)) == ESP_OK &&
+	    make[0] && ver[0]) {
+		const ecu_preset_t *p = ecu_preset_find(make, ver);
+		if (p && ecu_preset_apply_to_layout("default", p) != ESP_OK)
+			ESP_LOGW(TAG, "reset_default: ECU preset re-apply failed (%s %s)",
+					 make, ver);
+	}
+
+	/* generate_default_layout() bypasses save_raw, so bump the version
+	 * counter ourselves — /api/layout/version pollers re-sync. */
+	layout_manager_bump_version();
+
+	/* Only reload the screen when "default" is what's showing. A user whose
+	 * active dash is a fork (default_modified etc.) keeps their screen. */
+	char active[LAYOUT_MAX_NAME];
+	layout_manager_get_active(active, sizeof(active));
+	if (strcmp(active, "default") == 0)
+		rdm_async_call(_deferred_screen_reload, NULL);
+
+	ESP_LOGI(TAG, "Factory default layout regenerated via /api/layout/reset_default");
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"ok\":true}", 11);
+}
+
+static const httpd_uri_t layout_reset_default_uri = {
+	.uri = "/api/layout/reset_default",
+	.method = HTTP_POST,
+	.handler = layout_reset_default_handler,
+	.user_ctx = NULL};
+
 /* POST /api/layout/rename â€” rename a layout file and update NVS if active
  * Body: { "old_name": "Foo", "new_name": "Bar" } */
 static esp_err_t layout_rename_handler(httpd_req_t *req) {
@@ -1755,6 +1803,7 @@ void web_server_layout_register(httpd_handle_t server) {
     REGISTER_URI(server, &custom_preset_delete_uri);
     REGISTER_URI(server, &layout_set_uri);
     REGISTER_URI(server, &layout_delete_uri);
+    REGISTER_URI(server, &layout_reset_default_uri);
     REGISTER_URI(server, &layout_rename_uri);
     REGISTER_URI(server, &splash_list_uri);
     REGISTER_URI(server, &splash_set_uri);

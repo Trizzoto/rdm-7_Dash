@@ -282,6 +282,7 @@ static esp_err_t channels_list_handler(httpd_req_t *req) {
 		 * unlocked. On lock timeout leave json NULL -> 503 below. */
 		if (rdm_lvgl_lock(500)) {
 			cJSON_AddNumberToObject(root, "count", channel_manager_count());
+			cJSON_AddNumberToObject(root, "capacity", channel_manager_capacity());
 			cJSON *arr = cJSON_AddArrayToObject(root, "channels");
 			for (size_t i = 0; i < channel_manager_count(); ++i) {
 				channel_t *c = channel_manager_at(i);
@@ -553,15 +554,25 @@ static esp_err_t channels_activate_handler(httpd_req_t *req) {
 	}
 
 	channel_t *c = NULL;
+	bool at_cap = false;
 	if (!rdm_lvgl_lock(500)) {
 		cJSON_Delete(root);
 		return web_server_send_busy(req);
 	}
 	c = channel_manager_activate(jid->valuestring);
+	if (!c) at_cap = channel_manager_count() >= channel_manager_capacity();
 	rdm_lvgl_unlock();
 	cJSON_Delete(root);
 
 	if (!c) {
+		/* A cap-exhausted activate also returns NULL — report it as what it
+		 * is instead of the misleading "not canonical" 404 (the UI showed
+		 * nothing at all when the registry was full). */
+		if (at_cap) {
+			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+				"Channel limit reached (128 max) — delete unused channels first");
+			return ESP_FAIL;
+		}
 		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Not a canonical channel id");
 		return ESP_FAIL;
 	}
@@ -762,18 +773,68 @@ static esp_err_t channels_update_handler(httpd_req_t *req) {
 	return send_channel_ok(req, c);
 }
 
-/* POST /api/channels/delete — body `{ "id": "custom_xyz" }`.
- * Only custom channels can be deleted; canonical channels return 403
- * (the user can clear their signal binding to "disable" them). */
+/* POST /api/channels/delete — body `{ "id": "custom_xyz" }` for a single
+ * channel, or `{ "ids": ["custom_a", "custom_b", ...] }` for a bulk delete
+ * (the DBC-import cleanup path). Only custom channels can be deleted;
+ * canonical channels return 403 in single mode / count as skipped in bulk
+ * mode (the user can clear their signal binding to "disable" them).
+ * Bulk responds `{ "ok": true, "deleted": N, "skipped": M }` with the
+ * whole batch coalesced into one channels.json flush. */
 static esp_err_t channels_delete_handler(httpd_req_t *req) {
-	char buf[256];
-	if (recv_json_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
+	/* 128 ids x ~40 bytes needs far more than the usual 256-byte stack
+	 * buffer — take a heap buffer big enough for a full-registry bulk. */
+	const size_t cap = 8192;
+	char *buf = malloc(cap);
+	if (!buf) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+		return ESP_FAIL;
+	}
+	if (recv_json_body(req, buf, cap) != ESP_OK) { free(buf); return ESP_FAIL; }
 
 	cJSON *root = cJSON_Parse(buf);
+	free(buf);
 	if (!root) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
 		return ESP_FAIL;
 	}
+
+	cJSON *jids = cJSON_GetObjectItemCaseSensitive(root, "ids");
+	if (cJSON_IsArray(jids)) {
+		int deleted = 0, skipped = 0;
+		if (!rdm_lvgl_lock(500)) {
+			cJSON_Delete(root);
+			return web_server_send_busy(req);
+		}
+		channel_manager_begin_bulk();
+		cJSON *jid = NULL;
+		cJSON_ArrayForEach(jid, jids) {
+			if (!cJSON_IsString(jid) || !jid->valuestring[0]) { skipped++; continue; }
+			/* channel_manager_delete refuses canonical ids itself */
+			if (channel_manager_delete(jid->valuestring)) deleted++;
+			else skipped++;
+		}
+		channel_manager_end_bulk();
+		rdm_lvgl_unlock();
+		cJSON_Delete(root);
+
+		ESP_LOGI(TAG, "bulk delete: %d removed, %d skipped", deleted, skipped);
+		cJSON *resp = cJSON_CreateObject();
+		cJSON_AddBoolToObject(resp, "ok", true);
+		cJSON_AddNumberToObject(resp, "deleted", deleted);
+		cJSON_AddNumberToObject(resp, "skipped", skipped);
+		char *out = cJSON_PrintUnformatted(resp);
+		cJSON_Delete(resp);
+		if (!out) {
+			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+			return ESP_FAIL;
+		}
+		httpd_resp_set_type(req, "application/json");
+		httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+		esp_err_t e = httpd_resp_sendstr(req, out);
+		cJSON_free(out);
+		return e;
+	}
+
 	cJSON *jid = cJSON_GetObjectItemCaseSensitive(root, "id");
 	if (!cJSON_IsString(jid)) {
 		cJSON_Delete(root);

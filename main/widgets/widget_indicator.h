@@ -26,16 +26,25 @@ typedef struct {
 	/* ── v14 channel binding ─────────────────────────────────── */
 	char     channel_id[32];
 	void    *channel;     /* channel_t* — opaque */
-	/* Color-based state rendering (replaces opacity-based).
+	/* Color-based state rendering. The lamp is a natively drawn LVGL
+	 * turn-signal arrow on a canvas (no image assets) — 40x40 by default,
+	 * green when active, dark dark green when idle.
 	 * color_on/opa_on/... are the LIVE values the renderers read; the base_*
 	 * twins hold the user-configured values. They differ only while a
 	 * conditional rule override is active — apply_overrides resets live from
 	 * base then layers the active overrides on top. to_json / inspector_get
 	 * must read base_* so an active rule never gets persisted as config. */
-	lv_color_t color_on;        /* default: amber 0xFFBF00 */
+	lv_color_t color_on;        /* default: green 0x00C853 */
 	uint8_t    opa_on;          /* default: 255 (fully visible) */
-	lv_color_t color_off;       /* default: 0x333333 (dark grey) */
-	uint8_t    opa_off;         /* default: 70 (dimmed but visible when off) */
+	lv_color_t color_off;       /* default: dark dark green 0x06300A */
+	uint8_t    opa_off;         /* default: 255 (solid — colour carries state) */
+	/* Canvas backing the drawn turn-signal arrow. The lamp is an lv_canvas
+	 * so the arrow is a real filled polygon rather than a rectangle — see
+	 * _indicator_draw_arrow(). Buffer is TRUE_COLOR_ALPHA so the area
+	 * around the arrow stays transparent. Owned here; freed in destroy and
+	 * reallocated on resize. */
+	void      *canvas_buf;
+	uint16_t   canvas_w, canvas_h;
 	lv_color_t base_color_on;
 	uint8_t    base_opa_on;
 	lv_color_t base_color_off;
@@ -45,7 +54,7 @@ typedef struct {
 } indicator_data_t;
 
 /* --- API -----------------------------------------------------------------*/
-/** Create indicator images and transparent touch areas on parent. */
+/** Create indicator lamps (drawn arrows) and touch areas on parent. */
 void widget_indicator_create(lv_obj_t *parent);
 
 /** Immediate (same-task) UI update for one indicator (0=left,1=right). */

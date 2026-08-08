@@ -8,13 +8,17 @@
  *   POST /api/signal/clear       release a test lock (single or all)
  *   GET  /api/fuel/status        current fuel voltage + cal config
  *   POST /api/fuel/set-empty     record current voltage as empty reference
- *   POST /api/fuel/set-full      record current voltage as full reference */
+ *   POST /api/fuel/set-full      record current voltage as full reference
+ *   GET  /api/fuel/forward       fuel-over-CAN forward config + health
+ *   POST /api/fuel/forward       set forward config (applies live + NVS) */
 #include "web_server_internal.h"
 #include "system/rdm_lv_async.h"
 #include "cJSON.h"
 #include "widgets/signal.h"
 #include "widgets/signal_sim.h"
 #include "widgets/signal_internal.h"
+#include "io/can_forward.h"
+#include "storage/config_store.h"
 #include "can/obd2.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -140,6 +144,90 @@ static esp_err_t _fuel_set_full_handler(httpd_req_t *req) {
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_sendstr(req, resp);
 	return ESP_OK;
+}
+
+/* ── Fuel-over-CAN forward ──────────────────────────────────────────────── */
+
+static esp_err_t _fuel_forward_get_handler(httpd_req_t *req) {
+	fuel_forward_config_t cfg;
+	uint32_t ok = 0, fail = 0;
+	can_forward_get_status(&cfg, &ok, &fail);
+
+	cJSON *root = cJSON_CreateObject();
+	cJSON_AddBoolToObject(root, "enabled", cfg.enabled);
+	cJSON_AddNumberToObject(root, "can_id", cfg.can_id);
+	cJSON_AddBoolToObject(root, "extd", cfg.extd);
+	cJSON_AddNumberToObject(root, "endian", cfg.endian);
+	cJSON_AddNumberToObject(root, "bit_start", cfg.bit_start);
+	cJSON_AddNumberToObject(root, "bit_length", cfg.bit_length);
+	cJSON_AddNumberToObject(root, "rate_hz", cfg.rate_hz);
+	cJSON_AddNumberToObject(root, "mode", cfg.mode);
+	cJSON_AddNumberToObject(root, "scale", cfg.scale);
+	cJSON_AddNumberToObject(root, "offset", cfg.offset);
+	cJSON_AddNumberToObject(root, "tx_ok", ok);
+	cJSON_AddNumberToObject(root, "tx_fail", fail);
+	return web_server_send_json(req, root);
+}
+
+/* POST body: any subset of the GET fields — missing fields keep their
+ * current value. Validates ranges, persists to NVS, applies live. */
+static esp_err_t _fuel_forward_set_handler(httpd_req_t *req) {
+	char buf[512];
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
+
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+		return ESP_FAIL;
+	}
+
+	fuel_forward_config_t cfg;
+	can_forward_get_status(&cfg, NULL, NULL);
+
+	cJSON *j;
+	if (cJSON_IsBool(j = cJSON_GetObjectItemCaseSensitive(root, "enabled")))
+		cfg.enabled = cJSON_IsTrue(j);
+	if (cJSON_IsNumber(j = cJSON_GetObjectItemCaseSensitive(root, "can_id")))
+		cfg.can_id = (uint32_t)j->valuedouble;
+	if (cJSON_IsBool(j = cJSON_GetObjectItemCaseSensitive(root, "extd")))
+		cfg.extd = cJSON_IsTrue(j);
+	if (cJSON_IsNumber(j = cJSON_GetObjectItemCaseSensitive(root, "endian")))
+		cfg.endian = j->valueint ? 1 : 0;
+	if (cJSON_IsNumber(j = cJSON_GetObjectItemCaseSensitive(root, "bit_start")))
+		cfg.bit_start = (uint8_t)j->valueint;
+	if (cJSON_IsNumber(j = cJSON_GetObjectItemCaseSensitive(root, "bit_length")))
+		cfg.bit_length = (uint8_t)j->valueint;
+	if (cJSON_IsNumber(j = cJSON_GetObjectItemCaseSensitive(root, "rate_hz")))
+		cfg.rate_hz = (uint8_t)j->valueint;
+	if (cJSON_IsNumber(j = cJSON_GetObjectItemCaseSensitive(root, "mode")))
+		cfg.mode = j->valueint ? 1 : 0;
+	if (cJSON_IsNumber(j = cJSON_GetObjectItemCaseSensitive(root, "scale")))
+		cfg.scale = (float)j->valuedouble;
+	if (cJSON_IsNumber(j = cJSON_GetObjectItemCaseSensitive(root, "offset")))
+		cfg.offset = (float)j->valuedouble;
+	cJSON_Delete(root);
+
+	/* Range validation */
+	uint32_t id_max = cfg.extd ? 0x1FFFFFFFu : 0x7FFu;
+	if (cfg.can_id == 0 || cfg.can_id > id_max) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+			"CAN id out of range (11-bit unless extd is set)");
+		return ESP_FAIL;
+	}
+	if (cfg.bit_start > 63 || cfg.bit_length < 1 || cfg.bit_length > 32 ||
+	    cfg.bit_start + cfg.bit_length > 64) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bit field out of range");
+		return ESP_FAIL;
+	}
+	if (cfg.rate_hz < 1) cfg.rate_hz = 1;
+	if (cfg.rate_hz > 20) cfg.rate_hz = 20;
+
+	config_store_save_fuel_forward(&cfg);
+	can_forward_apply(&cfg);
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"ok\":true}", 11);
 }
 
 /* ── Signal values ───────────────────────────────────────────────────────── */
@@ -661,6 +749,12 @@ static const httpd_uri_t fuel_set_full_uri = {
 static const httpd_uri_t fuel_set_points_uri = {
     .uri = "/api/fuel/set-points", .method = HTTP_POST,
     .handler = _fuel_set_points_handler, .user_ctx = NULL};
+static const httpd_uri_t fuel_forward_get_uri = {
+    .uri = "/api/fuel/forward", .method = HTTP_GET,
+    .handler = _fuel_forward_get_handler, .user_ctx = NULL};
+static const httpd_uri_t fuel_forward_set_uri = {
+    .uri = "/api/fuel/forward", .method = HTTP_POST,
+    .handler = _fuel_forward_set_handler, .user_ctx = NULL};
 static const httpd_uri_t obd2_test_pid_uri = {
     .uri = "/api/obd2/test_pid", .method = HTTP_POST,
     .handler = _obd2_test_pid_handler, .user_ctx = NULL};
@@ -676,5 +770,7 @@ void web_server_signals_register(httpd_handle_t server) {
 	REGISTER_URI(server, &fuel_set_empty_uri);
 	REGISTER_URI(server, &fuel_set_full_uri);
 	REGISTER_URI(server, &fuel_set_points_uri);
+	REGISTER_URI(server, &fuel_forward_get_uri);
+	REGISTER_URI(server, &fuel_forward_set_uri);
 	REGISTER_URI(server, &obd2_test_pid_uri);
 }

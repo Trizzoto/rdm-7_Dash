@@ -4,7 +4,9 @@ rdm_unpack.py — unpack an RDM .rdm bundle into its layout JSON + assets.
 
 .rdm binary format (see main/web/index.html exportRdm):
   Header (16 bytes): "RDM1" | u16 LE version(1) | u16 LE entry_count | 8x reserved
-  Per entry: u8 type(0=layout,1=image,2=font) | u8 name_len | name | u32 LE data_len | data
+  Per entry: u8 type(0=layout,1=image,2=font,3=channels.json) | u8 name_len |
+             name | u32 LE data_len | data
+  Unknown entry types are skipped (forward compat).
 
 Usage:
     python tools/rdm_unpack.py <file.rdm> [file2.rdm ...] --out <dir> [--report]
@@ -19,7 +21,7 @@ import os
 import struct
 import sys
 
-TYPE_LAYOUT, TYPE_IMAGE, TYPE_FONT = 0, 1, 2
+TYPE_LAYOUT, TYPE_IMAGE, TYPE_FONT, TYPE_CHANNELS = 0, 1, 2, 3
 # Fonts already seeded by boot_assets.c — never need re-bundling.
 BUILTIN_FONTS = {"Montserrat", "Fugaz One", "Manrope Bold"}
 
@@ -56,6 +58,7 @@ def main():
         layout_name = None
         fonts, images = [], []
         widget_count = None
+        channels_count = None
         for etype, name, blob in entries:
             if etype == TYPE_LAYOUT:
                 layout_name = name
@@ -83,9 +86,19 @@ def main():
                     os.makedirs(d, exist_ok=True)
                     with open(os.path.join(d, f"{name}.rdmimg"), "wb") as o:
                         o.write(blob)
+            elif etype == TYPE_CHANNELS:
+                try:
+                    channels_count = len(json.loads(blob.decode("utf-8")).get("channels", []))
+                except Exception:
+                    channels_count = "?"
+                if args.out:
+                    with open(os.path.join(args.out, "channels.json"), "wb") as o:
+                        o.write(blob)
 
         print(f"\n=== {os.path.basename(path)} ===")
         print(f"  layout : {layout_name}  (widgets: {widget_count})")
+        if channels_count is not None:
+            print(f"  channels: {channels_count} (device channel registry)")
         if fonts:
             for fn, sz in fonts:
                 tag = " [BUILT-IN, skip]" if fn in BUILTIN_FONTS else " [bundle]"

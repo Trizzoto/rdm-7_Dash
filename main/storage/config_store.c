@@ -918,6 +918,48 @@ esp_err_t config_store_load_odometer_km(float *out)
     return err;
 }
 
+/* ── Fuel-over-CAN forward ─────────────────────────────────────────────── */
+
+#define NS_FUELFWD "fuelfwd"
+
+esp_err_t config_store_save_fuel_forward(const fuel_forward_config_t *cfg)
+{
+    if (!cfg) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_FUELFWD, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_blob(handle, "cfg", cfg, sizeof(*cfg));
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "fuel forward saved: %s id=0x%lX rate=%uHz",
+                 cfg->enabled ? "ON" : "off",
+                 (unsigned long)cfg->can_id, (unsigned)cfg->rate_hz);
+    }
+    return err;
+}
+
+esp_err_t config_store_load_fuel_forward(fuel_forward_config_t *out)
+{
+    if (!out) return ESP_ERR_INVALID_ARG;
+    memset(out, 0, sizeof(*out));
+    /* Defaults for a never-configured device: disabled, sane framing. */
+    out->can_id = 0x6F0;
+    out->endian = 1;      /* Intel LE */
+    out->bit_length = 16;
+    out->rate_hz = 10;
+    out->scale = 1.0f;
+    nvs_handle_t handle;
+    if (nvs_open(NS_FUELFWD, NVS_READONLY, &handle) != ESP_OK)
+        return ESP_ERR_NOT_FOUND;
+    fuel_forward_config_t cfg;
+    size_t sz = sizeof(cfg);
+    esp_err_t err = nvs_get_blob(handle, "cfg", &cfg, &sz);
+    nvs_close(handle);
+    if (err == ESP_OK && sz == sizeof(cfg)) *out = cfg;
+    return err;
+}
+
 /* ── ECU preset-picker Auto-vs-Manual mode ─────────────────────────────── */
 
 #define NS_ECU_PICKER "ecu_pick"

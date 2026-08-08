@@ -47,6 +47,10 @@ tools/altezza/
 tools/apex.json
 tools/aurora_layout.json
 tools/ford_cluster_preview.svg
+# dev-server channel store (device-local data imported for offline editing —
+# deliberately ignored so studio sessions can't rewrite a tracked file, the
+# ford_cluster.json mistake)
+tools/dev_channels.json
 # stray reference photo dropped into the embedded-web dir (not referenced by
 # index.html; must never be embedded into firmware)
 main/web/ford_ref.jpg

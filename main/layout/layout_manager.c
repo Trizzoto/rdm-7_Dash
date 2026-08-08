@@ -1801,3 +1801,13 @@ esp_err_t layout_manager_get_active_splash(char *name_out, size_t len) {
 }
 
 uint32_t layout_manager_get_version(void) { return s_layout_version; }
+
+void layout_manager_bump_version(void) {
+	if (s_layout_mutex &&
+	    xSemaphoreTakeRecursive(s_layout_mutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+		s_layout_version++;
+		xSemaphoreGiveRecursive(s_layout_mutex);
+	} else {
+		s_layout_version++;
+	}
+}

@@ -63,8 +63,15 @@ extern "C" {
  *      flip) and `label_along_offset` (shift numbers along the path by arc-length
  *      px). Also clamps the label offset >= 0 so a negative `label_gap` can no
  *      longer drag numbers across the band. Additive/optional — older layouts
- *      (defaults 0) render exactly as before. */
-#define LAYOUT_SCHEMA_VERSION 17
+ *      (defaults 0) render exactly as before.
+ *
+ * v18: indicator rebuilt as a drawn LVGL rounded rect (image assets removed).
+ *      Adds `radius` (corner radius px, default 8). New factory look: 40x40,
+ *      green 0x00C853 active / dark dark green 0x06300A idle, opa_off 255.
+ *      Additive/optional — older layouts keep their saved colors/opas; a
+ *      missing `radius` defaults to 8. The arrow-image silhouette is gone:
+ *      indicators now render as rounded lamps everywhere. */
+#define LAYOUT_SCHEMA_VERSION 18
 
 /* VFS base path for LittleFS.  All layout files are under LFS_LAYOUT_DIR. */
 #define LFS_BASE_PATH "/lfs"
@@ -197,6 +204,11 @@ esp_err_t layout_manager_read_raw(const char *name, char *buf,
  * be re-fetched.
  */
 uint32_t layout_manager_get_version(void);
+
+/** Bump the monotonic layout version counter. For callers that rewrite a
+ * layout file OUTSIDE save_raw/load (e.g. the factory-default regenerate
+ * endpoint) so /api/layout/version pollers still notice the change. */
+void layout_manager_bump_version(void);
 
 /**
  * @brief Apply an already-parsed cJSON layout tree, creating widgets on

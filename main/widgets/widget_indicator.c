@@ -39,6 +39,15 @@ static indicator_data_t *_lookup_indicator_data(uint8_t slot) {
 
 void update_indicator_ui_immediate(uint8_t indicator_idx);
 
+/* Rasterise the turn-signal arrow into the lamp's canvas in `color`.
+ * Defined below with the other drawing helpers; declared here because the
+ * paint paths (state flip, blink, night mode) sit above it. */
+static void _indicator_draw_arrow(indicator_data_t *id, lv_obj_t *canvas,
+                                  lv_color_t color);
+static void _indicator_draw_arrow_wh(lv_obj_t *canvas, uint8_t slot,
+                                     lv_coord_t cw, lv_coord_t ch,
+                                     lv_color_t color);
+
 bool indicator_toggle_debounce[2] = {false};
 uint64_t indicator_toggle_start_time[2] = {0};
 bool previous_indicator_bit_states[2] = {false};
@@ -55,6 +64,14 @@ typedef struct {
 	lv_obj_t *bit_pos_dropdown;
 	lv_obj_t *toggle_mode_dropdown;
 } indicator_save_data_t;
+
+/* Config-screen preview lamp: fixed 40x40 arrow on a static canvas buffer.
+ * Only one config screen can exist at a time, so a static buffer avoids any
+ * alloc/free lifetime coupling to the screen's teardown. */
+#define PREVIEW_LAMP_W 40
+#define PREVIEW_LAMP_H 40
+static uint8_t s_preview_canvas_buf[
+	LV_CANVAS_BUF_SIZE_TRUE_COLOR_ALPHA(PREVIEW_LAMP_W, PREVIEW_LAMP_H)];
 
 // Global variables for preview elements (to allow live updates)
 static lv_obj_t *preview_indicator_config = NULL;
@@ -327,36 +344,25 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 	lv_obj_set_style_text_color(preview_title, THEME_COLOR_TEXT_PRIMARY, 0);
 	lv_obj_set_style_text_font(preview_title, THEME_FONT_BODY, 0);
 
-	// Create preview indicator centered in the panel
-	lv_obj_t *preview_indicator = lv_img_create(preview_panel);
-	lv_obj_set_width(preview_indicator, LV_SIZE_CONTENT);
-	lv_obj_set_height(preview_indicator, LV_SIZE_CONTENT);
-
-	// Position the preview indicator based on which indicator is being
-	// configured
-	if (indicator_idx == 0) {
-		// Left indicator
-		lv_img_set_src(preview_indicator, &ui_img_indicator_left_png);
-	} else {
-		// Right indicator
-		lv_img_set_src(preview_indicator, &ui_img_indicator_right_png);
-	}
-
-	lv_obj_align(preview_indicator, LV_ALIGN_CENTER, 0, -20);
-	lv_obj_clear_flag(preview_indicator, LV_OBJ_FLAG_SCROLLABLE);
-
-	// Set opacity based on current state
+	// Create preview lamp centered in the panel — same drawn arrow as the
+	// live widget, so the preview can't disagree with the dash.
 	indicator_data_t *id_cfg = _lookup_indicator_data(indicator_idx);
 	bool cur_state = id_cfg ? id_cfg->current_state : false;
-	if (cur_state) {
-		lv_obj_set_style_opa(preview_indicator, 255,
-							 LV_PART_MAIN |
-								 LV_STATE_DEFAULT); // 100% opacity when active
-	} else {
-		lv_obj_set_style_opa(preview_indicator, 50,
-							 LV_PART_MAIN |
-								 LV_STATE_DEFAULT); // 50% opacity when inactive
-	}
+	lv_obj_t *preview_indicator = lv_canvas_create(preview_panel);
+	lv_obj_align(preview_indicator, LV_ALIGN_CENTER, 0, -20);
+	lv_obj_clear_flag(preview_indicator, LV_OBJ_FLAG_SCROLLABLE);
+	/* Static buffer: only one config screen exists at a time, so this needs
+	 * no allocation and has no lifetime to get wrong when the screen dies. */
+	lv_canvas_set_buffer(preview_indicator, s_preview_canvas_buf,
+						 PREVIEW_LAMP_W, PREVIEW_LAMP_H, LV_IMG_CF_TRUE_COLOR_ALPHA);
+	_indicator_draw_arrow_wh(preview_indicator, indicator_idx,
+							 PREVIEW_LAMP_W, PREVIEW_LAMP_H,
+							 cur_state ? (id_cfg ? id_cfg->color_on : lv_color_hex(0x00C853))
+									   : (id_cfg ? id_cfg->color_off : lv_color_hex(0x06300A)));
+	lv_obj_set_style_img_opa(preview_indicator,
+							 cur_state ? (id_cfg ? id_cfg->opa_on : 255)
+									   : (id_cfg ? id_cfg->opa_off : 255),
+							 LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	// Create status text below the indicator
 	lv_obj_t *status_text = lv_label_create(preview_panel);
@@ -647,11 +653,10 @@ void update_indicator_ui_immediate(uint8_t indicator_idx) {
 	if (indicator_obj && lv_obj_is_valid(indicator_obj)) {
 		bool night_active = night_mode_is_active();
 		lv_color_t color = (id && current_state)
-			? (id ? NIGHT_PICK_COLOR(night_active, id->night, color_on,  id->color_on)  : lv_color_hex(0xFFBF00))
-			: (id ? NIGHT_PICK_COLOR(night_active, id->night, color_off, id->color_off) : lv_color_hex(0x333333));
-		uint8_t opa = (id && current_state) ? id->opa_on : (id ? id->opa_off : 0);
-		lv_obj_set_style_img_recolor(indicator_obj, color, LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_img_recolor_opa(indicator_obj, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+			? (id ? NIGHT_PICK_COLOR(night_active, id->night, color_on,  id->color_on)  : lv_color_hex(0x00C853))
+			: (id ? NIGHT_PICK_COLOR(night_active, id->night, color_off, id->color_off) : lv_color_hex(0x06300A));
+		uint8_t opa = (id && current_state) ? id->opa_on : (id ? id->opa_off : 255);
+		_indicator_draw_arrow(id, indicator_obj, color);
 		lv_obj_set_style_img_opa(indicator_obj, opa, LV_PART_MAIN | LV_STATE_DEFAULT);
 		if (current_state && id && id->animation_enabled) {
 			indicator_animation_state = false;
@@ -676,11 +681,11 @@ void update_config_preview(uint8_t indicator_idx) {
 		ESP_LOGD(TAG, "Updating config preview for indicator %d: %s", indicator_idx,
 			   state ? "ACTIVE" : "INACTIVE");
 
-		// Update preview indicator color
-		lv_color_t color = (id && state) ? id->color_on : (id ? id->color_off : lv_color_hex(0x333333));
-		uint8_t opa = (id && state) ? id->opa_on : (id ? id->opa_off : 0);
-		lv_obj_set_style_img_recolor(preview_indicator_config, color, LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_img_recolor_opa(preview_indicator_config, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+		// Update preview lamp color — re-rasterise the arrow
+		lv_color_t color = (id && state) ? id->color_on : (id ? id->color_off : lv_color_hex(0x06300A));
+		uint8_t opa = (id && state) ? id->opa_on : (id ? id->opa_off : 255);
+		_indicator_draw_arrow_wh(preview_indicator_config, indicator_idx,
+								 PREVIEW_LAMP_W, PREVIEW_LAMP_H, color);
 		lv_obj_set_style_img_opa(preview_indicator_config, opa > 0 ? opa : 50, LV_PART_MAIN | LV_STATE_DEFAULT);
 
 		// Update preview status text
@@ -757,10 +762,9 @@ void update_indicator_ui(void *param) {
 		(indicator_idx == 0) ? ui_Indicator_Left : ui_Indicator_Right;
 
 	if (indicator_obj && lv_obj_is_valid(indicator_obj)) {
-		lv_color_t color = (id && current_state) ? id->color_on : (id ? id->color_off : lv_color_hex(0x333333));
-		uint8_t opa = (id && current_state) ? id->opa_on : (id ? id->opa_off : 0);
-		lv_obj_set_style_img_recolor(indicator_obj, color, LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_img_recolor_opa(indicator_obj, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_color_t color = (id && current_state) ? id->color_on : (id ? id->color_off : lv_color_hex(0x06300A));
+		uint8_t opa = (id && current_state) ? id->opa_on : (id ? id->opa_off : 255);
+		_indicator_draw_arrow(id, indicator_obj, color);
 		lv_obj_set_style_img_opa(indicator_obj, opa, LV_PART_MAIN | LV_STATE_DEFAULT);
 		if (current_state && id && id->animation_enabled) {
 			indicator_animation_state = false;
@@ -788,17 +792,16 @@ void indicator_animation_timer_cb(lv_timer_t *timer) {
 			lv_obj_t *indicator_obj =
 				(i == 0) ? ui_Indicator_Left : ui_Indicator_Right;
 			if (indicator_obj && lv_obj_is_valid(indicator_obj)) {
+				/* Opacity-only blink: the arrow polygon is already
+				 * rasterised in color_on, so the timer never redraws the
+				 * canvas — it just fades the whole image. */
 				if (id->animation_enabled) {
-					// Flash between full and half opacity using color-based rendering
 					uint8_t flash_opa = indicator_animation_state
 						? id->opa_on
 						: (id->opa_on / 2);
-					lv_obj_set_style_img_recolor(indicator_obj, id->color_on, LV_PART_MAIN | LV_STATE_DEFAULT);
 					lv_obj_set_style_img_opa(indicator_obj, flash_opa, LV_PART_MAIN | LV_STATE_DEFAULT);
 					any_indicator_animating = true;
 				} else {
-					// Solid mode - full color when active
-					lv_obj_set_style_img_recolor(indicator_obj, id->color_on, LV_PART_MAIN | LV_STATE_DEFAULT);
 					lv_obj_set_style_img_opa(indicator_obj, id->opa_on, LV_PART_MAIN | LV_STATE_DEFAULT);
 				}
 			}
@@ -818,47 +821,135 @@ void widget_indicator_reset(void) {
 	s_ta_right = NULL;
 }
 
-/* Helper: compute LVGL zoom (256 = 1x) to scale src image to target size */
-static uint16_t _calc_zoom(uint16_t src_w, uint16_t src_h, uint16_t tgt_w, uint16_t tgt_h) {
-	if (src_w == 0 || src_h == 0) return 256;
-	uint16_t zx = (uint16_t)((uint32_t)tgt_w * 256 / src_w);
-	uint16_t zy = (uint16_t)((uint32_t)tgt_h * 256 / src_h);
-	return (zx < zy) ? zx : zy; /* fit inside, maintain aspect ratio */
+/* ── Drawn turn-signal arrow ────────────────────────────────────────────
+ *
+ * The lamp is an lv_canvas so the shape is a real filled polygon — the
+ * classic arrow (triangular head + rectangular tail), not a rectangle.
+ * Same 7-point silhouette the editor's offline preview draws, so device
+ * and Studio agree.
+ *
+ * Geometry for a LEFT arrow in canvas coordinates (w x h, s = min(w,h)/2,
+ * centred): tip at mid-left, head spanning the full height, tail half as
+ * tall running to the right edge. RIGHT mirrors x.
+ *
+ * Redrawn on every colour change (state flip, rule override, night mode);
+ * opacity stays a style property so the blink timer never re-rasterises. */
+static void _indicator_draw_arrow_wh(lv_obj_t *canvas, uint8_t slot,
+                                     lv_coord_t cw, lv_coord_t ch,
+                                     lv_color_t color) {
+	if (!canvas || !lv_obj_is_valid(canvas)) return;
+	if (cw < 4 || ch < 4) return;
+
+	/* Transparent background — only the arrow itself is opaque. */
+	lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_TRANSP);
+
+	const lv_coord_t cy = ch / 2;
+
+	/* Proportions taken from the original "indicator left.png" (32x30):
+	 * the head is a full-height triangle occupying the first ~62% of the
+	 * width, the tail a stubby bar ~47% of the height. Deriving them from
+	 * the asset keeps the drawn lamp reading like the icon it replaced —
+	 * a 50/50 head/tail split looks like a pentagon, not an arrow. */
+	lv_coord_t head_w = (lv_coord_t)((cw * 5) / 8);      /* 0.625 * w */
+	if (head_w < 2) head_w = 2;
+	if (head_w > cw - 1) head_w = cw - 1;
+	lv_coord_t tail_half = (lv_coord_t)((ch * 7) / 30);  /* 0.233 * h */
+	if (tail_half < 1) tail_half = 1;
+
+	lv_draw_rect_dsc_t dsc;
+	lv_draw_rect_dsc_init(&dsc);
+	dsc.bg_color = color;
+	dsc.bg_opa   = LV_OPA_COVER;
+	dsc.border_width = 0;
+	dsc.radius = 0;
+
+	/* CRITICAL: lv_canvas_draw_polygon (LVGL v8) fills the CONVEX HULL of
+	 * the points — feeding it the 7-point arrow silhouette rendered a plain
+	 * wedge with the tail notch filled in ("the indicators aren't indicator
+	 * shaped at all"). Draw the arrow as two CONVEX pieces instead: a
+	 * 3-point head triangle plus a rectangular tail, overlapping by 1px so
+	 * no seam shows between them. */
+	lv_point_t head[3];
+	lv_coord_t tail_x, tail_w;
+	if (slot == 0) {                          /* ◄ pointing left */
+		head[0] = (lv_point_t){ 0,          cy      };   /* tip          */
+		head[1] = (lv_point_t){ head_w,     0       };   /* base top     */
+		head[2] = (lv_point_t){ head_w,     ch - 1  };   /* base bottom  */
+		tail_x  = head_w - 1;                            /* 1px overlap  */
+		tail_w  = cw - tail_x;
+	} else {                                  /* ► pointing right */
+		head[0] = (lv_point_t){ cw - 1,          cy     };
+		head[1] = (lv_point_t){ cw - 1 - head_w, 0      };
+		head[2] = (lv_point_t){ cw - 1 - head_w, ch - 1 };
+		tail_x  = 0;
+		tail_w  = cw - head_w;                           /* meets the head */
+	}
+	lv_canvas_draw_polygon(canvas, head, 3, &dsc);
+	lv_canvas_draw_rect(canvas, tail_x, cy - tail_half,
+	                    tail_w, tail_half * 2, &dsc);
+}
+
+/* Live-lamp wrapper: draws at the canvas's allocated size. */
+static void _indicator_draw_arrow(indicator_data_t *id, lv_obj_t *canvas,
+                                  lv_color_t color) {
+	if (!id || !id->canvas_buf) return;
+	_indicator_draw_arrow_wh(canvas, id->slot, id->canvas_w, id->canvas_h, color);
+}
+
+/* (Re)allocate the canvas backing buffer for a w x h arrow. Returns false
+ * if the allocation failed — caller leaves the lamp blank rather than
+ * drawing into a stale/undersized buffer. */
+static bool _indicator_alloc_canvas(indicator_data_t *id, lv_obj_t *canvas,
+                                    uint16_t w, uint16_t h) {
+	if (!id || w == 0 || h == 0) return false;
+	size_t need = (size_t)LV_CANVAS_BUF_SIZE_TRUE_COLOR_ALPHA(w, h);
+	void *buf = heap_caps_malloc(need, MALLOC_CAP_SPIRAM);
+	if (!buf) buf = malloc(need);
+	if (!buf) {
+		ESP_LOGE(TAG, "indicator canvas alloc failed (%ux%u, %u bytes)",
+		         w, h, (unsigned)need);
+		return false;
+	}
+	memset(buf, 0, need);
+	if (id->canvas_buf) free(id->canvas_buf);
+	id->canvas_buf = buf;
+	id->canvas_w = w;
+	id->canvas_h = h;
+	lv_canvas_set_buffer(canvas, buf, w, h, LV_IMG_CF_TRUE_COLOR_ALPHA);
+	return true;
 }
 
 void widget_indicator_create_one(lv_obj_t *parent, uint8_t i) {
-	const lv_img_dsc_t *src = (i == 0) ? &ui_img_indicator_left_png : &ui_img_indicator_right_png;
 	int16_t def_x = (i == 0) ? -95 : 95;
 	lv_obj_t **obj_ptr = (i == 0) ? &ui_Indicator_Left : &ui_Indicator_Right;
 
 	/* Look up widget for sizing and color data */
 	widget_t *w = widget_registry_find_by_type_and_slot(WIDGET_INDICATOR, i);
 	indicator_data_t *id = w ? (indicator_data_t *)w->type_data : NULL;
-	uint16_t tgt_w = w ? w->w : 50;
-	uint16_t tgt_h = w ? w->h : 50;
+	uint16_t tgt_w = w ? w->w : 40;
+	uint16_t tgt_h = w ? w->h : 40;
 
-	*obj_ptr = lv_img_create(parent);
-	lv_img_set_src(*obj_ptr, src);
-	lv_obj_set_width(*obj_ptr, LV_SIZE_CONTENT);
-	lv_obj_set_height(*obj_ptr, LV_SIZE_CONTENT);
-	lv_img_set_zoom(*obj_ptr, _calc_zoom(src->header.w, src->header.h, tgt_w, tgt_h));
+	/* Natively drawn lamp: an lv_canvas carrying a filled arrow polygon
+	 * (no image assets). State is conveyed by the arrow's colour —
+	 * green when active, dark dark green when idle. */
+	*obj_ptr = lv_canvas_create(parent);
 	lv_obj_set_x(*obj_ptr, w ? w->x : def_x);
 	lv_obj_set_y(*obj_ptr, w ? w->y : -133);
 	lv_obj_set_align(*obj_ptr, LV_ALIGN_CENTER);
-	lv_obj_add_flag(*obj_ptr, LV_OBJ_FLAG_ADV_HITTEST);
 	lv_obj_clear_flag(*obj_ptr, LV_OBJ_FLAG_SCROLLABLE);
-	lv_obj_set_style_outline_width(*obj_ptr, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_clear_flag(*obj_ptr, LV_OBJ_FLAG_CLICKABLE); /* touch area handles input */
 
 	/* Apply initial color-based state (off by default) */
-	lv_color_t init_color = id ? id->color_off : lv_color_hex(0x333333);
-	uint8_t init_opa = id ? id->opa_off : 0;
-	lv_obj_set_style_img_recolor(*obj_ptr, init_color, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_img_recolor_opa(*obj_ptr, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_color_t init_color = id ? id->color_off : lv_color_hex(0x06300A);
+	uint8_t init_opa = id ? id->opa_off : 255;
+	if (id && _indicator_alloc_canvas(id, *obj_ptr, tgt_w, tgt_h))
+		_indicator_draw_arrow(id, *obj_ptr, init_color);
 	lv_obj_set_style_img_opa(*obj_ptr, init_opa, LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	/* Transparent touch area — used as w->root for long-press detection.
-	 * The image itself has ADV_HITTEST and may be invisible (opa_off=0),
-	 * so we need a solid touch target on top. */
+	 * Kept as a separate sibling so the lamp can blink to opa 0 without
+	 * losing its touch target (and so resize/preview contracts that treat
+	 * w->root as a plain container keep holding). */
 	lv_obj_t *ta = lv_obj_create(parent);
 	lv_obj_set_size(ta, tgt_w, tgt_h);
 	lv_obj_set_x(ta, w ? w->x : def_x);
@@ -949,16 +1040,17 @@ static void _indicator_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 	if (w->root && lv_obj_is_valid(w->root)) {
 		indicator_data_t *id = (indicator_data_t *)w->type_data;
 		uint8_t slot = id ? id->slot : 0;
-		const lv_img_dsc_t *src = (slot == 0) ? &ui_img_indicator_left_png : &ui_img_indicator_right_png;
-		/* The zoom MUST be applied to the image object (ui_Indicator_Left/Right),
-		 * NOT w->root: w->root is the transparent touch-area base object (a plain
-		 * lv_obj), so lv_img_set_zoom(w->root, ...) would write the zoom field
-		 * past the base object's allocation — an out-of-bounds heap write that
-		 * intermittently corrupts the heap and panics (found via resize fuzz).
-		 * Resize the touch target to match the new box. */
-		lv_obj_t *img = (slot == 0) ? ui_Indicator_Left : ui_Indicator_Right;
-		if (img && lv_obj_is_valid(img))
-			lv_img_set_zoom(img, _calc_zoom(src->header.w, src->header.h, nw, nh));
+		/* The lamp (ui_Indicator_Left/Right) is a drawn canvas sibling of the
+		 * touch-area root. Its size IS its buffer, so re-allocate and redraw
+		 * the arrow at the new dimensions rather than scaling. (The old image
+		 * implementation had an OOB-write hazard here from lv_img_set_zoom on
+		 * the wrong object; there's no zoom field to overrun now.) */
+		lv_obj_t *lamp = (slot == 0) ? ui_Indicator_Left : ui_Indicator_Right;
+		if (lamp && lv_obj_is_valid(lamp) && id &&
+		    _indicator_alloc_canvas(id, lamp, nw, nh)) {
+			_indicator_draw_arrow(id, lamp,
+			                      id->current_state ? id->color_on : id->color_off);
+		}
 		lv_obj_set_size(w->root, nw, nh);
 	}
 }
@@ -1085,13 +1177,11 @@ static void _indicator_destroy(widget_t *w) {
 	}
 	night_mode_unsubscribe(_indicator_night_cb, w);
 	widget_rules_free(w);
-	/* The indicator image is a separate global lv_img created on `parent` (a
-	 * sibling of the touch-area root), so lv_obj_del(w->root) below doesn't reach
-	 * it. Delete it + clear the global, else it orphans on the screen and leaks
-	 * across every layout switch (turn-signal arrows bleeding onto layouts that
-	 * have no indicators). Its descriptor is a static built-in PNG, so there's
-	 * nothing to rdm_image_free — unlike the warning image this leaked rather
-	 * than dangled. */
+	/* The lamp is a separate global drawn lv_obj created on `parent` (a
+	 * sibling of the touch-area root), so lv_obj_del(w->root) below doesn't
+	 * reach it. Delete it + clear the global, else it orphans on the screen
+	 * and leaks across every layout switch (lamps bleeding onto layouts that
+	 * have no indicators). */
 	if (id && id->slot < 2) {
 		lv_obj_t **gp = (id->slot == 0) ? &ui_Indicator_Left : &ui_Indicator_Right;
 		if (*gp && lv_obj_is_valid(*gp)) lv_obj_del(*gp);
@@ -1100,15 +1190,20 @@ static void _indicator_destroy(widget_t *w) {
 	if (w->root && lv_obj_is_valid(w->root))
 		lv_obj_del(w->root);
 	w->root = NULL;
+	/* Canvas buffer is ours — free AFTER the canvas object is deleted so
+	 * nothing can draw into freed memory. */
+	if (id && id->canvas_buf) {
+		free(id->canvas_buf);
+		id->canvas_buf = NULL;
+	}
 	free(w->type_data);
 	free(w);
 }
 
-/* Re-apply colors based on current night-mode state. The indicator image is
- * a separate global LVGL object (ui_Indicator_Left / ui_Indicator_Right) and
- * uses img_recolor rather than text/bg color. We only swap the recolor — opa
- * and current on/off state come from the runtime current_state flag and are
- * re-applied via update_indicator_ui_immediate(). */
+/* Re-apply colors based on current night-mode state. The lamp is a separate
+ * global drawn LVGL object (ui_Indicator_Left / ui_Indicator_Right); we only
+ * swap the bg colour — opa and current on/off state come from the runtime
+ * current_state flag and are re-applied via update_indicator_ui_immediate(). */
 static void _indicator_apply_night_mode(widget_t *w, bool active) {
 	if (!w) return;
 	indicator_data_t *id = (indicator_data_t *)w->type_data;
@@ -1116,14 +1211,13 @@ static void _indicator_apply_night_mode(widget_t *w, bool active) {
 	uint8_t slot = id->slot;
 	if (slot >= 2) return;
 
-	lv_obj_t *img_obj = (slot == 0) ? ui_Indicator_Left : ui_Indicator_Right;
-	if (!img_obj || !lv_obj_is_valid(img_obj)) return;
+	lv_obj_t *lamp_obj = (slot == 0) ? ui_Indicator_Left : ui_Indicator_Right;
+	if (!lamp_obj || !lv_obj_is_valid(lamp_obj)) return;
 
 	lv_color_t color = id->current_state
 		? NIGHT_PICK_COLOR(active, id->night, color_on,  id->color_on)
 		: NIGHT_PICK_COLOR(active, id->night, color_off, id->color_off);
-	lv_obj_set_style_img_recolor(img_obj, color, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_img_recolor_opa(img_obj, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+	_indicator_draw_arrow(id, lamp_obj, color);
 }
 
 /* night_mode_subscribe callback shim — extracts widget_t* from user_data. */
@@ -1273,10 +1367,10 @@ widget_t *widget_indicator_create_instance(uint8_t slot) {
 	id->is_momentary = true;
 	id->current_state = false;
 	id->signal_index = -1;
-	id->color_on = lv_color_hex(0xFFBF00);   /* amber */
+	id->color_on = lv_color_hex(0x00C853);   /* green */
 	id->opa_on = 255;                         /* fully visible */
-	id->color_off = lv_color_hex(0x333333);   /* dark grey */
-	id->opa_off = 70;                         /* dimmed when off (visible) */
+	id->color_off = lv_color_hex(0x06300A);   /* dark dark green */
+	id->opa_off = 255;                        /* solid — colour carries state */
 	id->base_color_on  = id->color_on;
 	id->base_opa_on    = id->opa_on;
 	id->base_color_off = id->color_off;
@@ -1286,8 +1380,8 @@ widget_t *widget_indicator_create_instance(uint8_t slot) {
 	w->slot = s;
 	w->x = s_indicator_default_x[s];
 	w->y = -133;
-	w->w = 50;
-	w->h = 50;
+	w->w = 40;
+	w->h = 40;
 	w->type_data = id;
 	snprintf(w->id, sizeof(w->id), "indicator_%u", s);
 

@@ -123,11 +123,11 @@ const MOCK = {
   }),
   'GET  /api/storage/info':     () => ({ total: 8800000, used: 420000, free: 8380000 }),
   'GET  /api/image/list':       () => ([{ name: 'warning.rdmimg', size: 4200, width: 64, height: 64 }]),  /* firmware returns a BARE array of {name,width,height,size} */
-  'GET  /api/image/data':       () => '',
+  /* image/data + font/data handled explicitly below: they must 404 (not
+   * empty-200) or exportRdm silently embeds zero-byte assets. */
   'POST /api/image/delete':     () => ({ ok: true }),
   'POST /api/image/upload':     () => ({ ok: true }),
   'GET  /api/font/list':        () => (['Fugaz', 'Orbitron']),  /* firmware returns a bare array of family-name strings */
-  'GET  /api/font/data':        () => '',
   'POST /api/font/upload':      () => ({ ok: true }),
   'GET  /api/sd/files':         () => ({ files: [] }),
   'POST /api/sd/copy':          () => ({ ok: true }),
@@ -160,13 +160,22 @@ const MOCK = {
   'POST /api/fuel/set-full':    () => ({ ok: true, voltage: 3.0 })
 };
 
-/* ── In-memory channel store (dev only) ────────────────────────────────────
+/* ── Channel store (dev, DISK-PERSISTED) ───────────────────────────────────
  * Enough of /api/channels to exercise the Channels modal in the browser,
  * including the display-unit conversion UI (units_native vs units_display).
  * Values are NATIVE — the client converts for display, same as against the
  * device. /api/channels/update merges fields and echoes {channel} back like
- * the firmware does. */
-const channelStore = [
+ * the firmware does.
+ *
+ * Persistence: tools/dev_channels.json (same idiom as ford_cluster.json).
+ * That makes the offline workflow real: at the car hit "Backup Channels"
+ * (or Export .rdm — it embeds channels.json), at home POST it to this
+ * server's /api/channels/import (the Restore Channels card), edit in the
+ * real Channels modal, then re-export for the dash. Delete the file to
+ * fall back to the built-in mock set. */
+const SAVED_CHANNELS = path.join(ROOT, 'tools', 'dev_channels.json');
+
+const DEFAULT_CHANNELS = [
   { id: 'oil_pressure', label: 'Oil Pressure', group: 0, tier: 0, is_canonical: true,
     signal: 'OIL_PRES', source: 'can', units_native: 'kPa', units_display: 'bar', decimals: 2,
     min: 0, max: 1000, low_warn: 80, high_warn: 650, current_value: 203.9, is_stale: false },
@@ -180,6 +189,31 @@ const channelStore = [
     signal: 'LAMBDA', source: 'can', units_native: 'λ', units_display: '', decimals: 2,
     min: 0.6, max: 1.4, low_warn: 0.75, high_warn: 1.1, current_value: 0.98, is_stale: false }
 ];
+
+/* Fuel-over-CAN forward config (dev, in-memory). Mirrors the firmware
+ * defaults in config_store_load_fuel_forward(). */
+let fuelForwardCfg = {
+  enabled: false, can_id: 0x6F0, extd: false, endian: 1,
+  bit_start: 0, bit_length: 16, rate_hz: 10, mode: 0, scale: 1, offset: 0,
+};
+
+function loadChannelStore() {
+  try {
+    if (fs.existsSync(SAVED_CHANNELS)) {
+      const j = JSON.parse(fs.readFileSync(SAVED_CHANNELS, 'utf8'));
+      if (Array.isArray(j.channels)) return j.channels;
+      if (Array.isArray(j)) return j;
+    }
+  } catch (e) { console.log('[channels] failed to load dev_channels.json:', e.message); }
+  return DEFAULT_CHANNELS;
+}
+let channelStore = loadChannelStore();
+function persistChannelStore() {
+  try {
+    fs.writeFileSync(SAVED_CHANNELS,
+      JSON.stringify({ schema_version: 3, channels: channelStore }, null, 2));
+  } catch (e) { console.log('[channels] persist failed:', e.message); }
+}
 const CANONICAL_DEFS = [
   { id: 'oil_pressure', label: 'Oil Pressure', group: 0, tier: 0, units_native: 'kPa',
     units_display_default: 'bar', decimals: 2, min_default: 0, max_default: 1000,
@@ -301,9 +335,9 @@ const server = http.createServer((req, res) => {
         } catch (e) { sendJson(res, { ok: false, error: e.message }, 400); }
       });
     }
-    /* Channels — explicit handlers (need body + the in-memory store). */
+    /* Channels — explicit handlers (need body + the persisted store). */
     if ((url === '/api/channels' || url === '/api/channels/active') && req.method === 'GET') {
-      return sendJson(res, { channels: channelStore });
+      return sendJson(res, { count: channelStore.length, capacity: 128, channels: channelStore });
     }
     if (url === '/api/channels/canonical' && req.method === 'GET') {
       return sendJson(res, { channels: CANONICAL_DEFS });
@@ -326,11 +360,126 @@ const server = http.createServer((req, res) => {
             }
             delete fields.math;
           }
+          /* Decode arrives as a partial patch — merge like the firmware. */
+          if ('decode' in fields) {
+            c.decode = Object.assign({}, c.decode || {}, fields.decode || {});
+            delete fields.decode;
+          }
           Object.assign(c, fields);
+          persistChannelStore();
           sendJson(res, { ok: true, channel: c });
         } catch (e) {
           sendJson(res, { ok: false, error: e.message }, 400);
         }
+      });
+    }
+    if (url === '/api/channels/activate' && req.method === 'POST') {
+      return readBody(req, (body) => {
+        try {
+          const data = JSON.parse(body || '{}');
+          const def = CANONICAL_DEFS.find(d => d.id === data.id);
+          if (!def) return sendJson(res, { ok: false, error: 'Not a canonical channel id' }, 404);
+          let c = channelStore.find(x => x.id === data.id);
+          if (!c) {
+            c = { id: def.id, label: def.label, group: def.group, tier: def.tier,
+                  is_canonical: true, signal: '', source: 'unbound',
+                  units_native: def.units_native, units_display: def.units_display_default,
+                  decimals: def.decimals, min: def.min_default, max: def.max_default,
+                  low_warn: def.low_warn, high_warn: def.high_warn,
+                  current_value: null, is_stale: true };
+            channelStore.push(c);
+            persistChannelStore();
+          }
+          sendJson(res, { ok: true, channel: c });
+        } catch (e) { sendJson(res, { ok: false, error: e.message }, 400); }
+      });
+    }
+    if (url === '/api/channels/create' && req.method === 'POST') {
+      return readBody(req, (body) => {
+        try {
+          const d = JSON.parse(body || '{}');
+          if (!d.label) return sendJson(res, { ok: false, error: 'label required' }, 400);
+          const id = 'custom_' + String(d.label).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+          if (channelStore.find(x => x.id === id))
+            return sendJson(res, { ok: false, error: 'already exists' }, 400);
+          const c = { id, label: d.label, group: d.group ?? 11, tier: 1, is_canonical: false,
+                      signal: String(d.label).toUpperCase().replace(/[^A-Z0-9]+/g, '_'),
+                      source: 'can', units_native: d.units || '', units_display: d.units || '',
+                      decimals: d.decimals ?? 0, min: d.min ?? 0, max: d.max ?? 100,
+                      low_warn: null, high_warn: null, decode: d.decode || null,
+                      current_value: null, is_stale: true };
+          channelStore.push(c);
+          persistChannelStore();
+          sendJson(res, { ok: true, channel: c });
+        } catch (e) { sendJson(res, { ok: false, error: e.message }, 400); }
+      });
+    }
+    if (url === '/api/channels/delete' && req.method === 'POST') {
+      return readBody(req, (body) => {
+        try {
+          const d = JSON.parse(body || '{}');
+          if (Array.isArray(d.ids)) {
+            let deleted = 0, skipped = 0;
+            d.ids.forEach(id => {
+              const i = channelStore.findIndex(x => x.id === id && !x.is_canonical);
+              if (i >= 0) { channelStore.splice(i, 1); deleted++; } else skipped++;
+            });
+            persistChannelStore();
+            return sendJson(res, { ok: true, deleted, skipped });
+          }
+          const i = channelStore.findIndex(x => x.id === d.id);
+          if (i < 0) return sendJson(res, { ok: false, error: 'Channel not found' }, 404);
+          if (channelStore[i].is_canonical)
+            return sendJson(res, { ok: false, error: 'Canonical channels cannot be deleted' }, 403);
+          channelStore.splice(i, 1);
+          persistChannelStore();
+          sendJson(res, { ok: true });
+        } catch (e) { sendJson(res, { ok: false, error: e.message }, 400); }
+      });
+    }
+    /* Channel backup/restore — the firmware streams raw channels.json;
+     * here the store IS the file. Restore skips the firmware's reboot. */
+    if (url === '/api/channels/export' && req.method === 'GET') {
+      return sendJson(res, JSON.stringify({ schema_version: 3, channels: channelStore }, null, 2));
+    }
+    if (url === '/api/channels/import' && req.method === 'POST') {
+      return readBody(req, (body) => {
+        try {
+          const j = JSON.parse(body || '{}');
+          if (!Array.isArray(j.channels)) return sendJson(res, { ok: false, error: 'no channels[]' }, 400);
+          channelStore = j.channels;
+          persistChannelStore();
+          console.log(`[channels] imported ${channelStore.length} channels -> ${SAVED_CHANNELS}`);
+          sendJson(res, { ok: true, count: channelStore.length });
+        } catch (e) { sendJson(res, { ok: false, error: e.message }, 400); }
+      });
+    }
+    /* Asset data must 404 when absent — an empty 200 makes exportRdm embed
+     * zero-byte images/fonts with no warning. */
+    if ((url.startsWith('/api/image/data') || url.startsWith('/api/font/data')) && req.method === 'GET') {
+      res.writeHead(404);
+      return res.end('no asset data in browser dev');
+    }
+    /* Fuel-over-CAN forward — modelled properly (not via the {ok:true}
+     * catch-all) so the editor's availability probe, field round-trip and
+     * range validation are all exercised in browser dev. */
+    if (url === '/api/fuel/forward' && req.method === 'GET') {
+      return sendJson(res, { ...fuelForwardCfg, tx_ok: 0, tx_fail: 0 });
+    }
+    if (url === '/api/fuel/forward' && req.method === 'POST') {
+      return readBody(req, (body) => {
+        try {
+          const d = JSON.parse(body || '{}');
+          const merged = { ...fuelForwardCfg, ...d };
+          const idMax = merged.extd ? 0x1FFFFFFF : 0x7FF;
+          if (!merged.can_id || merged.can_id > idMax)
+            return sendJson(res, { ok: false, error: 'CAN id out of range' }, 400);
+          if (merged.bit_start > 63 || merged.bit_length < 1 ||
+              merged.bit_length > 32 || merged.bit_start + merged.bit_length > 64)
+            return sendJson(res, { ok: false, error: 'Bit field out of range' }, 400);
+          fuelForwardCfg = merged;
+          sendJson(res, { ok: true });
+        } catch (e) { sendJson(res, { ok: false, error: e.message }, 400); }
       });
     }
     /* Custom presets — explicit handlers (need body/query + persistence). */

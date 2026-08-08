@@ -29,6 +29,18 @@ static const char *TAG = "wifi_mgr";
  * repeated PHY cycling leaks esp_timer slots (see WIFI_AUTH_FAIL_MAX note),
  * so the duty cycle stays tiny. */
 #define WIFI_SLOW_RETRY_MS           (5 * 60 * 1000)
+/* Middle retry tier. Going straight from the 30 s fast tier to the 5-minute
+ * slow tier meant a dash that briefly lost the AP (parked at the edge of
+ * range, router rebooting, an OTA reboot landing while signal is marginal)
+ * stayed dark for up to 5 minutes even though the network came back in
+ * seconds — observed 2026-08-08: after an OTA reboot the dash was reachable
+ * again only after a manual reset, which simply restarted the fast tier.
+ * A 60 s tier for ~10 minutes covers the common transient case; anything
+ * longer than that really is "away from the network" and falls through to
+ * the cheap 5-minute tier. Auth-class failures never reach here — they
+ * hard-stop to AP-only, so this never retries a wrong password. */
+#define WIFI_MEDIUM_RETRY_MS         (60 * 1000)
+#define WIFI_MEDIUM_RETRY_ATTEMPTS   10
 
 /* Auth-class failures (wrong password, WPA mismatch, etc.) won't fix
  * themselves by retrying. Each retry cycles the PHY power state which
@@ -47,6 +59,10 @@ static bool             s_ap_enabled    = false;
 static _Atomic wifi_mgr_state_t s_state  = WIFI_MGR_STATE_OFF;
 
 static int              s_reconnect_attempts = 0;
+/* Medium-tier retry counter — see WIFI_MEDIUM_RETRY_MS. Kept separate so
+ * s_reconnect_attempts can stay frozen at its cap (other code reads that
+ * as "fast tier exhausted"). Reset wherever s_reconnect_attempts is. */
+static int              s_medium_retry_attempts = 0;
 static int              s_auth_failure_count = 0;   /* counts AUTH_EXPIRE / AUTH_FAIL / etc. */
 static bool             s_should_reconnect   = false;
 static bool             s_user_disconnect    = false;
@@ -177,14 +193,24 @@ static void _schedule_reconnect(void)
          * on its own when the network is reachable again. Auth-class
          * failures never reach here (they hard-stop to AP-only in the
          * disconnect handler — retrying a wrong password can't help). */
+        /* Count medium-tier attempts separately so the counter above can
+         * stay frozen at its cap (other code treats it as "fast tier
+         * exhausted"). */
+        if (s_medium_retry_attempts < WIFI_MEDIUM_RETRY_ATTEMPTS) {
+            s_medium_retry_attempts++;
+            delay = WIFI_MEDIUM_RETRY_MS;
+        } else {
+            delay = WIFI_SLOW_RETRY_MS;
+        }
         s_reconnect_attempts = WIFI_RECONNECT_MAX_ATTEMPTS;  /* freeze counter */
         if (s_state != WIFI_MGR_STATE_FAILED) {
-            ESP_LOGW(TAG, "Max fast reconnect attempts (%d) — retrying in the "
-                     "background every %d s",
-                     WIFI_RECONNECT_MAX_ATTEMPTS, WIFI_SLOW_RETRY_MS / 1000);
+            ESP_LOGW(TAG, "Max fast reconnect attempts (%d) — retrying every "
+                     "%d s for %d min, then every %d s",
+                     WIFI_RECONNECT_MAX_ATTEMPTS, WIFI_MEDIUM_RETRY_MS / 1000,
+                     (WIFI_MEDIUM_RETRY_MS * WIFI_MEDIUM_RETRY_ATTEMPTS) / 60000,
+                     WIFI_SLOW_RETRY_MS / 1000);
             _set_state(WIFI_MGR_STATE_FAILED);
         }
-        delay = WIFI_SLOW_RETRY_MS;
     } else {
         delay = WIFI_RECONNECT_BASE_DELAY_MS << s_reconnect_attempts;
         if (delay > WIFI_RECONNECT_MAX_DELAY_MS) {
@@ -217,6 +243,7 @@ static void _stop_reconnect(void)
 {
     s_should_reconnect = false;
     s_reconnect_attempts = 0;
+    s_medium_retry_attempts = 0;
     if (s_reconnect_timer) {
         xTimerStop(s_reconnect_timer, 0);
         xTimerDelete(s_reconnect_timer, 0);
@@ -453,6 +480,7 @@ static void _wifi_event_handler(void *arg, esp_event_base_t event_base,
                              s_auth_failure_count);
                     s_should_reconnect = false;
                     s_reconnect_attempts = 0;
+    s_medium_retry_attempts = 0;
                     s_auto_connect_pending = false;
 
                     /* Kill any pending reconnect timer + active scan —
@@ -507,6 +535,7 @@ static void _wifi_event_handler(void *arg, esp_event_base_t event_base,
                     creds.ssid[0] != '\0') {
                     s_should_reconnect = true;
                     s_reconnect_attempts = 0;
+    s_medium_retry_attempts = 0;
                     _set_state(s_ap_enabled ? WIFI_MGR_STATE_AP_ONLY
                                             : WIFI_MGR_STATE_IDLE);
                     _schedule_reconnect();

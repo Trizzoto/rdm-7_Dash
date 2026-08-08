@@ -523,6 +523,14 @@ float signal_internal_get_fuel_voltage(void)
     return s_last_fuel_voltage;
 }
 
+float signal_internal_get_fuel_level(void)
+{
+    /* Same value FUEL_SENDER_V carries: calibrated tank reading when the
+     * cal is enabled, raw sender volts otherwise. */
+    return s_fuel_cal.enabled ? _fuel_apply_cal(s_last_fuel_voltage)
+                              : s_last_fuel_voltage;
+}
+
 void signal_internal_set_gear_cal(const void *cfg)
 {
     if (!cfg) return;

@@ -192,6 +192,37 @@ typedef struct {
 esp_err_t config_store_save_gear_cal(const gear_cal_config_t *cfg);
 esp_err_t config_store_load_gear_cal(gear_cal_config_t *cfg);
 
+/* ── Fuel-over-CAN forward ──────────────────────────────────────────────
+ * Periodically transmit the fuel sender's analog reading as a CAN frame so
+ * an ECU (or another device) can consume it — e.g. a MaxxECU reading tank
+ * level from the dash instead of its own analog input. Runtime lives in
+ * io/can_forward.c; this is just the persisted config.
+ *
+ * On-wire value = lroundf(reading * scale + offset), packed into
+ * [bit_start, bit_start+bit_length) with the configured endianness in an
+ * 8-byte frame (unused bits zero). `mode` picks the reading:
+ *   0 = calibrated fuel level (falls back to raw volts when no cal is set)
+ *   1 = raw sender voltage in volts
+ * Stored as a single NVS blob, namespace "fuelfwd" key "cfg". */
+typedef struct {
+    bool     enabled;
+    uint32_t can_id;       /* 11-bit (or 29-bit when extd) transmit id */
+    bool     extd;         /* true = 29-bit extended id */
+    uint8_t  endian;       /* 0 = Motorola/BE, 1 = Intel/LE */
+    uint8_t  bit_start;    /* 0-63 */
+    uint8_t  bit_length;   /* 1-32 */
+    uint8_t  rate_hz;      /* 1-20 (fuel samples refresh at 2 Hz; faster
+                            * rates just repeat the last sample as keepalive) */
+    uint8_t  mode;         /* 0 = calibrated level, 1 = raw voltage */
+    float    scale;        /* on-wire = reading * scale + offset */
+    float    offset;
+} fuel_forward_config_t;
+
+esp_err_t config_store_save_fuel_forward(const fuel_forward_config_t *cfg);
+/* Fills @p out with saved config, or documented defaults (disabled,
+ * id 0x6F0, LE, 16 bit, 10 Hz, scale 1) when nothing is stored. */
+esp_err_t config_store_load_fuel_forward(fuel_forward_config_t *out);
+
 /* ── Vehicle odometer (kilometres) ───────────────────────────────────────
  * The odometer is maintained by signal_internal.c — it integrates the
  * configured vehicle-speed signal each tick and accumulates kilometres.

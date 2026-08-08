@@ -187,6 +187,7 @@ void _handle_layout_save(int id, cJSON *params);
 void _handle_layout_preview(int id, cJSON *params);
 void _handle_layout_set(int id, cJSON *params);
 void _handle_layout_delete(int id, cJSON *params);
+void _handle_layout_reset(int id, cJSON *params);
 void _handle_layout_version(int id, cJSON *params);
 void _handle_splash_list(int id, cJSON *params);
 
@@ -254,6 +255,7 @@ static const cmd_entry_t s_dispatch_table[] = {
     { "layout.preview",     _handle_layout_preview },
     { "layout.set",         _handle_layout_set },
     { "layout.delete",      _handle_layout_delete },
+    { "layout.reset",       _handle_layout_reset },
     { "layout.version",     _handle_layout_version },
     /* Splash */
     { "splash.list",        _handle_splash_list },

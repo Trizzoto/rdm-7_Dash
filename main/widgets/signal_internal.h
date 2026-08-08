@@ -86,6 +86,10 @@ void signal_internal_get_fuel_cal(fuel_cal_config_t *out);
 /** Return the last raw ADC voltage reading from the fuel sender. */
 float signal_internal_get_fuel_voltage(void);
 
+/** Return the fuel reading exactly as FUEL_SENDER_V carries it: the
+ * calibrated tank value when calibration is enabled, else raw volts. */
+float signal_internal_get_fuel_level(void);
+
 /** Increment the FPS frame counter. Call from the display flush callback. */
 void signal_internal_count_frame(void);
 

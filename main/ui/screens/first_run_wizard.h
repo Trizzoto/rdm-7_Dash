@@ -2,8 +2,10 @@
  *
  * Call show_first_run_wizard() once, after the dashboard screen is loaded,
  * when config_store_load_first_run_done() reports false. The wizard presents
- * a three-step path: auto-detect CAN bitrate, connect to Wi-Fi, then finish.
- * Dismissal marks first_run_done = true via NVS so subsequent boots skip it. */
+ * a five-step path: auto-detect CAN bitrate, OBD2 discovery scan, ECU
+ * auto-detect, channels review (with automatic OBD2 gap-fill when the scan
+ * found the car answering), then Wi-Fi/finish. Dismissal marks
+ * first_run_done = true via NVS so subsequent boots skip it. */
 
 #ifndef RDM7_FIRST_RUN_WIZARD_H
 #define RDM7_FIRST_RUN_WIZARD_H

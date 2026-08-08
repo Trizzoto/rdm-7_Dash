@@ -140,12 +140,13 @@ static uint16_t    s_channels_count        = 0;
 static bool        s_creating_custom       = false;
 
 /* ── OBD2 gap-fill state ───────────────────────────────────────────────
- * Optional, opt-in: poll standard OBD2 PIDs to source channels the
- * primary ECU broadcast doesn't cover (fuel level/pressure on a GT86,
- * etc.). Never auto-runs — only on an explicit "Fill gaps" tap. Scoped
- * to ACTIVE + unbound + has-OBD2 channels so we don't poll PIDs nothing
- * needs (keeps bus traffic minimal; standalone-ECU users just ignore
- * the chip). */
+ * Poll standard OBD2 PIDs to source channels the primary ECU broadcast
+ * doesn't cover (fuel level/pressure on a GT86, etc.). Runs in two ways:
+ * automatically ONCE when the wizard's OBD2 step proved the car answers
+ * (s_wiz_obd2_found — setup-flow redesign 2026-08), or on an explicit
+ * "Fill N from OBD2" chip tap. Scoped to ACTIVE + unbound + has-OBD2
+ * channels so we don't poll PIDs nothing needs (keeps bus traffic
+ * minimal; standalone-ECU users never see it). */
 #define WIZ_OBD2_MAX_GAPS   24
 #define WIZ_OBD2_PROBE_MS   3200   /* response window per attempt */
 static const char *s_obd2_gap_ids[WIZ_OBD2_MAX_GAPS]      = {NULL}; /* channel id */
@@ -240,11 +241,26 @@ static bool        s_pick_is_obd2[WIZ_PICK_MAX]  = {false};
 static uint8_t     s_pick_matched[WIZ_PICK_MAX]  = {0};
 static uint8_t     s_pick_total[WIZ_PICK_MAX]    = {0};
 
-/* Step 3: Channels review */
-/* (state already declared above — Step 2 ECU detect inserted between
- * scan and channels.) */
+/* Step 2: OBD2 setup — dedicated discovery-scan step (2026-08). Runs the
+ * real supported-PID discovery (obd2_discovery_start: Mode 01 bitmask
+ * chain + bitrate/addressing auto-search) right after the CAN step, so
+ * by the time channels are reviewed the wizard KNOWS whether OBD2 works
+ * and which PIDs the car answers. The channels step then fills unbound
+ * channels from OBD2 automatically instead of waiting for a pill tap. */
+static lv_obj_t  *s_step_obd2          = NULL;
+static lv_obj_t  *s_obd2_step_status   = NULL;
+static lv_obj_t  *s_obd2_step_spinner  = NULL;
+static lv_obj_t  *s_obd2_step_scan_btn = NULL;
+static bool       s_wiz_obd2_scanned   = false; /* a scan ran this session */
+static bool       s_wiz_obd2_found     = false; /* car answered with PIDs */
+static bool       s_wiz_obd2_autofill_done = false; /* channels-step auto-fill ran */
+static obd2_scan_result_t s_wiz_obd2_result;
 
-/* Step 4: WiFi info */
+/* Step 4: Channels review */
+/* (state already declared above — ECU detect + OBD2 steps inserted
+ * between scan and channels.) */
+
+/* Step 5: WiFi info */
 static lv_obj_t  *s_step3         = NULL;
 
 /* Sub-overlay for the per-channel source picker (Step 3). Holds the
@@ -352,6 +368,8 @@ static void _close_wizard(bool mark_done) {
         rdm_obj_del_async(s_overlay);   /* crash-safe: cancelled if a reload frees it first */
     s_overlay = s_card = s_step1 = s_step_channels = s_step3 = NULL;
     s_step_ecu = NULL;
+    s_step_obd2 = NULL;
+    s_obd2_step_status = s_obd2_step_spinner = s_obd2_step_scan_btn = NULL;
     s_ecu_progress = s_ecu_status = s_ecu_result_card = NULL;
     s_ecu_picker_sheet = NULL;
     s_channels_list_box = NULL;
@@ -391,6 +409,7 @@ static void _close_wizard(bool mark_done) {
 static void _show_step3(void);
 static void _show_step_channels(void);
 static void _show_step_ecu_detect(void);
+static void _show_step_obd2(void);
 static void _close_bind_sheet(void);
 
 static lv_obj_t *_make_btn(lv_obj_t *parent, const char *text,
@@ -700,18 +719,19 @@ static void _btn_apply_cb(lv_event_t *e) {
         ESP_LOGI(TAG, "Applied bitrate %s", BR_NAMES[idx]);
     }
     /* After the bitrate is applied the live can_id_tracker starts
-     * receiving frames. Step 2 lets it accumulate for a couple of
-     * seconds, then matches against the preconfig catalog. */
+     * receiving frames. The OBD2 step runs next (per the setup-flow
+     * redesign 2026-08); ECU detect follows and gets its accumulation
+     * window there. */
     if (s_step1 && lv_obj_is_valid(s_step1)) lv_obj_del(s_step1);
     s_step1 = NULL;
-    _show_step_ecu_detect();
+    _show_step_obd2();
 }
 
 static void _btn_next1_cb(lv_event_t *e) {
     (void)e;
     if (s_step1 && lv_obj_is_valid(s_step1)) lv_obj_del(s_step1);
     s_step1 = NULL;
-    _show_step_ecu_detect();
+    _show_step_obd2();
 }
 
 static void _btn_skip_cb(lv_event_t *e) {
@@ -1661,6 +1681,152 @@ static void _ecu_probe_tick(lv_timer_t *t) {
     }
 }
 
+/* ── Step 2: OBD2 setup ────────────────────────────────────────────────
+ * One scan, plain-English outcome, no knobs. The discovery engine does
+ * the hard work (bitmask chain, 11/29-bit + bitrate auto-search) and the
+ * result is remembered for the channels step's automatic gap-fill. */
+
+static void _obd2_step_advance(void) {
+    if (s_step_obd2 && lv_obj_is_valid(s_step_obd2)) lv_obj_del(s_step_obd2);
+    s_step_obd2 = NULL;
+    s_obd2_step_status = s_obd2_step_spinner = s_obd2_step_scan_btn = NULL;
+    _show_step_ecu_detect();
+}
+
+static void _btn_obd2_continue_cb(lv_event_t *e) {
+    (void)e;
+    /* Continuing mid-scan is fine — the discovery finishes in the
+     * background and the completion callback guards on s_step_obd2. */
+    _obd2_step_advance();
+}
+
+static void _obd2_step_scan_done(const obd2_scan_result_t *r, void *user) {
+    (void)user;
+    s_wiz_obd2_scanned = true;
+    s_wiz_obd2_result  = *r;
+    /* Meta bitmask PIDs (0x20/0x40/...) are scan scaffolding, not
+     * sensors — don't count them towards "found N". */
+    int real = 0;
+    for (uint8_t i = 0; i < r->count; i++) {
+        uint8_t p = r->pids[i];
+        if (p == 0x20 || p == 0x40 || p == 0x60 || p == 0x80 ||
+            p == 0xA0 || p == 0xC0 || p == 0xE0) continue;
+        real++;
+    }
+    s_wiz_obd2_found = (r->completed && real > 0);
+
+    if (!s_step_obd2 || !lv_obj_is_valid(s_step_obd2)) return; /* step left */
+
+    if (s_obd2_step_spinner && lv_obj_is_valid(s_obd2_step_spinner))
+        lv_obj_add_flag(s_obd2_step_spinner, LV_OBJ_FLAG_HIDDEN);
+    if (s_obd2_step_scan_btn && lv_obj_is_valid(s_obd2_step_scan_btn))
+        lv_obj_clear_state(s_obd2_step_scan_btn, LV_STATE_DISABLED);
+
+    if (!s_obd2_step_status || !lv_obj_is_valid(s_obd2_step_status)) return;
+    if (s_wiz_obd2_found) {
+        lv_label_set_text_fmt(s_obd2_step_status,
+            "OBD2 is working — your car reports %d sensors.\n"
+            "Anything your ECU doesn't broadcast will be\n"
+            "filled in from OBD2 automatically.", real);
+        lv_obj_set_style_text_color(s_obd2_step_status,
+                                    THEME_COLOR_GREEN, 0);
+    } else {
+        /* Same actionable diagnostics the Device Settings picker shows. */
+        uint32_t bus_err = 0;
+        can_get_diagnostics(NULL, NULL, NULL, NULL, NULL, &bus_err, NULL);
+        bool can_alive = (can_get_last_rx_id() != 0);
+        if (can_alive) {
+            lv_label_set_text(s_obd2_step_status,
+                "No OBD2 reply (tried 11+29-bit, 500k/250k).\n"
+                "A gateway may be blocking it. That's fine —\n"
+                "standalone ECUs broadcast everything anyway.");
+        } else {
+            lv_label_set_text(s_obd2_step_status,
+                "No reply. Check ignition is ON. If this is a\n"
+                "standalone ECU without OBD2, just continue —\n"
+                "your data comes from the CAN broadcast.");
+        }
+        lv_obj_set_style_text_color(s_obd2_step_status,
+                                    THEME_COLOR_TEXT_MUTED, 0);
+    }
+}
+
+static void _btn_obd2_scan_cb(lv_event_t *e) {
+    (void)e;
+    if (obd2_discovery_in_progress()) return;
+    if (s_obd2_step_scan_btn) lv_obj_add_state(s_obd2_step_scan_btn, LV_STATE_DISABLED);
+    if (s_obd2_step_spinner) lv_obj_clear_flag(s_obd2_step_spinner, LV_OBJ_FLAG_HIDDEN);
+    if (s_obd2_step_status) {
+        lv_label_set_text(s_obd2_step_status,
+            "Asking the car what it supports...");
+        lv_obj_set_style_text_color(s_obd2_step_status,
+                                    THEME_COLOR_TEXT_PRIMARY, 0);
+    }
+    obd2_discovery_start(_obd2_step_scan_done, NULL);
+}
+
+static void _show_step_obd2(void) {
+    can_bus_test_set_ui_callback(NULL);
+
+    if (s_card && lv_obj_is_valid(s_card)) {
+        lv_obj_set_size(s_card, CARD_W, CARD_H);
+        lv_obj_center(s_card);
+    }
+
+    s_step_obd2 = lv_obj_create(s_card);
+    lv_obj_remove_style_all(s_step_obd2);
+    lv_obj_set_size(s_step_obd2, lv_pct(100), lv_pct(100));
+    lv_obj_center(s_step_obd2);
+    lv_obj_clear_flag(s_step_obd2, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *title = lv_label_create(s_step_obd2);
+    lv_label_set_text(title, "OBD2 Setup");
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_text_font(title, THEME_FONT_LARGE, 0);
+    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
+
+    lv_obj_t *sub = lv_label_create(s_step_obd2);
+    lv_label_set_text(sub, "Step 2 of 5  -  check the diagnostic port (optional)");
+    lv_obj_align(sub, LV_ALIGN_TOP_MID, 0, 34);
+    lv_obj_set_style_text_font(sub, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(sub, THEME_COLOR_TEXT_MUTED, 0);
+
+    lv_obj_t *body = lv_label_create(s_step_obd2);
+    lv_label_set_text(body,
+        "OBD2 reads sensors through the factory diagnostic\n"
+        "port — fuel level, temps and more. Useful for\n"
+        "anything your ECU doesn't broadcast over CAN.");
+    lv_obj_set_width(body, BTN_W);
+    lv_obj_set_style_text_align(body, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(body, LV_ALIGN_TOP_MID, 0, 70);
+    lv_obj_set_style_text_font(body, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(body, THEME_COLOR_TEXT_MUTED, 0);
+
+    s_obd2_step_scan_btn = _make_btn(s_step_obd2, "Scan for OBD2",
+                                     THEME_COLOR_ACCENT_BLUE,
+                                     THEME_COLOR_TEXT_PRIMARY,
+                                     false, 150, _btn_obd2_scan_cb);
+
+    s_obd2_step_spinner = lv_spinner_create(s_step_obd2, 1000, 60);
+    lv_obj_set_size(s_obd2_step_spinner, 28, 28);
+    lv_obj_align(s_obd2_step_spinner, LV_ALIGN_TOP_MID, 0, 202);
+    lv_obj_add_flag(s_obd2_step_spinner, LV_OBJ_FLAG_HIDDEN);
+
+    s_obd2_step_status = lv_label_create(s_step_obd2);
+    lv_label_set_text(s_obd2_step_status,
+        "Takes a few seconds. Skip it if your ECU\n"
+        "broadcasts everything you need.");
+    lv_obj_set_width(s_obd2_step_status, BTN_W);
+    lv_obj_set_style_text_align(s_obd2_step_status, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(s_obd2_step_status, LV_ALIGN_TOP_MID, 0, 240);
+    lv_obj_set_style_text_font(s_obd2_step_status, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(s_obd2_step_status, THEME_COLOR_TEXT_MUTED, 0);
+
+    _make_btn(s_step_obd2, "Continue",
+              THEME_COLOR_SECTION_BG, THEME_COLOR_TEXT_PRIMARY,
+              true, 330, _btn_obd2_continue_cb);
+}
+
 static void _show_step_ecu_detect(void) {
     can_bus_test_set_ui_callback(NULL);
 
@@ -1695,7 +1861,7 @@ static void _show_step_ecu_detect(void) {
 
     lv_obj_t *sub = lv_label_create(s_step_ecu);
     lv_label_set_text(sub,
-        "Step 2 of 4  -  matching live CAN IDs against the preset catalog");
+        "Step 3 of 5  -  matching live CAN IDs against the preset catalog");
     lv_obj_align(sub, LV_ALIGN_TOP_MID, 0, 34);
     lv_obj_set_style_text_font(sub, THEME_FONT_TINY, 0);
     lv_obj_set_style_text_color(sub, THEME_COLOR_TEXT_MUTED, 0);
@@ -3180,8 +3346,7 @@ static void _obd2_close_cb(lv_event_t *e) {
     _obd2_close_modal();  /* unwinds mid-probe polling internally */
 }
 
-static void _obd2_chip_cb(lv_event_t *e) {
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+static void _obd2_open_probe_modal(void) {
     if (_obd2_compute_gaps() == 0) return;
     if (s_obd2_modal) return;  /* already open */
     s_obd2_attempt = 0;
@@ -3267,12 +3432,28 @@ static void _obd2_chip_cb(lv_event_t *e) {
     _obd2_begin_probe();
 }
 
+static void _obd2_chip_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    _obd2_open_probe_modal();
+}
+
 /* Create / refresh / hide the "Fill N from OBD2" chip in the hero based
  * on the current gap-set. The chip only exists when there are gaps OBD2
  * could plausibly fill — a fully-bound layout never shows it. */
 static void _obd2_chip_update(void) {
     if (!s_step_channels || !lv_obj_is_valid(s_step_channels)) return;
     uint8_t gaps = _obd2_compute_gaps();
+
+    /* Setup-flow redesign 2026-08: when the wizard's OBD2 step already
+     * proved the car answers (discovery scan found PIDs), don't wait for
+     * a chip tap — run the gap-fill probe automatically, once. The modal
+     * still shows so the user sees what got filled; unsupported gaps are
+     * dropped when the window closes, exactly like a manual run. */
+    if (gaps > 0 && s_wiz_obd2_found && !s_wiz_obd2_autofill_done &&
+        !s_obd2_modal) {
+        s_wiz_obd2_autofill_done = true;
+        _obd2_open_probe_modal();
+    }
 
     if (gaps == 0) {
         if (s_obd2_chip && lv_obj_is_valid(s_obd2_chip)) {
@@ -3407,7 +3588,7 @@ static void _show_step_channels(void) {
     lv_label_set_text(step_chip,
                       s_apply_to_widget_mode ? "Pick a channel for this widget"
                       : s_standalone_channels ? "Changes save automatically"
-                                              : "Step 3 of 4");
+                                              : "Step 4 of 5");
     /* Pushed left of the close "×" (28 px + 8 px gap) so the two never overlap. */
     lv_obj_align(step_chip, LV_ALIGN_TOP_RIGHT, -(28 + 8), 4);
     lv_obj_set_style_text_font(step_chip, THEME_FONT_TINY, 0);
@@ -4117,7 +4298,7 @@ static void _show_step3(void) {
     lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
 
     lv_obj_t *sub = lv_label_create(s_step3);
-    lv_label_set_text(sub, "Step 4 of 4  -  pick how to connect");
+    lv_label_set_text(sub, "Step 5 of 5  -  pick how to connect");
     lv_obj_align(sub, LV_ALIGN_TOP_MID, 0, 34);
     lv_obj_set_style_text_font(sub, THEME_FONT_TINY, 0);
     lv_obj_set_style_text_color(sub, THEME_COLOR_TEXT_MUTED, 0);
@@ -4197,7 +4378,7 @@ static void _build_step1(void) {
     lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
 
     lv_obj_t *sub = lv_label_create(s_step1);
-    lv_label_set_text(sub, "Step 1 of 4  -  Scanning all bitrates...");
+    lv_label_set_text(sub, "Step 1 of 5  -  Scanning all bitrates...");
     lv_obj_align(sub, LV_ALIGN_TOP_MID, 0, 34);
     lv_obj_set_style_text_font(sub, THEME_FONT_TINY, 0);
     lv_obj_set_style_text_color(sub, THEME_COLOR_TEXT_MUTED, 0);
@@ -4287,6 +4468,11 @@ static void _build_step1(void) {
 void show_first_run_wizard(void) {
     if (s_overlay && lv_obj_is_valid(s_overlay)) return;
     s_standalone_channels = false;  /* full onboarding flow, not channels-only */
+    /* Fresh session: forget any previous OBD2 discovery outcome so the
+     * scan step reflects THIS car and auto-fill can run again. */
+    s_wiz_obd2_scanned = false;
+    s_wiz_obd2_found = false;
+    s_wiz_obd2_autofill_done = false;
 
     /* Full-screen translucent overlay */
     lv_obj_t *scr = lv_scr_act();

@@ -192,7 +192,7 @@ debugging via the "Share Raw CAN" button (data logger modal in the web editor).
 - **Field not saved:** check `to_json` defaults-only logic and that `from_json` reads it
 - **Config modal field missing:** add a section in `config_modal.c` even if web editor already handles it
 - **`pdMS_TO_TICKS(1) = 0`** at `CONFIG_FREERTOS_HZ=500` — use `vTaskDelay(1)` literal for real yields
-- **`max_uri_handlers`** is 160 (~138 currently used — see the `uri_registration` tally in `GET /api/selftest`) — count `REGISTER_URI` calls before adding endpoints; the REGISTER_URI macro tallies failures and shouts at boot if you hit the cap
+- **`max_uri_handlers`** is 160 (~143 currently used — see the `uri_registration` tally in `GET /api/selftest`) — count `REGISTER_URI` calls before adding endpoints; the REGISTER_URI macro tallies failures and shouts at boot if you hit the cap
 - **`w->root` may be a container, not the widget's LVGL primitive** — e.g. `widget_arc` standard mode wraps `lv_arc` in a transparent container so siblings (redline arc, value label) can coexist. Don't assume `w->root` is the type-specific object; use `type_data->arc_obj` etc.
 - **Layout > 32 KB silently truncates** — `to_json` must be defaults-only or the budget blows. Pre-save check in `_checkLayoutSize` catches it client-side, but firmware-side a non-default emit can sneak through.
 

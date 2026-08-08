@@ -13,6 +13,9 @@
 #include "cJSON.h"
 #include "esp_log.h"
 #include "layout/layout_manager.h"
+#include "layout/default_layout.h"
+#include "layout/ecu_presets.h"
+#include "storage/config_store.h"
 #include "ui/dashboard.h"
 #include "ui/screens/splash_screen.h"
 #include "ui/screens/ui_Screen3.h"
@@ -269,6 +272,35 @@ void _handle_layout_version(int id, cJSON *params)
     (void)params;
     cJSON *r = cJSON_CreateNumber(layout_manager_get_version());
     _send_response(id, r, NULL);
+}
+
+/* ── layout.reset — regenerate the factory default layout ────────────────
+ * Serial twin of POST /api/layout/reset_default (desktop-studio parity).
+ * Rewrites default.json only; channels.json and forks are untouched. */
+
+void _handle_layout_reset(int id, cJSON *params)
+{
+    (void)params;
+    if (generate_default_layout() != ESP_OK) {
+        _send_error(id, "Could not regenerate default layout");
+        return;
+    }
+
+    char make[32] = {0}, ver[32] = {0};
+    if (config_store_load_ecu(make, sizeof(make), ver, sizeof(ver)) == ESP_OK &&
+        make[0] && ver[0]) {
+        const ecu_preset_t *p = ecu_preset_find(make, ver);
+        if (p) ecu_preset_apply_to_layout("default", p);
+    }
+
+    layout_manager_bump_version();
+
+    char active[LAYOUT_MAX_NAME];
+    layout_manager_get_active(active, sizeof(active));
+    if (strcmp(active, "default") == 0)
+        rdm_async_call(_deferred_screen_reload, NULL);
+
+    _send_ok(id);
 }
 
 /* ── splash.list ─────────────────────────────────────────────────────────── */
