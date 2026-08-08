@@ -135,6 +135,13 @@ static esp_err_t _ota_start_handler(httpd_req_t *req) {
 /* An ESP32 app image starts with the 0xE9 magic byte. Catches the common
  * mistake of POSTing the merged flash image or a layout JSON. */
 #define ESP_IMAGE_MAGIC   0xE9
+/* Consecutive recv timeouts tolerated before giving up. esp_http_server runs
+ * ONE task for every socket, so a handler that blocks blocks the whole LAN
+ * API — a client that announces a Content-Length and then goes silent must
+ * not be able to pin it forever. At config.recv_wait_timeout = 30 s this is a
+ * 90 s window of total silence, far longer than any real stall on a LAN, and
+ * bounded. */
+#define OTA_UPLOAD_MAX_STALLS 3
 
 static void _ota_reboot_task(void *arg) {
 	(void)arg;
@@ -212,11 +219,26 @@ static esp_err_t _ota_upload_handler(httpd_req_t *req) {
 
 	int received = 0;
 	bool checked_magic = false;
+	int stalls = 0;
 	while (received < total) {
 		int want_n = total - received;
 		if (want_n > OTA_UPLOAD_CHUNK) want_n = OTA_UPLOAD_CHUNK;
 		int n = httpd_req_recv(req, (char *)buf, want_n);
-		if (n == HTTPD_SOCK_ERR_TIMEOUT) continue;   /* transient — keep waiting */
+		if (n == HTTPD_SOCK_ERR_TIMEOUT) {
+			/* Transient — keep waiting, but only so long (see MAX_STALLS). */
+			if (++stalls > OTA_UPLOAD_MAX_STALLS) {
+				esp_ota_abort(handle);
+				free(buf);
+				ESP_LOGE(TAG, "OTA upload stalled at %d/%d bytes — giving up",
+				         received, total);
+				httpd_resp_set_status(req, "408 Request Timeout");
+				httpd_resp_sendstr(req,
+					"{\"error\":\"upload stalled — no data received\"}");
+				return ESP_OK;
+			}
+			continue;
+		}
+		stalls = 0;   /* any progress resets the stall budget */
 		if (n <= 0) {
 			esp_ota_abort(handle);
 			free(buf);
