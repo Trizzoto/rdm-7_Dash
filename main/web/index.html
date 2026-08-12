@@ -2117,9 +2117,19 @@
             padding: 1px;
             cursor: pointer;
         }
+        /* Sticky, because this footer holds the only Delete a custom channel
+           has. It used to scroll with the pane, and on any channel with a
+           bound signal the source card + range visualiser + Advanced section
+           push it below the fold — so the answer to "how do I delete this?"
+           was off screen unless you thought to scroll a pane that gives no
+           hint it scrolls. Reported as "there's no way to delete custom
+           channels". */
         .ch2-detail-footer {
             padding: 14px 24px;
             display: flex; gap: 10px; justify-content: flex-end;
+            position: sticky; bottom: 0;
+            background: var(--panel);
+            border-top: 1px solid var(--border, rgba(255,255,255,0.08));
         }
         .ch2-link-btn {
             background: transparent;
@@ -2131,7 +2141,19 @@
             font-family: inherit;
         }
         .ch2-link-btn:hover { color: var(--accent); }
-        .ch2-link-btn.danger:hover { color: hsl(0,70%,62%); }
+        /* Destructive actions carry their colour at rest. Hover-only red is
+           invisible to someone scanning for the control rather than already
+           hovering it, which is precisely the person looking for Delete. */
+        .ch2-link-btn.danger {
+            color: hsl(0,70%,62%);
+            border: 1px solid hsl(0,60%,62%, 0.35);
+            border-radius: 5px;
+        }
+        .ch2-link-btn.danger:hover {
+            color: hsl(0,80%,70%);
+            border-color: hsl(0,70%,66%);
+            background: hsl(0,70%,62%, 0.10);
+        }
 
         /* Source section — bound card + empty state */
         .ch2-source-bound {
@@ -12043,10 +12065,28 @@
              * inspector channel-chip has data without waiting for the
              * user to open the Channels modal. Fire-and-forget; once the
              * fetch completes we re-render so the chip can pick up the
-             * fresh data. Guard against recursion by only triggering the
-             * re-render when the cache WAS empty before this call. */
+             * fresh data.
+             *
+             * The recursion guard is _chPrimeTried, NOT the emptiness of the
+             * caches. Emptiness cannot work: this function re-enters itself
+             * from the .then() below, and if the fetch came back with no
+             * channels the caches are STILL empty on re-entry, so the test
+             * passes again and updateInspector() re-enters forever — a
+             * promise loop that never yields long enough to paint, which
+             * presents as the whole app freezing with a busy cursor.
+             *
+             * That is not a hypothetical. Offline, transport.js answered
+             * GET /api/channels from its device-only catch-all with a bare
+             * {ok:true} — HTTP 200, no `channels` array — so _fetchChannelsActive
+             * assigned _chCache = [] on every pass and the loop was unbreakable
+             * the moment a widget was selected. Measured: 158 channel fetches
+             * and 3.6 s of blocked main thread per 3 s, with nobody touching
+             * the mouse. A node with genuinely zero channels reaches the same
+             * state honestly, so the fix belongs here rather than only in the
+             * offline stub. */
             if (selectedIndex !== -1 && typeof _ensureChannelCachePrimed === 'function'
-                && _chCache.length === 0 && _chCanonical.length === 0) {
+                && !_chPrimeTried && _chCache.length === 0 && _chCanonical.length === 0) {
+                _chPrimeTried = true;
                 _ensureChannelCachePrimed().then(() => {
                     /* Re-render whenever a widget is still selected, even
                      * for legacy signal-only widgets — _widgetEffectiveChannel
@@ -20186,6 +20226,12 @@
         let _chTimer = null;
         let _chCache = [];        /* active channels (last fetched) */
         let _chCanonical = [];    /* canonical registry (fetched once per open) */
+        /* Have we already spent a prime attempt on the inspector's behalf?
+         * "Both caches are empty" is NOT a usable did-we-try flag: a node that
+         * genuinely has no channels answers with an empty list, so the caches
+         * stay empty after a perfectly successful fetch and the emptiness test
+         * is still true on the way back. See updateInspector(). */
+        let _chPrimeTried = false;
         let _chCapacity = 128;    /* firmware CHM_MAX (from GET /api/channels) */
         let _chSelectedId = null;
         let _chSaveTimer = null;  /* legacy handle — cleared on discard */
@@ -21160,9 +21206,17 @@
         }
 
         function _chBulkSelectAllCustom() {
+            /* Trust the channel's own is_canonical, not absence from the
+               _chCanonical registry. The registry is fetched separately, and
+               when it has not landed — first open, a failed or slow canonical
+               fetch, any path that primed only the active list — "not found in
+               the registry" is true of EVERY channel, so this selected all 52
+               including the canonical ones nobody is allowed to delete. Caught
+               on a real dash: the bulk POST went out carrying rpm,
+               coolant_temp, vehicle_speed and the rest. Each channel already
+               states what it is; ask it rather than a list that may be empty. */
             (_chCache || []).forEach(c => {
-                const canonical = _chCanonical.find(d => d.id === c.id);
-                if (!canonical) _chSelected.add(c.id);
+                if (!c.is_canonical) _chSelected.add(c.id);
             });
             _chUpdateBulkBar();
             _refreshChannelsList();
@@ -21194,8 +21248,46 @@
                     if (typeof updateStatus === 'function')
                         updateStatus(`Deleted ${res.deleted ?? ids.length} channel(s)` +
                                      (res.skipped ? ` · ${res.skipped} skipped` : ''));
-                } else if (typeof updateStatus === 'function') {
-                    updateStatus('Bulk delete failed', true);
+                } else {
+                    /* The array form is newer than the endpoint on most dashes
+                     * in the field: every released firmware up to and including
+                     * v1.1.30 reads only {"id":...}. Sending one id at a time is
+                     * what those builds already understand, so fall back rather
+                     * than report a failure the user cannot act on — the old
+                     * behaviour was a bare "Bulk delete failed" on every dash
+                     * that had ever shipped, which reads as "this feature is
+                     * broken".
+                     *
+                     * Fall back on ANY non-ok reply, not just 400. Measured
+                     * against a v1.1.30 dash, the array form fails two
+                     * different ways depending on size: a small batch is 400
+                     * "Missing id" (no `ids` key in its parser), a larger one
+                     * is 413 body_too_large (its receive buffer is 256 bytes,
+                     * which ~8 ids overflow). Keying the fallback on 400 alone
+                     * left every realistically-sized bulk delete broken — which
+                     * is exactly the case the feature exists for.
+                     *
+                     * Sequential, not parallel: each delete flushes
+                     * channels.json under the LVGL lock, and a burst of
+                     * concurrent POSTs just collects 503-busy replies. Re-running
+                     * a delete that already landed is harmless — the endpoint
+                     * answers 404 for an id that is gone. */
+                    let done = 0, failed = 0, lastErr = '';
+                    for (const id of ids) {
+                        try {
+                            const one = await fetch('/api/channels/delete', {
+                                method: 'POST', headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({id}),
+                            });
+                            if (one.ok) done++;
+                            else { failed++; lastErr = (await one.text().catch(() => '')) || `HTTP ${one.status}`; }
+                        } catch (e) { failed++; lastErr = String(e); }
+                    }
+                    if (typeof updateStatus === 'function') {
+                        if (done && !failed) updateStatus(`Deleted ${done} channel(s)`);
+                        else if (done) updateStatus(`Deleted ${done}, ${failed} failed · ${lastErr}`, true);
+                        else updateStatus(`Delete failed · ${lastErr}`, true);
+                    }
                 }
             } catch (e) { console.warn('bulk delete error', e); }
             if (ids.includes(_chSelectedId)) _chSelectedId = null;
@@ -23064,7 +23156,23 @@
 
         async function _chDelete(id) {
             if (!(await confirmAsync('Delete Custom Channel', 'Delete this custom channel? Widgets bound to it will show "—".', 'Delete'))) return;
-            await fetch('/api/channels/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id})});
+            /* Read the reply. This used to be a bare await with the response
+             * dropped, so a 403 (canonical), a 503 (LVGL lock busy) or an
+             * offline no-op all ended the same way: the list refetched, the
+             * channel was still there, and nothing on screen said why. A
+             * delete that silently does nothing is indistinguishable from a
+             * delete that does not exist — which is exactly what it gets
+             * reported as. */
+            try {
+                const r = await fetch('/api/channels/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id})});
+                if (!r.ok && typeof updateStatus === 'function') {
+                    const msg = (await r.text().catch(() => '')) || `HTTP ${r.status}`;
+                    updateStatus(`Could not delete channel · ${msg}`, true);
+                }
+            } catch (e) {
+                if (typeof updateStatus === 'function')
+                    updateStatus(`Could not delete channel · ${e}`, true);
+            }
             if (_chPendingId === id) _chClearPending();  /* edits superseded */
             _chSelectedId = null;
             await _fetchChannelsActive();
