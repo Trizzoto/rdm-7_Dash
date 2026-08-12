@@ -24,6 +24,17 @@ Read the relevant ADR before changing the area it covers. The "we already tried 
 | [0014](0014-workspace-design-language.md) | Accepted | Workspace design language — chrome is monochrome, colour is data, the accent marks | `../rdm7-desktop/src/tauri-overlay.html` (shared `.ws-*` chrome) |
 | [0015](0015-the-node-is-part-of-readiness.md) | Accepted | The node's own state is part of readiness — and dialogs must actually ask | `../rdm7-desktop/src/tauri-overlay.html` (GPS workspace), `../rdm-gps-node/` (status honesty + GNSS recovery) |
 | [0016](0016-cancel-must-cancel.md) | Accepted | Cancel must cancel — the editor asks with its own overlay, because `window.confirm` under Tauri doesn't | `main/web/index.html` (`_showConfirmOverlay`/`confirmAsync`, all 19 guards) |
+| [0017](0017-one-channel-list-two-ticks.md) | Accepted | One channel list, two ticks — Log and Graph | `../rdm7-desktop/src/tauri-overlay.html` (GPS workspace — Setup + rack popover), `../rdm7-desktop/tools/check_autotrack.js` |
+| [0018](0018-any-source-defines-a-channel.md) | Accepted | Any source can define a channel, and the marks are not tickboxes | `../rdm7-desktop/src/tauri-overlay.html` (GPS workspace — channel definitions, DBC import), `../rdm7-desktop/tools/check_autotrack.js` |
+| [0019](0019-splits-you-name.md) | Accepted | Splits you name — the name belongs to the gate that opens the stretch | `../rdm7-desktop/src/tauri-overlay.html` (Tracks inspector + Session split grid), `docs/LAP_ANALYSIS_REDESIGN_2026-07.md` Stage 5 |
+| [0020](0020-recording-needs-nothing-pressed.md) | Accepted | Recording needs nothing pressed, and readiness is one line | `../rdm7-desktop/src/tauri-overlay.html` (Session readiness) — desktop-only, no firmware change |
+| [0021](0021-restart-from-inside-studio.md) | Accepted | Everything can be restarted from inside Studio, and recording is red | `../rdm7-desktop/src-tauri/src/lib.rs`, `../rdm7-desktop/src/{tauri-overlay.html,transport.js}` |
+| [0022](0022-record-is-a-bus-citizen.md) | Accepted | Record is a bus citizen (`RECORD` on 0x40E), and the GNSS wedge cannot end a day | `../rdm-gps-node/` (`d270059`), `../rdm7-desktop/src/tauri-overlay.html` (Studio button); RDM-7_Dash owes the dash-side button |
+| [0023](0023-recording-is-a-choice.md) | Accepted | Recording is a choice — `record_on_boot` in NVS, and a REC lamp that holds still | `../rdm-gps-node/` (`record_on_boot` + RTC armed state), `../rdm7-desktop/src/tauri-overlay.html` (Setup toggle) |
+| [0024](0024-the-lap-timer-wears-the-brand.md) | Accepted | The lap timer wears the brand — Industry light, RDM red, six flat views | `../rdm7-desktop/src/tauri-overlay.html` (GPS workspace only), `../rdm7-desktop/tools/merge_overlay.py` (asset list) |
+| [0025](0025-analyse-is-a-grid-you-arrange.md) | Accepted | Analyse is a grid you arrange, not a layout we chose | `../rdm7-desktop/src/tauri-overlay.html` (GPS workspace, Analyse view) |
+| [0026](0026-analyse-is-a-mosaic.md) | Accepted | Analyse is a mosaic, and it may be taller than the window — supersedes 0025's row-major grid | `../rdm7-desktop/src/tauri-overlay.html` (Analyse panel tree, drag-to-place, brand-bar session line) |
+| [0027](0027-the-drawn-line-is-never-decimated.md) | Accepted | The drawn line is never decimated — the trace gets its own canvas layer, every sample at every zoom | `../rdm7-desktop/src/tauri-overlay.html` (Analyse + Corners maps) |
 
 ## When to write a new ADR
 
@@ -70,4 +81,9 @@ Existing ADRs vary slightly from this skeleton — none rigorous. Match the surr
 
 ## Numbering
 
-Strictly sequential. The next ADR is `0017`. Don't reuse numbers, even if a draft is abandoned — leave a stub if needed (`0011-abandoned.md` with one line of explanation).
+Strictly sequential. The next ADR is `0028`. Don't reuse numbers, even if a draft is abandoned — leave a stub if needed (`0011-abandoned.md` with one line of explanation).
+
+Numbers are sometimes claimed by code before the file is written — `ADR-0026`
+lived in `rdm7-desktop/src/tauri-overlay.html` for a day before
+`0026-analyse-is-a-mosaic.md` existed. Grep both repos for the next number
+before you take it.
