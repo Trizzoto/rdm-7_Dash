@@ -11413,7 +11413,10 @@
                 if (e.shiftKey) {
                     if (e.key === 'c' || e.key === 'C') { e.preventDefault(); copyStyle(); return; }
                     if (e.key === 'v' || e.key === 'V') { e.preventDefault(); pasteStyle(); return; }
-                    if (e.key === 's' || e.key === 'S') { e.preventDefault(); openSignalManager(); return; }
+                    /* Ctrl+Shift+S goes to the Channels page — it used to open
+                     * the legacy Signal Manager, a shortcut into exactly the
+                     * surface the channels model replaced (ADR-0035). */
+                    if (e.key === 's' || e.key === 'S') { e.preventDefault(); setStudioMode('channels'); return; }
                     /* Ctrl+Shift+] = bring to front, Ctrl+Shift+[ = send to back */
                     if (e.key === ']' || e.key === '}') { e.preventDefault(); bumpZOrder('front'); return; }
                     if (e.key === '[' || e.key === '{') { e.preventDefault(); bumpZOrder('back');  return; }
@@ -15140,7 +15143,7 @@
             const highlightSig = selWidget && selWidget.signal ? selWidget.signal : null;
 
             if (sigs.length === 0) {
-                c.innerHTML = '<div class="sig-list-empty">No signals yet.<br>Select a widget and click <b>+ New</b> in the inspector,<br>or use ECU Presets.</div>' +
+                c.innerHTML = '<div class="sig-list-empty">No raw signals — new widgets bind to <b>channels</b> instead.<br>Set channels up on the Channels page;<br>this list is only for legacy raw-signal widgets.</div>' +
                     '<div class="sig-open-manager" onclick="openSignalManager()">Open Signal Manager...</div>';
                 return;
             }
@@ -21925,6 +21928,14 @@
                     units_display: live?.units_display || def.units_display_default,
                     decimals: live?.decimals ?? def.decimals,
                     signal: live?.signal || '',
+                    /* Provenance + frame identity ride along so the Source
+                     * column can say where a channel comes from instead of
+                     * printing the internal signal name (ADR-0035). Without
+                     * these the badge classifier had nothing to read for
+                     * canonical rows — which is why the table used to fall
+                     * back to UPPER_SNAKE plumbing. */
+                    source: live?.source,
+                    decode: live?.decode,
                     current_value: live?.current_value,
                     is_stale: live?.is_stale ?? true,
                     is_active: !!live,
@@ -22030,10 +22041,29 @@
                         /* Greyed unless an actual signal is bound. */
                         const inact = bound ? '' : 'inactive';
                         const cls = _chZoneStateClass(c);
-                        /* Sub-text only when there's a real signal to show.
-                         * Avoid the "No signal" label — the greyed style is
-                         * the unambiguous signal-less state. */
-                        const sub = bound ? c.signal : '';
+                        /* The Source cell answers "where does this come from",
+                         * not "what is the registry slot called" (ADR-0035).
+                         * The badge carries the provenance (OBD2 / CAN / CALC /
+                         * RDM-7); supplementary text only where it adds
+                         * identity: the CAN frame id for bus channels — the
+                         * one fact that tells two same-named decodes apart —
+                         * and the raw signal name only when provenance is
+                         * unknown (old firmware) so nothing prints blank. */
+                        let srcTxt = '';
+                        if (bound) {
+                            if (c.source === 'can') {
+                                const cid = c.decode && c.decode.can_id;
+                                srcTxt = cid ? ('0x' + (cid >>> 0).toString(16).toUpperCase()) : c.signal;
+                            } else if (!c.source || c.source === 'unknown') {
+                                /* 'unknown' is the firmware's honest answer when
+                                 * the bound signal isn't registered this boot
+                                 * (e.g. its ECU frames haven't arrived) — keep
+                                 * the signal name so the cell never goes blank. */
+                                srcTxt = c.signal;
+                            }
+                        }
+                        const sub = bound ? `${_chSourceBadge(c)} ${_textEscape(srcTxt)}`.trim()
+                                          : _chSourceBadge(c);
                         const unit = c.units_display || c.units_native || '';
                         /* Render same shape for both states: "value unit".
                          * Unbound rows still get "— rpm" so the user sees
@@ -22065,7 +22095,7 @@
                             <div class="ch2-cell-name" style="display:flex; align-items:center;">${check}
                                 <div class="ch2-row-name">${c.label || c.id}</div>
                             </div>
-                            <div class="ch2-cell-src">${sub ? `<div class="ch2-row-sub">${_chSourceBadge(c)} ${sub}</div>` : ''}</div>
+                            <div class="ch2-cell-src">${sub ? `<div class="ch2-row-sub">${sub}</div>` : ''}</div>
                             <div class="ch2-cell-val ch2-row-val ${cls}">${valHtml}</div>
                             <div class="ch2-cell-range">${rangeTxt}</div>
                             <div class="ch2-cell-warn">${warnTxt}</div>
