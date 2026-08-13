@@ -19460,9 +19460,11 @@
         }
 
         /* ── OBD2 Setup modal ─────────────────────────────────────────
-         * Reads /api/system/info (or whatever's cheapest) + the live
-         * signals list to summarise the OBD2 state for the user.
-         * Refreshes every 2 s while the modal is open. */
+         * Reads the live signals list (/api/signals/values) to summarise the
+         * OBD2 state for the user. Refreshes every 2 s while the modal is
+         * open. (The comment here used to name /api/system/info, which the
+         * firmware does not register — the code never called it, but the
+         * Setup cards did, and read blank for it.) */
         let _obd2SetupTimer = null;
 
         async function _refreshObd2Setup() {
@@ -20284,16 +20286,33 @@
                 const el = document.getElementById('setupEcuStat');
                 if (el) el.textContent = txt;
             }
-            /* WiFi */
+            /* WiFi + Device, from ONE call to an endpoint that exists.
+             *
+             * These two lines had read "—" forever. They asked for
+             * /api/wifi/status and /api/system/info, and the firmware
+             * registers neither — both 405'd through to the CORS wildcard, and
+             * the bare `catch {}` around each swallowed it, so a permanently
+             * blank card looked like a card with nothing to say. The data was
+             * always there: /api/device/info carries both `wifi` and `system`.
+             * Field names differ from what the old code guessed (state/
+             * ap_enabled, not connected/ap_active), which is why this could
+             * never have worked. */
             try {
-                const r = await fetch('/api/wifi/status');
+                const r = await fetch('/api/device/info');
                 if (r.ok) {
                     const d = await r.json();
+                    const w = d.wifi || {};
                     const parts = [];
-                    if (d.connected && d.ssid) parts.push('STA: ' + d.ssid);
-                    if (d.ap_active) parts.push('AP: ' + (d.ap_ssid || 'on'));
-                    document.getElementById('setupWifiStat').textContent =
-                        parts.length ? parts.join(' · ') : 'Offline';
+                    if (w.state === 'connected' && w.ssid)
+                        parts.push(w.ssid + (w.sta_ip ? ' · ' + w.sta_ip : ''));
+                    if (w.ap_enabled) parts.push('Hotspot: ' + (w.ap_ssid || 'on'));
+                    const wEl = document.getElementById('setupWifiStat');
+                    if (wEl) wEl.textContent = parts.length ? parts.join(' · ') : 'Not connected';
+
+                    const heap = d.system && d.system.heap_free
+                        ? Math.round(d.system.heap_free / 1024) + ' KB free' : '';
+                    const dEl = document.getElementById('setupDeviceStat');
+                    if (dEl && heap) dEl.textContent = heap;
                 }
             } catch(e) {}
             /* OBD2 PID count */
@@ -20306,15 +20325,19 @@
                         n ? `${n} PID${n===1?'':'s'} polled` : 'Not configured';
                 }
             } catch(e) {}
-            /* Device */
+            /* Firmware version. /api/device/info has no version field over
+             * HTTP (the serial RPC's device.info does, which is what made this
+             * look like it should have worked); /api/ota/status carries it as
+             * current_version. Prefixed onto the heap figure set above. */
             try {
-                const r = await fetch('/api/system/info');
+                const r = await fetch('/api/ota/status');
                 if (r.ok) {
                     const d = await r.json();
-                    const heap = d.free_heap ? Math.round(d.free_heap/1024) + ' KB heap' : '';
-                    const ver = d.version || '';
-                    document.getElementById('setupDeviceStat').textContent =
-                        [ver, heap].filter(Boolean).join(' · ') || 'OK';
+                    const el = document.getElementById('setupDeviceStat');
+                    if (el && d.current_version) {
+                        const heap = /KB free/.test(el.textContent) ? el.textContent : '';
+                        el.textContent = ['v' + d.current_version, heap].filter(Boolean).join(' · ');
+                    }
                 }
             } catch(e) {}
         }
