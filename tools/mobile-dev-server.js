@@ -39,6 +39,14 @@ const SAVED_LAYOUT = path.join(ROOT, 'tools', 'ford_cluster.json');
 const _devIdx = process.argv.indexOf('--device');
 const DEVICE_IP = _devIdx >= 0 ? process.argv[_devIdx + 1] : null;
 
+/* --local-stub: behave like RDM Studio's desktop LOCAL mode with no dash —
+ * /api/channels + /api/channels/canonical answer an honest empty set with
+ * offline:true, every other /api/* call fails outright. This is the
+ * from-zero environment (fresh install, dash still in its box) that the
+ * baked catalogue + offline queue exist for (ADR-0033); without this flag
+ * the mock answers everything and the offline paths never run in dev. */
+const LOCAL_STUB = process.argv.includes('--local-stub');
+
 function proxyToDevice(req, res) {
   const opts = {
     host: DEVICE_IP, port: 80, path: req.url, method: req.method,
@@ -361,6 +369,15 @@ const server = http.createServer((req, res) => {
     if (url.startsWith('/api/')) {
       return proxyToDevice(req, res);
     }
+  }
+
+  /* Desktop-local-with-no-dash simulation — see LOCAL_STUB above. */
+  if (LOCAL_STUB && url.startsWith('/api/')) {
+    if ((url === '/api/channels' || url === '/api/channels/canonical') && req.method === 'GET') {
+      return sendJson(res, { channels: [], capacity: 128, offline: true });
+    }
+    res.writeHead(502, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'no dash (local-stub mode)' }));
   }
 
   if (req.url.startsWith('/api/')) {

@@ -34,7 +34,7 @@ main/
 ├── web/          index.html (embedded), logo
 └── widgets/      16 widget types + signal, font_manager, widget_rules, widget_registry
 schema/           widgets.schema.json + codegen metadata
-tools/            codegen_widget_defs.py, check_*.py, png_to_rdmimg.py, mobile-dev-server.js
+tools/            codegen_widget_defs.py, gen_channel_catalog.py (+ native/ host C emitter), check_*.py, png_to_rdmimg.py, mobile-dev-server.js
 tests/api/        pytest API contract suite
 tests/native/     Unity C unit tests (CAN decode, layout migration, widget rules)
 ```
@@ -139,6 +139,12 @@ Firmware: **RGB565**. Web editor: **RGB888**. Use `rgb565to888()` on load, `rgb8
 - **`main/web/index.html` is the single source of truth.** Embedded in firmware
   via EMBED_FILES (gzipped), also served directly by `tools/mobile-dev-server.js` for
   browser-based dev without a device.
+- The `CHANNEL_CATALOG` block in `index.html` (`window.RDM_BAKED_CATALOG`) is
+  codegen output: `python tools/gen_channel_catalog.py` host-compiles the REAL
+  firmware tables (`canonical_channels.c` + `preset_picker_data.c`) and injects
+  their JSON, so offline setup-from-zero works (ADR-0033). **Never hand-edit
+  it** — `--check` in `schema-check.yml` recompiles and byte-compares. Editing
+  either C table means rerunning the codegen and committing the HTML.
 - The Tauri desktop copy at `../rdm7-desktop/src/index.html` (separate repo) has
   its own delta (USB transport, Tauri wrapper, auto-updater, ~1300 lines of
   edits) — keep that in sync manually when web-editor changes need to land

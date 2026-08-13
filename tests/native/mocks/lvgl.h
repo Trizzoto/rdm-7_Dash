@@ -14,6 +14,9 @@
 
 typedef struct lv_obj_t  lv_obj_t;
 typedef struct lv_font_t lv_font_t;
+/* preset_picker.h's embedded-picker prototype takes lv_coord_t; the
+ * catalogue emitter compiles that header (types only, never called). */
+typedef int16_t lv_coord_t;
 
 /* RGB565 bit-field shape — matches widget code's expectations of a
  * struct with `.full` being the underlying 16-bit value. Not used by

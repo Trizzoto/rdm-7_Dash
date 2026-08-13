@@ -4,7 +4,7 @@ check_preset_signedness.py — CI / pre-commit safety net.
 
 The same ECU signal can be described in TWO independent C tables:
   1. ECU_PRESETS        (main/layout/ecu_presets.c)      — bulk layout-level apply
-  2. preconfig_items    (main/ui/settings/preset_picker.c) — wizard + "+ New source"
+  2. preconfig_items    (main/ui/settings/preset_picker_data.c) — wizard + "+ New source"
 
 They have diverged before (MaxxECU temps/ignition lost their signed fix in
 the preconfig table — sub-zero temps read ~6500). This script parses both
@@ -31,7 +31,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 
 ECU_PRESETS_C = REPO / "main" / "layout" / "ecu_presets.c"
-PRESET_PICKER_C = REPO / "main" / "ui" / "settings" / "preset_picker.c"
+PRESET_PICKER_C = REPO / "main" / "ui" / "settings" / "preset_picker_data.c"
 
 # Same ECU, different display identity in the two tables. Without these the
 # exact-key lookup silently skips the pair and CI goes green on a real

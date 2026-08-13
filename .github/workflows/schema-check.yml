@@ -33,6 +33,9 @@ on:
       - 'tools/requirements.txt'
       - 'main/layout/ecu_presets.c'
       - 'main/ui/settings/preset_picker.c'
+      - 'main/ui/settings/preset_picker_data.c'
+      - 'main/data/canonical_channels.c'
+      - 'tools/native/gen_channel_catalog.c'
 
   pull_request:
     branches:
@@ -50,6 +53,9 @@ on:
       - 'tools/requirements.txt'
       - 'main/layout/ecu_presets.c'
       - 'main/ui/settings/preset_picker.c'
+      - 'main/ui/settings/preset_picker_data.c'
+      - 'main/data/canonical_channels.c'
+      - 'tools/native/gen_channel_catalog.c'
 
   workflow_dispatch:
 
@@ -90,6 +96,21 @@ jobs:
         id: signedness
         if: ${{ !cancelled() }}
         run: python tools/check_preset_signedness.py
+
+      # The baked channel catalogue in index.html is codegen output from the
+      # firmware's own tables (host-compiled, so drift is structural, not a
+      # matter of discipline). Recompile + byte-compare.
+      - name: Check baked channel catalogue
+        id: catalog
+        if: ${{ !cancelled() }}
+        run: python tools/gen_channel_catalog.py --check
+
+      - name: Summarise catalogue failure
+        if: ${{ !cancelled() && steps.catalog.outcome == 'failure' }}
+        run: |
+          echo "::error::Baked channel catalogue drifted from the firmware tables."
+          echo "::error::Regenerate and commit main/web/index.html:"
+          echo "::error::  python tools/gen_channel_catalog.py"
 
       - name: Summarise codegen failure
         if: ${{ !cancelled() && steps.codegen.outcome == 'failure' }}
