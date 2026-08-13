@@ -46,6 +46,79 @@ extern "C" {
  */
 esp_err_t channel_apply_preconfig(channel_t *c, const preconfig_item_t *item);
 
+/* ── OBD2 scan → channels ────────────────────────────────────────────
+ *
+ * An OBD2 discovery scan answers with a list of supported Mode-01 PIDs.
+ * On its own that's a list of hex bytes; what the user wants to know is
+ * "which channels can this car feed me". That translation is one rule —
+ * CANONICAL_OBD2_MAP read backwards, cross-referenced with what's already
+ * in the channel set — and it lives here so the web endpoint, the desktop
+ * (through that endpoint) and the dash's own editor all give the same
+ * answer instead of three drifting copies. */
+
+/* Upper bound on offers from one scan: the map has ~26 rows and grows
+ * slowly, so callers can size a buffer once and never truncate. */
+#define CH_OBD2_MATCH_MAX 40
+
+typedef struct {
+	const char *channel_id;   /* canonical id, e.g. "coolant_temp"     */
+	const char *label;        /* human label from the canonical entry  */
+	const char *units;        /* canonical native units ("" if none)   */
+	const char *signal_name;  /* OBD2 signal name to bind the channel to */
+	uint8_t     service;      /* OBD2 mode (1)                         */
+	uint16_t    pid;          /* OBD2 PID                              */
+	bool        active;       /* channel already in the live set       */
+	bool        bound;        /* already has a source (don't re-bind)  */
+} obd2_channel_match_t;
+
+/**
+ * Resolve a scan's answering PIDs into channel offers, in canonical map
+ * order (stable across scans, so the list doesn't reshuffle on rescan).
+ * PIDs with no canonical channel are skipped — a car answers plenty of
+ * PIDs nobody wants on a dash.
+ *
+ * `pids` are raw Mode-01 PID bytes as returned by obd2_scan_result_t.
+ * Caller must hold the LVGL mutex (reads the channel set).
+ * Returns the number of rows written to `out`.
+ */
+size_t channel_obd2_matches(const uint8_t *pids, size_t n_pids,
+                            obd2_channel_match_t *out, size_t max_out);
+
+/**
+ * Bind channels to their OBD2 PIDs, activating any that aren't in the
+ * live set yet. One layout read + one save + one obd2_start for the whole
+ * batch — binding twelve channels one at a time would rewrite the polled
+ * PID list twelve times.
+ *
+ * Errors:
+ *   ESP_ERR_INVALID_ARG — nothing to do / bad args
+ *   ESP_ERR_NO_MEM      — the polled-PID list is full (OBD2_MAX_ENABLED)
+ *   ESP_FAIL            — no active layout, or the save failed; the binds
+ *                         are live for this session but won't survive a
+ *                         reboot (caller should say so)
+ * `*out_bound` receives how many channels actually got bound.
+ * Caller must hold the LVGL mutex.
+ */
+esp_err_t channel_apply_obd2(const obd2_channel_match_t *rows, size_t n_rows,
+                             size_t *out_bound);
+
+/**
+ * Drop polled OBD2 PIDs that no channel needs any more.
+ *
+ * Binding adds a PID to the polled set; unbinding never removed one, so the
+ * set only ever grew — and it caps at OBD2_MAX_ENABLED (48). One channel at
+ * a time that was a slow leak; a scan that adopts a dozen at once makes it a
+ * real ceiling. Call after a channel is unbound or removed.
+ *
+ * Only prunes PIDs that map to a canonical channel (CANONICAL_OBD2_MAP) and
+ * that no active channel is bound to. A PID enabled by hand for something
+ * with no channel — the OBD2 PID picker, custom PIDs — is left alone: it was
+ * a deliberate choice and nothing here can tell it isn't still wanted.
+ *
+ * Caller must hold the LVGL mutex. Returns the number of PIDs dropped.
+ */
+size_t channel_obd2_prune(void);
+
 /* ── Studio "full config" layout import ──────────────────────────────
  *
  * Portable layouts authored off-device (RDM Studio export, marketplace

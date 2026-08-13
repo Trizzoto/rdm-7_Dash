@@ -42,6 +42,7 @@ Read the relevant ADR before changing the area it covers. The "we already tried 
 | [0034](0034-removal-returns-to-the-catalogue.md) | Accepted | Removal returns a channel to the catalogue, on every surface — channel_manager_remove + allow_canonical; device editor gains preview-Add, two-tap Remove, and pool-owned row ids | `main/data/channel_manager.*`, `main/net/web_server_channels.c`, `main/ui/screens/first_run_wizard.c`, `main/web/index.html` |
 | [0035](0035-the-source-column-speaks-provenance.md) | Accepted | The Source column speaks provenance, not plumbing — badge + frame id instead of registry names; Ctrl+Shift+S goes to Channels; signal-speak retired from user-facing copy; device pane follows the same rule | `main/web/index.html`, `main/ui/screens/first_run_wizard.c` |
 | [0036](0036-layouts-get-the-tune-file-treatment-too.md) | Accepted | Layouts get the tune-file treatment too, but last-write-wins — offline saves stash per layout name and are offered on reconnect, reusing the existing screenshot/channels reconnect moments | `main/web/index.html` |
+| [0037](0037-scanning-the-car-is-a-source.md) | Accepted | Scanning the car is a source, and diagnostics is a different job — `+ Add channels → From OBD2` on all three surfaces, one firmware resolver (`channel_obd2_matches`/`channel_apply_obd2`), polled PIDs pruned on unbind; Source column down to two tags, view chips retired | `main/data/channel_source_apply.*`, `main/data/canonical_channels.*`, `main/net/web_server_obd2.c`, `main/net/web_server_channels.c`, `main/ui/screens/first_run_wizard.c`, `main/ui/settings/device_settings.c`, `main/web/index.html` |
 
 ## When to write a new ADR
 
@@ -88,7 +89,7 @@ Existing ADRs vary slightly from this skeleton — none rigorous. Match the surr
 
 ## Numbering
 
-Strictly sequential. The next ADR is `0037`. Don't reuse numbers, even if a draft is abandoned — leave a stub if needed (`0011-abandoned.md` with one line of explanation).
+Strictly sequential. The next ADR is `0038`. Don't reuse numbers, even if a draft is abandoned — leave a stub if needed (`0011-abandoned.md` with one line of explanation).
 
 `0029` is deliberately unclaimed: a draft of it exists outside this repo (the
 GPS "a recording plays as a session" work). Take `0031`, not `0029`.

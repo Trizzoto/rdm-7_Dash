@@ -8,8 +8,10 @@
  */
 
 #include "channel_source_apply.h"
+#include "canonical_channels.h"
 #include "../widgets/signal.h"
 #include "../can/can_manager.h"
+#include "../can/obd2.h"
 #include "../layout/ecu_presets.h"
 #include "../layout/layout_manager.h"
 #include "esp_log.h"
@@ -376,4 +378,162 @@ size_t channel_import_from_layout_signals(cJSON *signals_arr) {
         reconfigure_can_filter();
 
     return touched;
+}
+
+/* ── OBD2 scan → channels ──────────────────────────────────────────── */
+
+size_t channel_obd2_matches(const uint8_t *pids, size_t n_pids,
+                            obd2_channel_match_t *out, size_t max_out) {
+    if (!pids || !out || max_out == 0) return 0;
+
+    size_t n = 0;
+    /* Walk the map rather than the scan result, so the offer list comes
+     * out in canonical order (RPM, coolant, speed…) and stays in the same
+     * order across rescans instead of reshuffling with PID numbering. */
+    for (size_t i = 0; i < CANONICAL_OBD2_MAP_COUNT && n < max_out; i++) {
+        const canonical_obd2_map_t *m = &CANONICAL_OBD2_MAP[i];
+        if (m->service != 0x01) continue;      /* discovery reports Mode 01 */
+
+        bool answered = false;
+        for (size_t k = 0; k < n_pids; k++) {
+            if (pids[k] == (uint8_t)m->pid) { answered = true; break; }
+        }
+        if (!answered) continue;
+
+        const canonical_channel_def_t *d = canonical_channel_find(m->channel_id);
+        const channel_t *c = channel_manager_get(m->channel_id);
+
+        out[n].channel_id  = m->channel_id;
+        out[n].label       = (d && d->label) ? d->label : m->channel_id;
+        out[n].units       = (d && d->units_native) ? d->units_native : "";
+        out[n].signal_name = m->obd2_signal_name;
+        out[n].service     = m->service;
+        out[n].pid         = m->pid;
+        out[n].active      = (c != NULL);
+        /* "Bound" means the user already chose a source — including one
+         * whose frames haven't arrived this boot (signal_index < 0). Those
+         * are deliberate configuration, not gaps to fill. */
+        out[n].bound       = (c && c->signal_name[0] != '\0');
+        n++;
+    }
+    return n;
+}
+
+esp_err_t channel_apply_obd2(const obd2_channel_match_t *rows, size_t n_rows,
+                             size_t *out_bound) {
+    if (out_bound) *out_bound = 0;
+    if (!rows || n_rows == 0) return ESP_ERR_INVALID_ARG;
+
+    /* Read the currently-polled set once, add every requested PID to it,
+     * then save + restart polling once. Binding twelve channels one at a
+     * time would rewrite the layout's PID list twelve times. */
+    char layout[64];
+    bool have_layout = (layout_manager_get_active(layout, sizeof(layout)) == ESP_OK);
+
+    uint32_t pids[OBD2_MAX_ENABLED];
+    uint8_t  count = 0;
+    if (have_layout)
+        ecu_preset_read_obd2_pids(layout, pids, OBD2_MAX_ENABLED, &count);
+    else
+        count = obd2_get_enabled(pids, OBD2_MAX_ENABLED);
+
+    bool full = false;
+    size_t bound = 0;
+
+    channel_manager_begin_bulk();
+    for (size_t i = 0; i < n_rows; i++) {
+        const obd2_channel_match_t *r = &rows[i];
+        if (!r->channel_id || !r->signal_name || !r->signal_name[0]) continue;
+
+        channel_t *c = channel_manager_get(r->channel_id);
+        if (!c && canonical_channel_exists(r->channel_id))
+            c = channel_manager_activate(r->channel_id);
+        if (!c) continue;                       /* unknown id / registry full */
+
+        uint32_t enc = obd2_encode_pid(r->service, r->pid);
+        bool dup = false;
+        for (uint8_t k = 0; k < count; k++)
+            if (pids[k] == enc) { dup = true; break; }
+        if (!dup) {
+            if (count >= OBD2_MAX_ENABLED) { full = true; continue; }
+            pids[count++] = enc;
+        }
+
+        channel_manager_set_signal(c, r->signal_name);
+        bound++;
+    }
+    channel_manager_end_bulk();
+
+    if (bound == 0) return full ? ESP_ERR_NO_MEM : ESP_ERR_INVALID_ARG;
+
+    channel_manager_resolve_signals();
+
+    /* Poll regardless of whether the save lands — the binds should work
+     * for this session even if persistence fails; the caller reports the
+     * "won't survive a reboot" part. */
+    if (count > 0) obd2_start(pids, count);
+    if (out_bound) *out_bound = bound;
+
+    esp_err_t save_err = ESP_OK;
+    if (have_layout) save_err = ecu_preset_save_obd2_pids(layout, pids, count);
+    else             save_err = ESP_FAIL;
+
+    ESP_LOGI(TAG, "OBD2 bind: %u channel(s), %u PID(s) polled%s",
+             (unsigned)bound, (unsigned)count,
+             save_err == ESP_OK ? "" : " (not persisted)");
+
+    if (save_err != ESP_OK) return ESP_FAIL;
+    return full ? ESP_ERR_NO_MEM : ESP_OK;
+}
+
+size_t channel_obd2_prune(void) {
+    char layout[64];
+    bool have_layout = (layout_manager_get_active(layout, sizeof(layout)) == ESP_OK);
+
+    uint32_t pids[OBD2_MAX_ENABLED];
+    uint8_t  count = 0;
+    if (have_layout)
+        ecu_preset_read_obd2_pids(layout, pids, OBD2_MAX_ENABLED, &count);
+    else
+        count = obd2_get_enabled(pids, OBD2_MAX_ENABLED);
+    if (count == 0) return 0;
+
+    uint32_t keep[OBD2_MAX_ENABLED];
+    uint8_t  kept = 0;
+    size_t   dropped = 0;
+
+    for (uint8_t i = 0; i < count; i++) {
+        uint8_t  svc = obd2_decode_service(pids[i]);
+        uint16_t pid = obd2_decode_pid(pids[i]);
+
+        const canonical_obd2_map_t *m = canonical_channel_obd2_for_pid(svc, pid);
+        if (!m) { keep[kept++] = pids[i]; continue; }   /* hand-enabled — leave it */
+
+        /* Does any active channel still want this OBD2 signal? Match on the
+         * signal name rather than the channel id: two channels can share one
+         * OBD2 feed, and the map's channel may have been removed while a
+         * custom one kept the binding. */
+        bool wanted = false;
+        size_t n = channel_manager_count();
+        for (size_t k = 0; k < n && !wanted; k++) {
+            const channel_t *c = channel_manager_at(k);
+            if (c && strcmp(c->signal_name, m->obd2_signal_name) == 0) wanted = true;
+        }
+        if (wanted) keep[kept++] = pids[i];
+        else        dropped++;
+    }
+
+    if (dropped == 0) return 0;
+
+    /* obd2_start() with the surviving list, even when it's empty: obd2_stop()
+     * deliberately leaves s_poll[] populated (UI may query it after a stop),
+     * so stopping alone would leave /api/obd2/pids reporting PIDs nothing is
+     * polling any more. obd2_start() zeroes s_poll_count first, so a
+     * zero-length call both stops and tells the truth afterwards. */
+    obd2_start(keep, kept);
+    if (have_layout) ecu_preset_save_obd2_pids(layout, keep, kept);
+
+    ESP_LOGI(TAG, "OBD2 prune: dropped %u unused PID(s), %u still polled",
+             (unsigned)dropped, (unsigned)kept);
+    return dropped;
 }

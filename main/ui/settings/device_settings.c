@@ -2284,13 +2284,13 @@ static void _run_wizard_btn_cb(lv_event_t *e) {
  * _ecu_label_compose / _deferred_reload_after_ecu / _ecu_picker_done_cb /
  * _ecu_btn_cb helpers went with it. ───────────────────────────────────── */
 
-/* ── OBD2 Signals button ─────────────────────────────────────────────── */
+/* ── OBD2 PIDs button ────────────────────────────────────────────────── */
 
 static lv_obj_t *s_obd2_btn_label = NULL;
 
 /* Compose the button label based on current state:
- *   "Add OBD2 Signals..." (no PIDs configured)
- *   "OBD2 Signals... (N)" (some PIDs configured)
+ *   "Choose PIDs..."   (none polled)
+ *   "N polled"         (some polled)
  *
  * Reads from the in-memory poll state, NOT the layout JSON on disk.
  * Earlier versions called ecu_preset_read_obd2_pids() which fopen()ed
@@ -2304,9 +2304,9 @@ static void _obd2_label_compose(char *buf, size_t n)
     uint32_t pids[OBD2_MAX_ENABLED];
     uint8_t count = obd2_get_enabled(pids, OBD2_MAX_ENABLED);
     if (count == 0) {
-        snprintf(buf, n, "Add OBD2 Signals...");
+        snprintf(buf, n, "Choose PIDs...");
     } else {
-        snprintf(buf, n, "OBD2 Signals... (%u)", count);
+        snprintf(buf, n, "%u polled", count);
     }
 }
 
@@ -3252,11 +3252,15 @@ static void _build_vehicle_grid(lv_obj_t *content) {
         "Map signals to channels, set ranges + warnings.",
         ch_txt, _channels_card_cb);
 
-    /* OBD2 Signals card. Same pattern — repoint s_obd2_btn_label. */
+    /* OBD2 PIDs card — the by-hand tool, named as such. Getting OBD2
+     * readings onto the dash is one action and it lives in Channels
+     * ("Scan for OBD2"); this card is for picking exact PIDs and adding
+     * ones the standard list doesn't know (ADR-0037). Same
+     * repoint-the-stat-label pattern as the cards above. */
     char obd2_txt[48];
     _obd2_label_compose(obd2_txt, sizeof(obd2_txt));
-    setup_card_t obd2 = _make_setup_card(grid, LV_SYMBOL_DRIVE, "OBD2 Signals",
-        "Mode 01/22 polling + custom PIDs.",
+    setup_card_t obd2 = _make_setup_card(grid, LV_SYMBOL_DRIVE, "OBD2 PIDs",
+        "Pick exact PIDs by hand. For readings, use Channels.",
         obd2_txt, _obd2_btn_cb);
     s_obd2_btn_label = obd2.stat_label;
 

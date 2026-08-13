@@ -195,6 +195,13 @@ extern const size_t CANONICAL_OBD2_MAP_COUNT;
  * not per-frame. Returns NULL when the channel has no OBD2 equivalent. */
 const canonical_obd2_map_t *canonical_channel_obd2_for(const char *channel_id);
 
+/* The inverse: "this car answered PID 0x0C — what channel is that?"
+ * Used by the OBD2 scan flow to turn a list of answering PIDs into a list
+ * of channels the vehicle can actually feed. Returns NULL for PIDs with no
+ * canonical channel (a car answers plenty of PIDs nobody wants on a dash). */
+const canonical_obd2_map_t *canonical_channel_obd2_for_pid(uint8_t service,
+                                                           uint16_t pid);
+
 #ifdef __cplusplus
 }
 #endif

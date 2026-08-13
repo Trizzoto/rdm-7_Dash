@@ -594,8 +594,17 @@ static bool apply_one_field(channel_t *c, const char *key, cJSON *val) {
 	}
 	if (!strcmp(key, "signal")) {
 		/* Null OR empty string both mean unbind. The web UI sends null
-		 * when the user clicks the red "Unbind" link (see _chEdit). */
-		if (cJSON_IsNull(val)) return channel_manager_set_signal(c, "");
+		 * when the user clicks the red "Unbind" link (see _chEdit).
+		 * Unbinding also gives back the OBD2 PID this channel was
+		 * keeping alive — binding adds one, so something has to take
+		 * one away or the 48-slot polled set only ever fills up. */
+		bool unbind = cJSON_IsNull(val)
+		           || (cJSON_IsString(val) && !val->valuestring[0]);
+		if (unbind) {
+			bool ok = channel_manager_set_signal(c, "");
+			if (ok) channel_obd2_prune();
+			return ok;
+		}
 		if (cJSON_IsString(val)) return channel_manager_set_signal(c, val->valuestring);
 		return false;
 	}
@@ -827,6 +836,9 @@ static esp_err_t channels_delete_handler(httpd_req_t *req) {
 			else skipped++;
 		}
 		channel_manager_end_bulk();
+		/* Give back any OBD2 PIDs the removed channels were keeping
+		 * polled — see channel_obd2_prune. */
+		if (deleted) channel_obd2_prune();
 		rdm_lvgl_unlock();
 		cJSON_Delete(root);
 
@@ -873,6 +885,7 @@ static esp_err_t channels_delete_handler(httpd_req_t *req) {
 	}
 	ok = allow_canonical ? channel_manager_remove(id_copy)
 	                     : channel_manager_delete(id_copy);
+	if (ok) channel_obd2_prune();
 	rdm_lvgl_unlock();
 
 	if (!ok) {
@@ -1376,39 +1389,24 @@ static esp_err_t channels_bind_source_handler(httpd_req_t *req) {
 			return ESP_FAIL;
 		}
 	} else if (is_obd2) {
-		/* Build the new polled-PID list, start polling it best-effort (so the
-		 * bind works THIS session even if persistence fails), then surface a
-		 * save failure to the client. Previously a failed save silently left
-		 * the channel bound-but-never-polling and still returned HTTP 200. */
-		esp_err_t save_err = ESP_OK;
-		char layout[64];
-		if (layout_manager_get_active(layout, sizeof(layout)) == ESP_OK) {
-			uint32_t pids[OBD2_MAX_ENABLED];
-			uint8_t count = 0;
-			ecu_preset_read_obd2_pids(layout, pids, OBD2_MAX_ENABLED, &count);
-			uint32_t enc = obd2_encode_pid(obd_svc, obd_pid);
-			bool dup = false;
-			for (uint8_t i = 0; i < count; ++i) {
-				if (pids[i] == enc) { dup = true; break; }
-			}
-			if (!dup) {
-				if (count >= OBD2_MAX_ENABLED) {
-					save_err = ESP_ERR_NO_MEM;          /* list full (max 48) */
-				} else {
-					pids[count++] = enc;
-					save_err = ecu_preset_save_obd2_pids(layout, pids, count);
-				}
-			}
-			if (count > 0) obd2_start(pids, count);     /* poll regardless of save */
-		} else {
-			save_err = ESP_FAIL;                        /* no active layout */
-		}
-		channel_manager_set_signal(c, signal_name);
-		channel_manager_resolve_signals();
-		if (save_err != ESP_OK) {
+		/* One binding path for OBD2, shared with /api/obd2/adopt and the
+		 * dash's own scan flow (channel_apply_obd2): add the PID to the
+		 * polled set, poll it best-effort so the bind works THIS session
+		 * even if persistence fails, then surface a save failure. A failed
+		 * save used to leave the channel bound-but-never-polling behind an
+		 * HTTP 200. */
+		obd2_channel_match_t row = {
+			.channel_id  = c->id,
+			.signal_name = signal_name,
+			.service     = obd_svc,
+			.pid         = obd_pid,
+		};
+		size_t bound = 0;
+		esp_err_t err = channel_apply_obd2(&row, 1, &bound);
+		if (err != ESP_OK || bound == 0) {
 			rdm_lvgl_unlock();
 			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
-				save_err == ESP_ERR_NO_MEM
+				err == ESP_ERR_NO_MEM
 					? "OBD2 PID limit reached (max 48)"
 					: "Bound for this session but failed to save — won't survive a reboot");
 			return ESP_FAIL;

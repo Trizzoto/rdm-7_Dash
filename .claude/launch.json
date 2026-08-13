@@ -10,7 +10,7 @@
     {
       "name": "device-proxy",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["tools/mobile-dev-server.js", "--device", "192.168.4.61"],
+      "runtimeArgs": ["tools/mobile-dev-server.js", "--device", "192.168.4.69"],
       "port": 8180
     },
     {

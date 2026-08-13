@@ -23,6 +23,8 @@
 #include "system/rdm_lv_async.h"
 #include "cJSON.h"
 #include "can/obd2.h"
+#include "data/canonical_channels.h"
+#include "data/channel_source_apply.h"
 #include "can/obd2_dtc_db.h"
 #include "storage/sd_manager.h"
 #include "widgets/signal.h"
@@ -767,9 +769,15 @@ static const httpd_uri_t sim_get_uri = {
 /* POST /api/obd2/scan — run the OBD2 discovery scan (with auto-search across
  * 500k/250k bitrates + 0x7DF/0x7E0 addressing) and return what the vehicle
  * supports. Same async-bridge pattern as VIN/ECU-name. Returns
- *   { ok, completed, count, pids:[...] }   (PIDs are Mode 01 PID bytes)
+ *   { ok, completed, count, pids:[...],   (PIDs are Mode 01 PID bytes)
+ *     channels:[{id,label,units,signal_name,service,pid,active,bound}, ...] }
  * or { ok:false, error } on timeout. Generous wait: the auto-search may
- * bounce the CAN bitrate (~250 ms each) before giving up. */
+ * bounce the CAN bitrate (~250 ms each) before giving up.
+ *
+ * `channels` is the answer to the question a user actually has — "what can
+ * this car give me" — resolved by channel_obd2_matches() so the web page,
+ * RDM Studio and the dash's own editor all read the same mapping instead
+ * of shipping three copies of the PID table. */
 typedef struct {
     SemaphoreHandle_t done;
     volatile int      refs;
@@ -794,6 +802,125 @@ static void _scan_kick(void *arg) {
     obd2_discovery_start(_scan_done_cb, arg);
 }
 
+/* Turn answering PIDs into channel offers. Needs the LVGL lock (it reads
+ * the live channel set to mark active/bound). A busy lock degrades to an
+ * empty list with the reason named — never a silently short list. */
+static void _scan_add_channels(cJSON *resp, const uint8_t *pids, uint8_t n_pids) {
+    cJSON *arr = cJSON_AddArrayToObject(resp, "channels");
+    if (!arr || n_pids == 0) return;
+
+    /* Heap, not stack: ~1 KB of rows on the httpd task's stack is a poor
+     * trade for a one-shot call. */
+    obd2_channel_match_t *rows = calloc(CH_OBD2_MATCH_MAX, sizeof(*rows));
+    if (!rows) return;
+
+    if (!rdm_lvgl_lock(1200)) {
+        cJSON_AddStringToObject(resp, "channels_error", "busy");
+        free(rows);
+        return;
+    }
+    size_t n = channel_obd2_matches(pids, n_pids, rows, CH_OBD2_MATCH_MAX);
+    rdm_lvgl_unlock();
+
+    for (size_t i = 0; i < n; i++) {
+        cJSON *o = cJSON_CreateObject();
+        cJSON_AddStringToObject(o, "id",          rows[i].channel_id);
+        cJSON_AddStringToObject(o, "label",       rows[i].label);
+        cJSON_AddStringToObject(o, "units",       rows[i].units);
+        cJSON_AddStringToObject(o, "signal_name", rows[i].signal_name);
+        cJSON_AddNumberToObject(o, "service",     rows[i].service);
+        cJSON_AddNumberToObject(o, "pid",         rows[i].pid);
+        cJSON_AddBoolToObject  (o, "active",      rows[i].active);
+        cJSON_AddBoolToObject  (o, "bound",       rows[i].bound);
+        cJSON_AddItemToArray(arr, o);
+    }
+    free(rows);
+}
+
+/* POST /api/obd2/adopt — bind channels to their standard OBD2 PIDs.
+ *   Body:  { "channels": ["rpm", "coolant_temp", ...] }
+ *   Reply: { ok, bound, warning? }
+ *
+ * The client sends channel ids, not PIDs: the firmware owns the
+ * channel→PID mapping (CANONICAL_OBD2_MAP) and there is no reason for a
+ * web page to hold a second copy of it. Ids that have no standard PID are
+ * skipped rather than failing the batch — a scan list can go stale between
+ * the scan and the tap. */
+static esp_err_t _adopt_handler(httpd_req_t *req) {
+    char body[768];
+    if (web_server_recv_body(req, body, sizeof(body)) != ESP_OK) return ESP_FAIL;
+
+    cJSON *root = cJSON_Parse(body);
+    if (!root) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+    cJSON *jarr = cJSON_GetObjectItemCaseSensitive(root, "channels");
+    if (!cJSON_IsArray(jarr) || cJSON_GetArraySize(jarr) == 0) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing channels[]");
+        return ESP_FAIL;
+    }
+
+    obd2_channel_match_t *rows = calloc(CH_OBD2_MATCH_MAX, sizeof(*rows));
+    if (!rows) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
+    size_t n = 0, skipped = 0;
+    cJSON *it = NULL;
+    cJSON_ArrayForEach(it, jarr) {
+        if (!cJSON_IsString(it) || n >= CH_OBD2_MATCH_MAX) continue;
+        const canonical_obd2_map_t *m = canonical_channel_obd2_for(it->valuestring);
+        if (!m) { skipped++; continue; }
+        rows[n].channel_id  = m->channel_id;   /* const flash strings — outlive root */
+        rows[n].signal_name = m->obd2_signal_name;
+        rows[n].service     = m->service;
+        rows[n].pid         = m->pid;
+        n++;
+    }
+    cJSON_Delete(root);
+
+    if (n == 0) {
+        free(rows);
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "No channels with a standard OBD2 PID");
+        return ESP_FAIL;
+    }
+
+    if (!rdm_lvgl_lock(2000)) {
+        free(rows);
+        return web_server_send_busy(req);
+    }
+    size_t bound = 0;
+    esp_err_t err = channel_apply_obd2(rows, n, &bound);
+    rdm_lvgl_unlock();
+    free(rows);
+
+    if (bound == 0) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+            err == ESP_ERR_NO_MEM ? "OBD2 PID limit reached (max 48)"
+                                  : "Nothing could be bound");
+        return ESP_FAIL;
+    }
+
+    cJSON *resp = cJSON_CreateObject();
+    cJSON_AddBoolToObject  (resp, "ok", true);
+    cJSON_AddNumberToObject(resp, "bound", (double)bound);
+    if (err == ESP_ERR_NO_MEM) {
+        cJSON_AddStringToObject(resp, "warning",
+            "OBD2 PID limit reached (max 48) — some channels were left unbound");
+    } else if (err == ESP_FAIL) {
+        cJSON_AddStringToObject(resp, "warning",
+            "Bound for this session but not saved — won't survive a reboot");
+    } else if (skipped) {
+        cJSON_AddStringToObject(resp, "warning",
+            "Some channels have no standard OBD2 PID and were skipped");
+    }
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    return web_server_send_json(req, resp);
+}
+
 static esp_err_t _scan_handler(httpd_req_t *req) {
     scan_ctx_t *ctx = calloc(1, sizeof(*ctx));
     if (!ctx) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM"); return ESP_FAIL; }
@@ -813,9 +940,12 @@ static esp_err_t _scan_handler(httpd_req_t *req) {
         cJSON_AddBoolToObject  (resp, "completed", ctx->completed);
         cJSON_AddNumberToObject(resp, "count", ctx->count);
         cJSON *arr = cJSON_AddArrayToObject(resp, "pids");
-        for (uint8_t i = 0; i < ctx->count && i < OBD2_SCAN_MAX_PIDS; i++) {
+        uint8_t n_pids = (ctx->count < OBD2_SCAN_MAX_PIDS)
+                       ? ctx->count : OBD2_SCAN_MAX_PIDS;
+        for (uint8_t i = 0; i < n_pids; i++) {
             cJSON_AddItemToArray(arr, cJSON_CreateNumber(ctx->pids[i]));
         }
+        _scan_add_channels(resp, ctx->pids, n_pids);
     }
     _obd2_ctx_release(&ctx->refs, ctx->done, ctx);
 
@@ -826,6 +956,10 @@ static esp_err_t _scan_handler(httpd_req_t *req) {
 static const httpd_uri_t scan_uri = {
     .uri = "/api/obd2/scan", .method = HTTP_POST,
     .handler = _scan_handler, .user_ctx = NULL};
+
+static const httpd_uri_t adopt_uri = {
+    .uri = "/api/obd2/adopt", .method = HTTP_POST,
+    .handler = _adopt_handler, .user_ctx = NULL};
 
 void web_server_obd2_register(httpd_handle_t server) {
     REGISTER_URI(server, &dtcs_uri);
@@ -838,4 +972,5 @@ void web_server_obd2_register(httpd_handle_t server) {
     REGISTER_URI(server, &sim_uri);
     REGISTER_URI(server, &sim_get_uri);
     REGISTER_URI(server, &scan_uri);
+    REGISTER_URI(server, &adopt_uri);
 }

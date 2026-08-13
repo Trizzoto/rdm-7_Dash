@@ -251,6 +251,27 @@ const DEV_ECU_MAKES = [
   ] },
 ];
 
+/* Trimmed mirror of the firmware's CANONICAL_OBD2_MAP, for browser dev
+ * only (see the /api/obd2/scan mock). The shipping page never reads this —
+ * it takes the resolved channel list straight off the scan response. */
+const DEV_OBD2_MAP = [
+  { id: 'rpm',               label: 'RPM',              units: 'rpm',  sig: 'RPM',            pid: 0x0C },
+  { id: 'coolant_temp',      label: 'Coolant Temp',     units: '°C', sig: 'COOLANT_TEMP',   pid: 0x05 },
+  { id: 'vehicle_speed',     label: 'Vehicle Speed',    units: 'km/h', sig: 'VEHICLE_SPEED',  pid: 0x0D },
+  { id: 'throttle_position', label: 'Throttle Position',units: '%',    sig: 'THROTTLE',       pid: 0x45 },
+  { id: 'intake_air_temp',   label: 'Intake Air Temp',  units: '°C', sig: 'INTAKE_AIR_TEMP',pid: 0x0F },
+  { id: 'engine_load',       label: 'Engine Load',      units: '%',    sig: 'ENGINE_LOAD',    pid: 0x04 },
+  { id: 'battery_voltage',   label: 'Battery Voltage',  units: 'V',    sig: 'BATTERY_VOLTAGE',pid: 0x42 },
+  { id: 'fuel_level',        label: 'Fuel Level',       units: '%',    sig: 'FUEL_LEVEL',     pid: 0x2F },
+  { id: 'ignition_timing',   label: 'Ignition Timing',  units: '°', sig: 'TIMING_ADVANCE', pid: 0x0E },
+  { id: 'manifold_pressure', label: 'Manifold Pressure',units: 'kPa',  sig: 'MAP',            pid: 0x0B },
+  { id: 'mass_air_flow',     label: 'Mass Air Flow',    units: 'g/s',  sig: 'MAF',            pid: 0x10 },
+];
+/* What the pretend car answers — a believable subset plus a few PIDs with
+ * no channel mapping, so the "N answered in total" line differs from the
+ * offered count exactly as it does on a real car. */
+const DEV_OBD2_ANSWERS = [0x04, 0x05, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x1F, 0x21, 0x2F, 0x42, 0x45];
+
 const DEFAULT_CHANNELS = [
   { id: 'oil_pressure', label: 'Oil Pressure', group: 0, tier: 0, is_canonical: true,
     signal: 'OIL_PRES', source: 'can', units_native: 'kPa', units_display: 'bar', decimals: 2,
@@ -290,7 +311,13 @@ function persistChannelStore() {
       JSON.stringify({ schema_version: 3, channels: channelStore }, null, 2));
   } catch (e) { console.log('[channels] persist failed:', e.message); }
 }
-const CANONICAL_DEFS = [
+/* The canonical registry, taken from the catalogue this very page carries
+ * (window.RDM_BAKED_CATALOG — host-compiled from canonical_channels.c, see
+ * ADR-0033). A three-row hand-written stub made "browse the standard list"
+ * untestable in browser dev, which is exactly the surface that needs a
+ * hundred rows to behave like the dash. Falls back to the stub if the
+ * markers ever move. */
+const CANONICAL_STUB = [
   { id: 'oil_pressure', label: 'Oil Pressure', group: 0, tier: 0, units_native: 'kPa',
     units_display_default: 'bar', decimals: 2, min_default: 0, max_default: 1000,
     low_warn: 80, high_warn: 650, notes: 'Mock canonical def.' },
@@ -301,6 +328,18 @@ const CANONICAL_DEFS = [
     units_display_default: 'km/h', decimals: 0, min_default: 0, max_default: 300,
     low_warn: null, high_warn: null, notes: '' }
 ];
+const CANONICAL_DEFS = (() => {
+  try {
+    const html = fs.readFileSync(INDEX_HTML, 'utf8');
+    const m = html.match(/window\.RDM_BAKED_CATALOG\s*=\s*(\{[\s\S]*?\});/);
+    const cat = m && JSON.parse(m[1]);
+    if (cat && Array.isArray(cat.canonical) && cat.canonical.length) {
+      console.log(`[channels] canonical registry: ${cat.canonical.length} from the baked catalogue`);
+      return cat.canonical;
+    }
+  } catch (e) { console.log('[channels] baked catalogue unreadable:', e.message); }
+  return CANONICAL_STUB;
+})();
 
 /* ── In-memory custom-preset store (dev only) ──────────────────────────────
  * Mirrors the device's LittleFS custom presets. Each entry:
@@ -582,6 +621,52 @@ const server = http.createServer((req, res) => {
           persistChannelStore();
           console.log(`[channels] import-preset ${d.make}/${d.version}: +${applied}`);
           sendJson(res, { status: 'ok', applied, make: d.make, version: d.version });
+        } catch (e) { sendJson(res, { error: e.message }, 400); }
+      });
+    }
+    /* OBD2 discovery + adopt. The firmware resolves answering PIDs to
+     * channels (CANONICAL_OBD2_MAP); this mock carries a trimmed copy of
+     * that map ONLY so the browser-dev flow is exercisable without a car.
+     * It is not a second source of truth — the real page never reads it. */
+    if (url === '/api/obd2/scan' && req.method === 'POST') {
+      const answered = DEV_OBD2_MAP.filter(m => DEV_OBD2_ANSWERS.includes(m.pid));
+      return setTimeout(() => sendJson(res, {
+        ok: true, completed: true,
+        count: DEV_OBD2_ANSWERS.length,
+        pids: DEV_OBD2_ANSWERS,
+        channels: answered.map(m => {
+          const c = channelStore.find(x => x.id === m.id);
+          return {
+            id: m.id, label: m.label, units: m.units,
+            signal_name: m.sig, service: 1, pid: m.pid,
+            active: !!c, bound: !!(c && c.signal),
+          };
+        }),
+      }), 1500);   /* a real scan is not instant — exercise the spinner */
+    }
+    if (url === '/api/obd2/adopt' && req.method === 'POST') {
+      return readBody(req, (body) => {
+        try {
+          const d = JSON.parse(body || '{}');
+          const ids = Array.isArray(d.channels) ? d.channels : [];
+          let bound = 0;
+          ids.forEach(id => {
+            const m = DEV_OBD2_MAP.find(x => x.id === id);
+            if (!m) return;
+            let c = channelStore.find(x => x.id === id);
+            if (!c) {
+              c = { id: m.id, label: m.label, group: 0, tier: 0, is_canonical: true,
+                    units_native: m.units, units_display: m.units, decimals: 0,
+                    min: 0, max: 100, is_stale: true };
+              channelStore.push(c);
+            }
+            c.signal = m.sig;
+            c.source = 'obd2';
+            bound++;
+          });
+          persistChannelStore();
+          console.log(`[obd2] adopt: +${bound}`);
+          sendJson(res, { ok: true, bound });
         } catch (e) { sendJson(res, { error: e.message }, 400); }
       });
     }

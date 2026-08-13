@@ -1193,3 +1193,13 @@ const canonical_obd2_map_t *canonical_channel_obd2_for(const char *channel_id) {
 	}
 	return NULL;
 }
+
+const canonical_obd2_map_t *canonical_channel_obd2_for_pid(uint8_t service,
+                                                           uint16_t pid) {
+	for (size_t i = 0; i < CANONICAL_OBD2_MAP_COUNT; ++i) {
+		if (CANONICAL_OBD2_MAP[i].service == service &&
+		    CANONICAL_OBD2_MAP[i].pid     == pid)
+			return &CANONICAL_OBD2_MAP[i];
+	}
+	return NULL;
+}

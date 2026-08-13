@@ -146,33 +146,25 @@ static uint16_t    s_channels_count        = 0;
  * one. Always cleared in the picker close path. */
 static bool        s_creating_custom       = false;
 
-/* ── OBD2 gap-fill state ───────────────────────────────────────────────
- * Poll standard OBD2 PIDs to source channels the primary ECU broadcast
- * doesn't cover (fuel level/pressure on a GT86, etc.). Runs in two ways:
- * automatically ONCE when the wizard's OBD2 step proved the car answers
- * (s_wiz_obd2_found — setup-flow redesign 2026-08), or on an explicit
- * "Fill N from OBD2" chip tap. Scoped to ACTIVE + unbound + has-OBD2
- * channels so we don't poll PIDs nothing needs (keeps bus traffic
- * minimal; standalone-ECU users never see it). */
-#define WIZ_OBD2_MAX_GAPS   24
-#define WIZ_OBD2_PROBE_MS   3200   /* response window per attempt */
-static const char *s_obd2_gap_ids[WIZ_OBD2_MAX_GAPS]      = {NULL}; /* channel id */
-static const char *s_obd2_gap_signames[WIZ_OBD2_MAX_GAPS] = {NULL}; /* obd2 signal name */
-static uint32_t    s_obd2_gap_pids[WIZ_OBD2_MAX_GAPS]     = {0};    /* encoded (svc,pid) */
-static uint8_t     s_obd2_gap_count                       = 0;
-/* Original polled-PID set, saved before a probe so we can unwind cleanly
- * if the user gives up (no OBD2 on this vehicle). */
-static uint32_t    s_obd2_orig_pids[OBD2_MAX_ENABLED]     = {0};
-static uint8_t     s_obd2_orig_count                      = 0;
-static lv_obj_t   *s_obd2_chip          = NULL;   /* "Fill N from OBD2" pill */
+/* ── OBD2 scan state ───────────────────────────────────────────────────
+ * Ask the car what it supports (obd2_discovery_start — Mode 01 bitmask
+ * chain with bitrate + addressing auto-search), resolve the answers into
+ * channels through the shared channel_obd2_matches(), and offer them.
+ * Runs automatically ONCE when the wizard's OBD2 step already proved the
+ * car answers (s_wiz_obd2_found — setup-flow redesign 2026-08), or on a
+ * "Scan for OBD2" chip tap from the channels editor. */
+static obd2_channel_match_t s_obd2_matches[CH_OBD2_MATCH_MAX];
+static bool        s_obd2_pick[CH_OBD2_MATCH_MAX] = {false};
+static size_t      s_obd2_match_count   = 0;
+static bool        s_obd2_auto_apply    = false;  /* first-run: bind without a second tap */
+static lv_obj_t   *s_obd2_chip          = NULL;   /* "Scan for OBD2" pill */
 static lv_obj_t   *s_step_chip_lbl      = NULL;   /* header text the pill anchors to */
-static lv_obj_t   *s_obd2_modal         = NULL;   /* probe/result overlay */
+static lv_obj_t   *s_obd2_modal         = NULL;   /* scan/result overlay */
 static lv_obj_t   *s_obd2_status_lbl    = NULL;
-static lv_obj_t   *s_obd2_hint_lbl      = NULL;
+static lv_obj_t   *s_obd2_list          = NULL;   /* offer list */
+static lv_obj_t   *s_obd2_add_btn       = NULL;
 static lv_obj_t   *s_obd2_rescan_btn    = NULL;
 static lv_obj_t   *s_obd2_spinner       = NULL;
-static lv_timer_t *s_obd2_probe_timer   = NULL;
-static uint8_t     s_obd2_attempt       = 0;
 /* Forward decl so the early teardown paths (_close_wizard, _show_step3)
  * can tear down the OBD2 modal + standalone probe timer. */
 static void _obd2_close_modal(void);
@@ -1020,6 +1012,7 @@ static void _wiz_clear_vehicle_channel_bindings(void) {
     }
     if (cleared) {
         channel_manager_resolve_signals();
+        channel_obd2_prune();   /* nothing wants those PIDs now */
         ESP_LOGI(TAG, "resetup: cleared %u vehicle channel binding(s)",
                  (unsigned)cleared);
     }
@@ -2073,6 +2066,7 @@ static void _remove_channel_cb(lv_event_t *e) {
     strncpy(removed_id, s_selected_ch_id, sizeof(removed_id) - 1);
     removed_id[sizeof(removed_id) - 1] = '\0';
     if (!channel_manager_remove(removed_id)) return;
+    channel_obd2_prune();   /* give back its OBD2 PID, if it had one */
     s_channels_changed = true;
     s_selected_ch_id[0] = '\0';
     ESP_LOGI(TAG, "Removed channel '%s' (returns to catalogue if canonical)",
@@ -3319,64 +3313,36 @@ done_canonical: ;
     if (s_apply_to_widget_mode) _scroll_to_selected();
 }
 
-/* ── OBD2 gap-fill ─────────────────────────────────────────────────────── */
+/* ── OBD2 scan → channels ─────────────────────────────────────────────────
+ *
+ * Ask the car what it supports, offer the answers as channels. This
+ * replaced a speculative gap-fill probe (enable the PIDs a channel would
+ * need, poll for 3.2 s, keep whatever answered): the probe could only ever
+ * bind channels that were already active, and it guessed rather than asked.
+ * Discovery is the car's own list, and channel_obd2_matches() — the same
+ * resolver /api/obd2/scan uses — turns it into channels, so the dash and
+ * the web page answer identically. See ADR-0037. */
 
 static void _obd2_chip_update(void);
-static void _obd2_begin_probe(void);
+static void _obd2_open_scan_modal(void);
+static void _obd2_begin_scan(void);
+static void _obd2_render_results(void);
 
-/* Recompute the gap-set: ACTIVE channels with no source that have a
- * standard OBD2 PID equivalent. Returns the count. */
-static uint8_t _obd2_compute_gaps(void) {
-    s_obd2_gap_count = 0;
-    size_t n = channel_manager_count();
-    for (size_t i = 0; i < n && s_obd2_gap_count < WIZ_OBD2_MAX_GAPS; i++) {
-        const channel_t *c = channel_manager_at(i);
-        if (!c) continue;
-        if (c->signal_index >= 0) continue;            /* already sourced */
-        const canonical_obd2_map_t *m = canonical_channel_obd2_for(c->id);
-        if (!m) continue;                              /* no OBD2 equivalent */
-        s_obd2_gap_ids[s_obd2_gap_count]      = c->id;
-        s_obd2_gap_signames[s_obd2_gap_count] = m->obd2_signal_name;
-        s_obd2_gap_pids[s_obd2_gap_count]     = obd2_encode_pid(m->service, m->pid);
-        s_obd2_gap_count++;
-    }
-    return s_obd2_gap_count;
-}
-
-/* Restore OBD2 polling to a given PID set (stop if empty). */
-static void _obd2_apply_polling(const uint32_t *pids, uint8_t count) {
-    if (count == 0) {
-        if (obd2_is_running()) obd2_stop();
-    } else {
-        obd2_start(pids, count);
-    }
-}
-
-static void _obd2_kill_timer(void) {
-    if (s_obd2_probe_timer) {
-        lv_timer_del(s_obd2_probe_timer);
-        s_obd2_probe_timer = NULL;
-    }
-}
-
+/* Closing mid-scan is safe: discovery finishes in the background and
+ * _obd2_scan_done_cb bails when the modal is gone. Nothing is left polling
+ * that wasn't polling before — unlike the probe this replaced, the scan
+ * never enables speculative PIDs. */
 static void _obd2_close_modal(void) {
-    /* Abort path: if a probe is still pending, the trial PIDs are live
-     * on the bus — unwind to the original polled set before tearing
-     * down so we never leave dead polls running. (On success/no-response
-     * the timer is already dead and polling is the resolved set, so this
-     * is a no-op.) */
-    if (s_obd2_probe_timer) {
-        _obd2_kill_timer();
-        _obd2_apply_polling(s_obd2_orig_pids, s_obd2_orig_count);
-    }
     if (s_obd2_modal && lv_obj_is_valid(s_obd2_modal)) {
         lv_obj_del(s_obd2_modal);
     }
-    s_obd2_modal = s_obd2_status_lbl = s_obd2_hint_lbl = NULL;
+    s_obd2_modal = s_obd2_status_lbl = NULL;
     s_obd2_rescan_btn = s_obd2_spinner = NULL;
+    s_obd2_list = s_obd2_add_btn = NULL;
+    s_obd2_match_count = 0;
 }
 
-/* Show/hide the spinner + rescan button for the current modal phase. */
+/* Show/hide the spinner + buttons for the current modal phase. */
 static void _obd2_modal_set_busy(bool busy) {
     if (s_obd2_spinner && lv_obj_is_valid(s_obd2_spinner)) {
         if (busy) lv_obj_clear_flag(s_obd2_spinner, LV_OBJ_FLAG_HIDDEN);
@@ -3386,169 +3352,234 @@ static void _obd2_modal_set_busy(bool busy) {
         if (busy) lv_obj_add_flag(s_obd2_rescan_btn, LV_OBJ_FLAG_HIDDEN);
         else      lv_obj_clear_flag(s_obd2_rescan_btn, LV_OBJ_FLAG_HIDDEN);
     }
+    if (s_obd2_add_btn && lv_obj_is_valid(s_obd2_add_btn)) {
+        if (busy) lv_obj_add_flag(s_obd2_add_btn, LV_OBJ_FLAG_HIDDEN);
+        else      lv_obj_clear_flag(s_obd2_add_btn, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
-/* End of the probe window: check which gap PIDs responded, bind those
- * channels, persist successes, unwind the rest. */
-static void _obd2_probe_tick(lv_timer_t *t) {
-    (void)t;
-    _obd2_kill_timer();
+/* How many offers are still unticked-able (not already sourced). */
+static uint8_t _obd2_fresh_count(void) {
+    uint8_t n = 0;
+    for (size_t i = 0; i < s_obd2_match_count; i++)
+        if (!s_obd2_matches[i].bound) n++;
+    return n;
+}
 
-    char layout[64];
-    bool have_layout = (layout_manager_get_active(layout, sizeof(layout)) == ESP_OK);
+static uint8_t _obd2_picked_count(void) {
+    uint8_t n = 0;
+    for (size_t i = 0; i < s_obd2_match_count; i++)
+        if (s_obd2_pick[i]) n++;
+    return n;
+}
 
-    /* Collect successes: gap signal exists AND is currently fresh (the
-     * PID is actively responding — polling is continuous so a live PID
-     * never lapses to stale within a poll cycle). */
-    uint32_t keep_pids[OBD2_MAX_ENABLED];
-    uint8_t  keep_count = 0;
-    /* Seed keep[] with the original set so we never drop pre-existing PIDs. */
-    for (uint8_t i = 0; i < s_obd2_orig_count && keep_count < OBD2_MAX_ENABLED; i++)
-        keep_pids[keep_count++] = s_obd2_orig_pids[i];
+/* Bind everything ticked, then report. */
+static void _obd2_apply_picks(void) {
+    obd2_channel_match_t rows[CH_OBD2_MATCH_MAX];
+    size_t n = 0;
+    for (size_t i = 0; i < s_obd2_match_count && n < CH_OBD2_MATCH_MAX; i++)
+        if (s_obd2_pick[i]) rows[n++] = s_obd2_matches[i];
+    if (n == 0) return;
 
-    uint8_t filled = 0;
-    char names_buf[120];
-    names_buf[0] = '\0';
-    for (uint8_t i = 0; i < s_obd2_gap_count; i++) {
-        const char *signame = s_obd2_gap_signames[i];
-        if (!signame) continue;
-        int16_t idx = signal_find_by_name(signame);
-        if (idx < 0) continue;
-        signal_t *s = signal_get_by_index((uint16_t)idx);
-        if (!s || s->is_stale) continue;               /* no live response */
-
-        /* Bind the channel to the OBD2 signal. */
-        channel_t *c = channel_manager_get(s_obd2_gap_ids[i]);
-        if (!c) c = channel_manager_activate(s_obd2_gap_ids[i]);
-        if (c) {
-            channel_manager_set_signal(c, signame);
-            /* Keep this PID polling + persisted. */
-            bool dup = false;
-            for (uint8_t k = 0; k < keep_count; k++)
-                if (keep_pids[k] == s_obd2_gap_pids[i]) { dup = true; break; }
-            if (!dup && keep_count < OBD2_MAX_ENABLED)
-                keep_pids[keep_count++] = s_obd2_gap_pids[i];
-            /* Append the human label to the result line. */
-            if (names_buf[0]) strncat(names_buf, ", ",
-                                      sizeof(names_buf) - strlen(names_buf) - 1);
-            strncat(names_buf, c->label,
-                    sizeof(names_buf) - strlen(names_buf) - 1);
-            filled++;
-        }
-    }
-
-    if (filled > 0) {
-        channel_manager_resolve_signals();
-        /* Persist the surviving PID set so polling resumes on reboot. */
-        _obd2_apply_polling(keep_pids, keep_count);
-        if (have_layout) ecu_preset_save_obd2_pids(layout, keep_pids, keep_count);
+    size_t bound = 0;
+    esp_err_t err = channel_apply_obd2(rows, n, &bound);
+    if (bound > 0) {
         s_channels_changed = true;
-
-        /* Refresh the channels list + hero + chip. */
         _populate_channels_list();
         _refresh_hero_stats();
         _channels_refresh_cb(NULL);
+    }
 
-        _obd2_modal_set_busy(false);
-        if (s_obd2_rescan_btn && lv_obj_is_valid(s_obd2_rescan_btn))
-            lv_obj_add_flag(s_obd2_rescan_btn, LV_OBJ_FLAG_HIDDEN);
-        if (s_obd2_status_lbl && lv_obj_is_valid(s_obd2_status_lbl)) {
-            char msg[160];
-            snprintf(msg, sizeof(msg), "Filled %u channel%s from OBD2:\n%s",
-                     filled, filled == 1 ? "" : "s", names_buf);
-            lv_label_set_text(s_obd2_status_lbl, msg);
-            lv_obj_set_style_text_color(s_obd2_status_lbl,
-                                        THEME_COLOR_GREEN, 0);
+    if (s_obd2_list && lv_obj_is_valid(s_obd2_list))
+        lv_obj_add_flag(s_obd2_list, LV_OBJ_FLAG_HIDDEN);
+    if (s_obd2_add_btn && lv_obj_is_valid(s_obd2_add_btn))
+        lv_obj_add_flag(s_obd2_add_btn, LV_OBJ_FLAG_HIDDEN);
+    if (s_obd2_status_lbl && lv_obj_is_valid(s_obd2_status_lbl)) {
+        char msg[200];
+        if (bound == 0) {
+            snprintf(msg, sizeof(msg), "Nothing could be added.");
+        } else if (err == ESP_ERR_NO_MEM) {
+            snprintf(msg, sizeof(msg),
+                     "Added %u channel%s. The OBD2 list is full (48 max), so\n"
+                     "some were left out.", (unsigned)bound, bound == 1 ? "" : "s");
+        } else if (err == ESP_FAIL) {
+            snprintf(msg, sizeof(msg),
+                     "Added %u channel%s — working now, but they could not be\n"
+                     "saved, so they won't survive a restart.",
+                     (unsigned)bound, bound == 1 ? "" : "s");
+        } else {
+            snprintf(msg, sizeof(msg), "Added %u channel%s from OBD2.",
+                     (unsigned)bound, bound == 1 ? "" : "s");
         }
-        if (s_obd2_hint_lbl && lv_obj_is_valid(s_obd2_hint_lbl))
-            lv_obj_add_flag(s_obd2_hint_lbl, LV_OBJ_FLAG_HIDDEN);
-        _obd2_chip_update();
-        ESP_LOGI(TAG, "OBD2 gap-fill: bound %u channels", filled);
-    } else {
-        /* No responses — unwind to the original polled set so we don't
-         * leave dead polls running. */
-        _obd2_apply_polling(s_obd2_orig_pids, s_obd2_orig_count);
-        _obd2_modal_set_busy(false);
-        if (s_obd2_status_lbl && lv_obj_is_valid(s_obd2_status_lbl)) {
-            lv_label_set_text(s_obd2_status_lbl, "No OBD2 connection");
-            lv_obj_set_style_text_color(s_obd2_status_lbl,
-                                        THEME_COLOR_STATUS_WARN, 0);
+        lv_label_set_text(s_obd2_status_lbl, msg);
+        lv_obj_set_style_text_color(s_obd2_status_lbl,
+                                    bound ? THEME_COLOR_GREEN
+                                          : THEME_COLOR_TEXT_MUTED, 0);
+    }
+    _obd2_chip_update();
+    ESP_LOGI(TAG, "OBD2 scan: added %u channel(s)", (unsigned)bound);
+}
+
+static void _obd2_add_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    _obd2_apply_picks();
+}
+
+/* Row tap toggles its tick. The row's user_data carries the match index. */
+static void _obd2_row_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    lv_obj_t *row = lv_event_get_target(e);
+    if (!row) return;
+    intptr_t idx = (intptr_t)lv_obj_get_user_data(row);
+    if (idx < 0 || (size_t)idx >= s_obd2_match_count) return;
+    if (s_obd2_matches[idx].bound) return;          /* already set up */
+    s_obd2_pick[idx] = !s_obd2_pick[idx];
+    _obd2_render_results();
+}
+
+/* Paint the offer list + the Add button's label. */
+static void _obd2_render_results(void) {
+    if (!s_obd2_list || !lv_obj_is_valid(s_obd2_list)) return;
+    lv_obj_clean(s_obd2_list);
+    lv_obj_clear_flag(s_obd2_list, LV_OBJ_FLAG_HIDDEN);
+
+    for (size_t i = 0; i < s_obd2_match_count; i++) {
+        const obd2_channel_match_t *m = &s_obd2_matches[i];
+        lv_obj_t *row = lv_obj_create(s_obd2_list);
+        lv_obj_remove_style_all(row);
+        lv_obj_set_size(row, lv_pct(100), 30);
+        lv_obj_set_style_pad_hor(row, 8, 0);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_user_data(row, (void *)(intptr_t)i);
+        if (!m->bound) {
+            lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_add_event_cb(row, _obd2_row_cb, LV_EVENT_CLICKED, NULL);
         }
-        if (s_obd2_hint_lbl && lv_obj_is_valid(s_obd2_hint_lbl)) {
-            lv_obj_clear_flag(s_obd2_hint_lbl, LV_OBJ_FLAG_HIDDEN);
-            lv_label_set_text(s_obd2_hint_lbl,
-                s_obd2_attempt >= 2
-                  ? "Still nothing. Try again with the engine running -\n"
-                    "some cars only answer OBD2 when running."
-                  : "Make sure the ignition is ON, then Rescan.\n"
-                    "Standalone ECUs (Haltech/MaxxECU) usually don't\n"
-                    "support OBD2 - you can skip this.");
+
+        /* Tick / hollow box / "already set up" all in one leading glyph so
+         * the eye reads one column, not three states in three places. */
+        lv_obj_t *mark = lv_label_create(row);
+        lv_label_set_text(mark, m->bound ? LV_SYMBOL_OK
+                                         : (s_obd2_pick[i] ? LV_SYMBOL_OK : ""));
+        lv_obj_align(mark, LV_ALIGN_LEFT_MID, 0, 0);
+        lv_obj_set_style_text_font(mark, THEME_FONT_TINY, 0);
+        lv_obj_set_style_text_color(mark, m->bound ? THEME_COLOR_TEXT_MUTED
+                                                   : THEME_COLOR_ACCENT_BLUE, 0);
+
+        lv_obj_t *name = lv_label_create(row);
+        lv_label_set_text(name, m->label);
+        lv_obj_align(name, LV_ALIGN_LEFT_MID, 22, 0);
+        lv_obj_set_style_text_font(name, THEME_FONT_SMALL, 0);
+        lv_obj_set_style_text_color(name, m->bound ? THEME_COLOR_TEXT_MUTED
+                                                   : THEME_COLOR_TEXT_PRIMARY, 0);
+
+        lv_obj_t *note = lv_label_create(row);
+        if (m->bound) lv_label_set_text(note, "already set up");
+        else          lv_label_set_text(note, m->units && m->units[0] ? m->units : "");
+        lv_obj_align(note, LV_ALIGN_RIGHT_MID, 0, 0);
+        lv_obj_set_style_text_font(note, THEME_FONT_TINY, 0);
+        lv_obj_set_style_text_color(note, THEME_COLOR_TEXT_MUTED, 0);
+    }
+
+    if (s_obd2_add_btn && lv_obj_is_valid(s_obd2_add_btn)) {
+        uint8_t picked = _obd2_picked_count();
+        lv_obj_t *lbl = (lv_obj_t *)lv_obj_get_user_data(s_obd2_add_btn);
+        if (lbl && lv_obj_is_valid(lbl)) {
+            char b[32];
+            snprintf(b, sizeof(b), "Add %u", picked);
+            lv_label_set_text(lbl, picked ? b : "Add");
         }
-        ESP_LOGI(TAG, "OBD2 gap-fill: no response (attempt %u)", s_obd2_attempt);
+        if (picked) lv_obj_clear_state(s_obd2_add_btn, LV_STATE_DISABLED);
+        else        lv_obj_add_state(s_obd2_add_btn, LV_STATE_DISABLED);
+        lv_obj_clear_flag(s_obd2_add_btn, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
-/* Start (or restart) a probe: snapshot the current polled set, enable
- * the gap PIDs on top, and arm the response-window timer. */
-static void _obd2_begin_probe(void) {
-    _obd2_kill_timer();
-    s_obd2_attempt++;
-
-    /* Snapshot the current polled set once (first attempt only) so a
-     * Rescan doesn't fold the trial PIDs into the "original". */
-    if (s_obd2_attempt == 1) {
-        char layout[64];
-        s_obd2_orig_count = 0;
-        if (layout_manager_get_active(layout, sizeof(layout)) == ESP_OK) {
-            ecu_preset_read_obd2_pids(layout, s_obd2_orig_pids,
-                                      OBD2_MAX_ENABLED, &s_obd2_orig_count);
-        }
+/* Discovery finished (LVGL task — obd2 calls back from the poll timer). */
+static void _obd2_scan_done_cb(const obd2_scan_result_t *r, void *user) {
+    (void)user;
+    if (r) {
+        s_wiz_obd2_scanned = true;
+        s_wiz_obd2_result  = *r;
     }
+    if (!s_obd2_modal || !lv_obj_is_valid(s_obd2_modal)) return;  /* closed */
 
-    /* Trial set = original ∪ gap PIDs. */
-    uint32_t trial[OBD2_MAX_ENABLED];
-    uint8_t  tc = 0;
-    for (uint8_t i = 0; i < s_obd2_orig_count && tc < OBD2_MAX_ENABLED; i++)
-        trial[tc++] = s_obd2_orig_pids[i];
-    for (uint8_t i = 0; i < s_obd2_gap_count && tc < OBD2_MAX_ENABLED; i++) {
-        bool dup = false;
-        for (uint8_t k = 0; k < tc; k++)
-            if (trial[k] == s_obd2_gap_pids[i]) { dup = true; break; }
-        if (!dup) trial[tc++] = s_obd2_gap_pids[i];
-    }
-    _obd2_apply_polling(trial, tc);
+    _obd2_modal_set_busy(false);
+    s_obd2_match_count = r ? channel_obd2_matches(r->pids, r->count,
+                                                  s_obd2_matches,
+                                                  CH_OBD2_MATCH_MAX) : 0;
+    memset(s_obd2_pick, 0, sizeof(s_obd2_pick));
+    for (size_t i = 0; i < s_obd2_match_count; i++)
+        s_obd2_pick[i] = !s_obd2_matches[i].bound;   /* pre-tick the gaps */
 
-    _obd2_modal_set_busy(true);
+    uint8_t fresh = _obd2_fresh_count();
     if (s_obd2_status_lbl && lv_obj_is_valid(s_obd2_status_lbl)) {
-        lv_label_set_text(s_obd2_status_lbl, "Checking for OBD2...");
+        char msg[200];
+        if (!r || r->count == 0) {
+            snprintf(msg, sizeof(msg),
+                     "The car didn't answer. Check the ignition is on — some\n"
+                     "cars only answer with the engine running.");
+        } else if (fresh == 0) {
+            snprintf(msg, sizeof(msg),
+                     "Your car answered %u readings, and everything it offers\n"
+                     "is already set up.", (unsigned)r->count);
+        } else {
+            snprintf(msg, sizeof(msg),
+                     "Your car answered %u readings. %u can be added:",
+                     (unsigned)r->count, (unsigned)fresh);
+        }
+        lv_label_set_text(s_obd2_status_lbl, msg);
+        lv_obj_set_style_text_color(s_obd2_status_lbl,
+                                    fresh ? THEME_COLOR_TEXT_PRIMARY
+                                          : THEME_COLOR_TEXT_MUTED, 0);
+    }
+
+    if (s_obd2_match_count == 0) {
+        if (s_obd2_list && lv_obj_is_valid(s_obd2_list))
+            lv_obj_add_flag(s_obd2_list, LV_OBJ_FLAG_HIDDEN);
+        if (s_obd2_add_btn && lv_obj_is_valid(s_obd2_add_btn))
+            lv_obj_add_flag(s_obd2_add_btn, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    _obd2_render_results();
+
+    /* Setup flow: the OBD2 step already asked and the user said yes, so
+     * the first-run pass applies without a second tap. Everywhere else the
+     * list waits for Add. */
+    if (s_obd2_auto_apply) {
+        s_obd2_auto_apply = false;
+        if (fresh) _obd2_apply_picks();
+    }
+}
+
+static void _obd2_begin_scan(void) {
+    if (obd2_discovery_in_progress()) return;
+    _obd2_modal_set_busy(true);
+    if (s_obd2_list && lv_obj_is_valid(s_obd2_list))
+        lv_obj_add_flag(s_obd2_list, LV_OBJ_FLAG_HIDDEN);
+    if (s_obd2_status_lbl && lv_obj_is_valid(s_obd2_status_lbl)) {
+        lv_label_set_text(s_obd2_status_lbl,
+            "Asking the car what it can report...\n"
+            "Trying both bus speeds and both addressing modes.");
         lv_obj_set_style_text_color(s_obd2_status_lbl,
                                     THEME_COLOR_TEXT_PRIMARY, 0);
     }
-    if (s_obd2_hint_lbl && lv_obj_is_valid(s_obd2_hint_lbl))
-        lv_obj_add_flag(s_obd2_hint_lbl, LV_OBJ_FLAG_HIDDEN);
-
-    /* Infinite-repeat timer that deletes itself on first fire (via
-     * _obd2_kill_timer at the top of _obd2_probe_tick). NOT repeat_count=1
-     * — that would have LVGL auto-delete it too, double-freeing against
-     * our own lv_timer_del. Single-threaded, so the cb completes its
-     * self-delete before the timer could fire again. */
-    s_obd2_probe_timer = lv_timer_create(_obd2_probe_tick, WIZ_OBD2_PROBE_MS, NULL);
+    obd2_discovery_start(_obd2_scan_done_cb, NULL);
 }
 
 static void _obd2_rescan_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    _obd2_begin_probe();
+    _obd2_begin_scan();
 }
 
 static void _obd2_close_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    _obd2_close_modal();  /* unwinds mid-probe polling internally */
+    _obd2_close_modal();
 }
 
-static void _obd2_open_probe_modal(void) {
-    if (_obd2_compute_gaps() == 0) return;
+static void _obd2_open_scan_modal(void) {
     if (s_obd2_modal) return;  /* already open */
-    s_obd2_attempt = 0;
 
     /* Backdrop over the wizard. Owned by s_overlay (wizard lifecycle). */
     s_obd2_modal = lv_obj_create(s_overlay);
@@ -3561,7 +3592,7 @@ static void _obd2_open_probe_modal(void) {
 
     lv_obj_t *card = lv_obj_create(s_obd2_modal);
     lv_obj_remove_style_all(card);
-    lv_obj_set_size(card, 400, 250);
+    lv_obj_set_size(card, 520, 356);
     lv_obj_center(card);
     lv_obj_set_style_bg_color(card, THEME_COLOR_PANEL, 0);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
@@ -3572,7 +3603,7 @@ static void _obd2_open_probe_modal(void) {
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *title = lv_label_create(card);
-    lv_label_set_text(title, "Fill gaps from OBD2");
+    lv_label_set_text(title, "Add channels from OBD2");
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_obj_set_style_text_font(title, THEME_FONT_MEDIUM, 0);
     lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
@@ -3587,36 +3618,40 @@ static void _obd2_open_probe_modal(void) {
 
     s_obd2_status_lbl = lv_label_create(card);
     lv_label_set_long_mode(s_obd2_status_lbl, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(s_obd2_status_lbl, 364);
-    lv_obj_align(s_obd2_status_lbl, LV_ALIGN_TOP_LEFT, 0, 40);
+    lv_obj_set_width(s_obd2_status_lbl, 484);
+    lv_obj_align(s_obd2_status_lbl, LV_ALIGN_TOP_LEFT, 0, 34);
     lv_obj_set_style_text_font(s_obd2_status_lbl, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(s_obd2_status_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
 
-    s_obd2_hint_lbl = lv_label_create(card);
-    lv_label_set_long_mode(s_obd2_hint_lbl, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(s_obd2_hint_lbl, 364);
-    lv_obj_align(s_obd2_hint_lbl, LV_ALIGN_TOP_LEFT, 0, 88);
-    lv_obj_set_style_text_font(s_obd2_hint_lbl, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(s_obd2_hint_lbl, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_add_flag(s_obd2_hint_lbl, LV_OBJ_FLAG_HIDDEN);
+    /* Scrollable offer list between the message and the buttons. */
+    s_obd2_list = lv_obj_create(card);
+    lv_obj_remove_style_all(s_obd2_list);
+    lv_obj_set_size(s_obd2_list, 484, 190);
+    lv_obj_align(s_obd2_list, LV_ALIGN_TOP_LEFT, 0, 84);
+    lv_obj_set_style_bg_color(s_obd2_list, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(s_obd2_list, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(s_obd2_list, 4, 0);
+    lv_obj_set_style_pad_all(s_obd2_list, 4, 0);
+    lv_obj_set_flex_flow(s_obd2_list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_add_flag(s_obd2_list, LV_OBJ_FLAG_HIDDEN);
 
-    /* Rescan (left) + Close/Done (right) along the bottom. */
+    /* Rescan (left) + Add + Close along the bottom. */
     s_obd2_rescan_btn = lv_btn_create(card);
-    lv_obj_set_size(s_obd2_rescan_btn, 120, 36);
+    lv_obj_set_size(s_obd2_rescan_btn, 110, 36);
     lv_obj_align(s_obd2_rescan_btn, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-    lv_obj_set_style_bg_color(s_obd2_rescan_btn, THEME_COLOR_ACCENT_BLUE, 0);
+    lv_obj_set_style_bg_color(s_obd2_rescan_btn, THEME_COLOR_SECTION_BG, 0);
     lv_obj_set_style_radius(s_obd2_rescan_btn, 4, 0);
     lv_obj_set_style_shadow_width(s_obd2_rescan_btn, 0, 0);
     lv_obj_t *rl = lv_label_create(s_obd2_rescan_btn);
     lv_label_set_text(rl, LV_SYMBOL_REFRESH "  Rescan");
     lv_obj_center(rl);
     lv_obj_set_style_text_font(rl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(rl, THEME_COLOR_TEXT_ON_ACCENT, 0);
+    lv_obj_set_style_text_color(rl, THEME_COLOR_TEXT_PRIMARY, 0);
     lv_obj_add_event_cb(s_obd2_rescan_btn, _obd2_rescan_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_add_flag(s_obd2_rescan_btn, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t *close_btn = lv_btn_create(card);
-    lv_obj_set_size(close_btn, 120, 36);
+    lv_obj_set_size(close_btn, 100, 36);
     lv_obj_align(close_btn, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
     lv_obj_set_style_bg_color(close_btn, THEME_COLOR_SECTION_BG, 0);
     lv_obj_set_style_radius(close_btn, 4, 0);
@@ -3628,46 +3663,53 @@ static void _obd2_open_probe_modal(void) {
     lv_obj_set_style_text_color(cl, THEME_COLOR_TEXT_PRIMARY, 0);
     lv_obj_add_event_cb(close_btn, _obd2_close_cb, LV_EVENT_CLICKED, NULL);
 
-    _obd2_begin_probe();
+    s_obd2_add_btn = lv_btn_create(card);
+    lv_obj_set_size(s_obd2_add_btn, 120, 36);
+    lv_obj_align_to(s_obd2_add_btn, close_btn, LV_ALIGN_OUT_LEFT_MID, -8, 0);
+    lv_obj_set_style_bg_color(s_obd2_add_btn, THEME_COLOR_ACCENT_BLUE, 0);
+    lv_obj_set_style_radius(s_obd2_add_btn, 4, 0);
+    lv_obj_set_style_shadow_width(s_obd2_add_btn, 0, 0);
+    lv_obj_t *al = lv_label_create(s_obd2_add_btn);
+    lv_label_set_text(al, "Add");
+    lv_obj_center(al);
+    lv_obj_set_style_text_font(al, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(al, THEME_COLOR_TEXT_ON_ACCENT, 0);
+    lv_obj_set_user_data(s_obd2_add_btn, al);
+    lv_obj_add_event_cb(s_obd2_add_btn, _obd2_add_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_flag(s_obd2_add_btn, LV_OBJ_FLAG_HIDDEN);
+
+    _obd2_begin_scan();
 }
 
 static void _obd2_chip_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    _obd2_open_probe_modal();
+    s_obd2_auto_apply = false;
+    _obd2_open_scan_modal();
 }
 
-/* Create / refresh / hide the "Fill N from OBD2" chip in the hero based
- * on the current gap-set. The chip only exists when there are gaps OBD2
- * could plausibly fill — a fully-bound layout never shows it. */
+/* Create / refresh the "Scan for OBD2" chip in the channels hero.
+ *
+ * It used to appear only when there were active-but-unbound channels with
+ * an OBD2 equivalent, which meant the one surface that could answer "what
+ * can this car give me" was hidden from anyone whose channels all happened
+ * to be bound — including the common case of a fresh dash with nothing set
+ * up at all. It is now always offered. */
 static void _obd2_chip_update(void) {
     if (!s_step_channels || !lv_obj_is_valid(s_step_channels)) return;
-    uint8_t gaps = _obd2_compute_gaps();
 
     /* Setup-flow redesign 2026-08: when the wizard's OBD2 step already
-     * proved the car answers (discovery scan found PIDs), don't wait for
-     * a chip tap — run the gap-fill probe automatically, once. The modal
-     * still shows so the user sees what got filled; unsupported gaps are
-     * dropped when the window closes, exactly like a manual run. */
-    if (gaps > 0 && s_wiz_obd2_found && !s_wiz_obd2_autofill_done &&
-        !s_obd2_modal) {
+     * proved the car answers, don't wait for a chip tap — scan and fill
+     * once, automatically. The modal still shows what happened. */
+    if (s_wiz_obd2_found && !s_wiz_obd2_autofill_done && !s_obd2_modal) {
         s_wiz_obd2_autofill_done = true;
-        _obd2_open_probe_modal();
-    }
-
-    if (gaps == 0) {
-        if (s_obd2_chip && lv_obj_is_valid(s_obd2_chip)) {
-            lv_obj_del(s_obd2_chip);
-        }
-        s_obd2_chip = NULL;
-        return;
+        s_obd2_auto_apply = true;
+        _obd2_open_scan_modal();
     }
 
     if (!s_obd2_chip || !lv_obj_is_valid(s_obd2_chip)) {
         s_obd2_chip = lv_btn_create(s_step_channels);
         /* Match the established solid-button language ("Change" / "Apply to
-         * widget"): accent-blue fill, white label, radius 4, no shadow. The
-         * old ghost-outline pill (thin 60%-opacity border + blue tiny text)
-         * read as washed-out next to them. */
+         * widget"): accent-blue fill, white label, radius 4, no shadow. */
         lv_obj_set_height(s_obd2_chip, 26);
         lv_obj_set_width(s_obd2_chip, LV_SIZE_CONTENT);
         lv_obj_set_style_bg_color(s_obd2_chip, THEME_COLOR_ACCENT_BLUE, 0);
@@ -3680,21 +3722,14 @@ static void _obd2_chip_update(void) {
         lv_obj_add_event_cb(s_obd2_chip, _obd2_chip_cb, LV_EVENT_CLICKED, NULL);
 
         lv_obj_t *lbl = lv_label_create(s_obd2_chip);
+        lv_label_set_text(lbl, "Scan for OBD2");
         lv_obj_center(lbl);
         lv_obj_set_style_text_font(lbl, THEME_FONT_TINY, 0);
         lv_obj_set_user_data(s_obd2_chip, lbl);
     }
 
-    lv_obj_t *lbl = (lv_obj_t *)lv_obj_get_user_data(s_obd2_chip);
-    if (lbl && lv_obj_is_valid(lbl)) {
-        char buf[40];
-        snprintf(buf, sizeof(buf), "Fill %u from OBD2", gaps);
-        lv_label_set_text(lbl, buf);
-    }
-
-    /* Sit in the header row, just left of the "Pick a channel…" text (the
-     * chip's content width changes with the gap count, so re-align after
-     * every label update; update_layout settles SIZE_CONTENT first). */
+    /* Sit in the header row, just left of the "Pick a channel…" text
+     * (update_layout settles SIZE_CONTENT before aligning). */
     lv_obj_update_layout(s_obd2_chip);
     if (s_step_chip_lbl && lv_obj_is_valid(s_step_chip_lbl))
         lv_obj_align_to(s_obd2_chip, s_step_chip_lbl, LV_ALIGN_OUT_LEFT_MID, -14, 0);

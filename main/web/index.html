@@ -1917,6 +1917,14 @@
         }
         .ch2-list-tools input[type="search"]:focus { outline: none; border-color: var(--accent); }
         .ch2-filter { display: flex; gap: 4px; }
+        /* Overflow for the one action that used to be a chip. */
+        .ch2-more-btn {
+            background: transparent; border: 1px solid var(--border-light);
+            color: var(--text-muted); border-radius: var(--radius-md);
+            padding: 0 9px; height: 26px; font-size: 15px; line-height: 1;
+            cursor: pointer;
+        }
+        .ch2-more-btn:hover { color: var(--text); border-color: var(--text-muted); }
         .ch2-filter-btn {
             flex: 1; padding: 4px 6px;
             font-size: 11px; font-family: inherit;
@@ -2068,6 +2076,41 @@
             font-size: 11px; line-height: 1.5; color: var(--text-muted);
         }
         #chShared.ch2-page .ch2-spill-head { margin: 18px 20px 4px; }
+
+        /* "You are browsing the catalogue" bar — sticky so the way back is
+         * never scrolled off in a hundred-row list. */
+        .ch2-browse-bar {
+            position: sticky; top: 0; z-index: 3;
+            display: flex; align-items: center; gap: 10px;
+            padding: 8px 12px; background: var(--panel-elevated);
+            border-bottom: 1px solid var(--border);
+            font-size: 11px; line-height: 1.45; color: var(--text-muted);
+        }
+        .ch2-browse-bar span { flex: 1; }
+
+        /* OBD2 scan results — one tickable reading per row. */
+        .ch2-scan-list {
+            border: 1px solid var(--border); border-radius: var(--radius-md);
+            max-height: 320px; overflow-y: auto;
+        }
+        .ch2-scan-row {
+            display: flex; align-items: center; gap: 10px;
+            padding: 7px 12px; cursor: pointer;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .ch2-scan-row:last-child { border-bottom: none; }
+        .ch2-scan-row:hover      { background: var(--highlight); }
+        .ch2-scan-row.done       { opacity: 0.5; cursor: default; }
+        .ch2-scan-row.done:hover { background: transparent; }
+        .ch2-scan-row .nm { flex: 1; font-size: 13px; color: var(--text); }
+        .ch2-scan-row .un { font-size: 11px; color: var(--text-muted); min-width: 34px; }
+
+        .spinner {
+            width: 28px; height: 28px; border-radius: 50%;
+            border: 3px solid var(--border-light); border-top-color: var(--accent);
+            animation: rdmSpin 0.9s linear infinite;
+        }
+        @keyframes rdmSpin { to { transform: rotate(360deg); } }
 
         /* Group header — quiet divider between purpose groups. */
         .ch2-group-header {
@@ -2590,13 +2633,19 @@
         .ch2-src-badge.polled { background: rgba(74,144,226,0.15); color: var(--accent); }
         .ch2-src-badge.enable { background: transparent; color: var(--accent); border: 1px dashed var(--accent); }
         /* Provenance badges — make OBD2 vs raw CAN unmistakable at a glance. */
-        .ch2-srctag { font-size: 9px; font-weight: 700; letter-spacing: .4px; padding: 1px 5px;
-                      border-radius: 3px; text-transform: uppercase; vertical-align: middle; }
-        .ch2-srctag.obd2     { background: rgba(255,176,32,0.18);  color: #ffb020; }   /* amber  */
-        .ch2-srctag.can      { background: rgba(79,195,247,0.16);  color: #4fc3f7; }   /* cyan   */
-        .ch2-srctag.internal { background: rgba(167,139,250,0.18); color: #a78bfa; }   /* violet */
-        .ch2-srctag.math     { background: rgba(102,187,106,0.18); color: #66bb6a; }   /* green  */
-        .ch2-srctag.unbound  { background: transparent; color: var(--text-ghost); border: 1px solid var(--border); }
+        /* Two tags, not five (see _chSourceBadge): OBD2 and calculated are
+         * the only provenances the text can't say for itself. */
+        .ch2-srctag { display: inline-block; font-size: 9px; font-weight: 700;
+                      letter-spacing: .5px; padding: 2px 7px; line-height: 1.25;
+                      border-radius: 999px; text-transform: uppercase;
+                      vertical-align: middle; }
+        .ch2-srctag.obd2     { background: rgba(255,176,32,0.14);  color: #ffb020; }   /* amber  */
+        .ch2-srctag.math     { background: rgba(102,187,106,0.14); color: #66bb6a; }   /* green  */
+        /* Everything else is plain text in the same cell. */
+        .ch2-srctxt          { color: var(--text-muted); }
+        .ch2-srctxt.mono     { font-family: 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+                               letter-spacing: .3px; }
+        .ch2-srctxt.none     { color: #6a6a6a; font-style: italic; }
 
         /* ECU "make" folder — expands to reveal version rows inside.
          * Active preset's make is rendered <details open> so users see
@@ -4547,8 +4596,8 @@
                 <div class="card-stat" id="setupWifiStat">—</div>
             </div>
             <div class="setup-card" onclick="openObd2Setup && openObd2Setup()">
-                <div class="card-title"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 004.6 15a1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 4.6a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>OBD2</div>
-                <div class="card-body">Mode 01 + Mode 22 polling. Trouble codes, vehicle info, custom PIDs.</div>
+                <div class="card-title"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 004.6 15a1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 4.6a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>OBD2 diagnostics</div>
+                <div class="card-body">Trouble codes, VIN and ECU name, protocol status. Adding OBD2 readings as channels lives in Channels.</div>
                 <div class="card-stat" id="setupObd2Stat">—</div>
             </div>
         </div>
@@ -4790,13 +4839,18 @@
                                  the catalogue baked into this page and the
                                  import queues for the dash's own resolver. -->
                             <div class="layout-menu-item" onclick="_chCloseAddMenu(); openEcuChannelImport()"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><circle cx="7" cy="6.5" r="0.9" fill="currentColor" stroke="none"/></svg>From a pre-defined ECU&hellip;</div>
+                            <!-- Scan is a source, not a diagnostic: it belongs
+                                 beside the other ways a channel comes into being
+                                 (ADR-0037). Needs the dash — you can't ask a car
+                                 anything through a page that isn't connected. -->
+                            <div class="layout-menu-item" data-needs-dash="1" onclick="_chCloseAddMenu(); openObdScan()"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>From OBD2 &mdash; scan this car&hellip;</div>
                             <div class="layout-menu-item" onclick="_chCloseAddMenu(); openDbcImportModal()"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>From a DBC file&hellip;</div>
                             <div class="layout-menu-item" onclick="_chCloseAddMenu(); _chOpenNew()"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Custom channel&hellip;</div>
                             <div class="layout-menu-sep"></div>
                             <div class="layout-menu-label">Channel setup file</div>
                             <div class="layout-menu-item" onclick="_chCloseAddMenu(); backupChannels()"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Back up to a file&hellip;</div>
                             <div class="layout-menu-item" data-needs-dash="1" onclick="_chCloseAddMenu(); restoreChannels()"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Restore from a file&hellip;</div>
-                            <div id="chAddMenuOfflineNote" style="display:none; padding:6px 14px 8px; font-size:10px; line-height:1.45; color:var(--text-muted); max-width:210px; white-space:normal;">Restoring from a file needs the dash connected. Everything else works now — your changes are saved here and offered to the dash when it reconnects.</div>
+                            <div id="chAddMenuOfflineNote" style="display:none; padding:6px 14px 8px; font-size:10px; line-height:1.45; color:var(--text-muted); max-width:210px; white-space:normal;">Scanning the car and restoring from a file both need the dash connected. Everything else works now — your changes are saved here and offered to the dash when it reconnects.</div>
                         </div>
                     </div>
                     <!-- Only the modal mount needs a close affordance; on the
@@ -4825,11 +4879,17 @@
                         <!-- "+ New channel" lived here as well as in the topbar
                              menu; one way in is less confusing than two. -->
                         <input id="chSearch" type="search" placeholder="Search channels, signals, groups" oninput="_refreshChannelsList()">
-                        <div class="ch2-filter" id="chFilter">
-                            <button class="ch2-filter-btn active" data-f="all" onclick="_setChFilter('all')">All</button>
-                            <button class="ch2-filter-btn" data-f="configured" onclick="_setChFilter('configured')">Configured</button>
-                            <button class="ch2-filter-btn" data-f="unconfigured" onclick="_setChFilter('unconfigured')">Available</button>
-                            <button class="ch2-filter-btn" id="chSelectModeBtn" onclick="_chToggleSelectMode()" title="Tick several channels and remove them in one go — built-ins return to the standard list, custom ones are deleted">Select</button>
+                        <!-- The three view chips are gone. The list is always
+                             "the channels this car has"; search reaches the
+                             rest, "+ Add channels" brings them in, and the
+                             one thing left (tick several to remove) lives
+                             behind the overflow. -->
+                        <div class="layout-menu-wrap">
+                            <button class="ch2-more-btn" id="chMoreBtn" onclick="_chToggleMoreMenu(event)" title="More">&#8943;</button>
+                            <div class="layout-menu" id="chMoreMenu" style="right:0; left:auto;">
+                                <div class="layout-menu-item" id="chSelectModeBtn" onclick="_chCloseMoreMenu(); _chToggleSelectMode()"><svg viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg><span id="chSelectModeLbl">Select several&hellip;</span></div>
+                                <div class="layout-menu-item" onclick="_chCloseMoreMenu(); _chBrowseCatalogue()"><svg viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>Browse the standard list&hellip;</div>
+                            </div>
                         </div>
                     </div>
                     <!-- Column headings, page mount only. They label the cells
@@ -4845,7 +4905,8 @@
                     <div id="chBulkBar" style="display:none; align-items:center; gap:8px; padding:8px 10px; border-top:1px solid rgba(255,255,255,0.08); background:rgba(0,0,0,0.25); flex-shrink:0;">
                         <span id="chBulkCount" style="font-size:12px; color:var(--text-muted); flex:1;">0 selected</span>
                         <button class="ch2-filter-btn" onclick="_chBulkSelectAllCustom()" title="Select every custom channel (e.g. everything a DBC import created)">All custom</button>
-                        <button class="ch2-filter-btn" id="chBulkDeleteBtn" style="color:#ef4444; border-color:#ef4444;" onclick="_chBulkDelete()">Delete</button>
+                        <button class="ch2-filter-btn" onclick="_chToggleSelectMode()">Done</button>
+                        <button class="ch2-filter-btn" id="chBulkDeleteBtn" style="color:#ef4444; border-color:#ef4444;" onclick="_chBulkDelete()">Remove</button>
                     </div>
                 </div>
                 <!-- Editor. In the modal it is the right-hand pane, as before;
@@ -4879,6 +4940,29 @@
          tick becomes a real channel with its decode already filled in — the
          old flow could only bind one signal at a time to a channel you had
          already created by hand (ADR-0030). -->
+    <!-- OBD2 scan → channels. The dash has had OBD2 discovery since
+         1.1.26, but it lived in device settings behind a raw PID list: you
+         had to know what a PID was to use it. Here it is where a channel
+         comes from, next to "a pre-defined ECU" and "a DBC file", because
+         that is what it is — a source (ADR-0037). -->
+    <div id="chObdScanModal" class="ch2-picker-overlay" onclick="closeObdScan()">
+        <div class="ch2-picker-shell" onclick="event.stopPropagation()">
+            <div class="ch2-picker-head">
+                <div>
+                    <div class="title">Add channels from OBD2</div>
+                    <div class="subtitle">Ask the car what it can report, then pick what you want on the dash.</div>
+                </div>
+                <button class="close-btn" onclick="closeObdScan()" style="font-size:18px;">&times;</button>
+            </div>
+            <div class="ch2-picker-body" id="chObdScanBody" style="padding:16px 18px; overflow:auto; flex:1;"></div>
+            <div class="preset-selection-bar">
+                <button class="btn" id="chObdScanByHand" onclick="closeObdScan(); openCustomPids()" style="margin-right:auto;" title="If your car answers a PID this list doesn't know about, add it yourself">Add a PID by hand&hellip;</button>
+                <span id="chObdScanStatus" class="selection-text"></span>
+                <button class="btn btn-primary" id="chObdScanAddBtn" style="display:none;" onclick="_obdScanAdd()">Add channels</button>
+            </div>
+        </div>
+    </div>
+
     <div id="chEcuImpModal" class="ch2-picker-overlay" onclick="closeEcuChannelImport()">
         <div class="ch2-picker-shell ch2-picker-shell-wide" onclick="event.stopPropagation()">
             <div class="ch2-picker-head">
@@ -5210,7 +5294,7 @@
     <div id="obd2SetupModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;" onclick="closeObd2Setup()">
         <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; width:560px; max-width:95vw; max-height:90vh; overflow-y:auto; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
-                <span style="font-weight:600; font-size:14px;">OBD2 Setup</span>
+                <span style="font-weight:600; font-size:14px;">OBD2 diagnostics</span>
                 <button class="close-btn" onclick="closeObd2Setup()" style="font-size:18px;">&times;</button>
             </div>
 
@@ -5239,18 +5323,21 @@
                 </div>
             </div>
 
-            <div style="font-size:11px; color:var(--text-muted); line-height:1.5; margin-bottom:14px;">
-                <b style="color:var(--text);">1.</b> Set your ECU preset (Setup &rsaquo; ECU Preset) so the dash knows which OBD2 modes your vehicle speaks (Mode 22 / KWP / standard differ).<br>
-                <b style="color:var(--text);">2.</b> Map OBD2 signals to channels in the Channels editor — that's the single place every signal (CAN, OBD2, internal) binds now.<br>
-                <b style="color:var(--text);">3.</b> Add Custom PIDs for forum-documented values your ECU doesn't expose as standard.<br>
-                <b style="color:var(--text);">4.</b> Read Trouble Codes when the check-engine light is on.
+<!-- This page used to double as OBD2 *setup* — a four-step recipe
+                 ending in "now go to Channels". Getting readings onto the dash
+                 is one action and it lives where channels are added (ADR-0037);
+                 what's left here is diagnostics: what the car is saying, and
+                 what's wrong with it. -->
+            <div style="font-size:11px; color:var(--text-muted); line-height:1.6; margin-bottom:14px;">
+                To put OBD2 readings on the dash, go to <b style="color:var(--text);">Channels &rsaquo; + Add channels &rsaquo; From OBD2</b> and scan the car.
+                This page is for asking the car what's wrong with it.
             </div>
 
             <!-- Quick-jump tiles into the other OBD2 modals. -->
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
-                <button class="btn btn-secondary" style="padding:10px 12px; text-align:left; display:flex; flex-direction:column; align-items:flex-start; gap:3px;" onclick="closeObd2Setup(); openChannelsModal();">
-                    <span style="font-size:12px; font-weight:600; color:var(--text);">Channels</span>
-                    <span style="font-size:10px; color:var(--text-muted);">Bind OBD2 signals to your dash</span>
+                <button class="btn btn-secondary" style="padding:10px 12px; text-align:left; display:flex; flex-direction:column; align-items:flex-start; gap:3px;" onclick="closeObd2Setup(); setStudioMode('channels'); openObdScan();">
+                    <span style="font-size:12px; font-weight:600; color:var(--text);">Add channels from OBD2</span>
+                    <span style="font-size:10px; color:var(--text-muted);">Scan the car, pick what goes on the dash</span>
                 </button>
                 <button class="btn btn-secondary" style="padding:10px 12px; text-align:left; display:flex; flex-direction:column; align-items:flex-start; gap:3px;" onclick="closeObd2Setup(); openTroubleCodes();">
                     <span style="font-size:12px; font-weight:600; color:var(--text);">Trouble Codes</span>
@@ -20751,7 +20838,7 @@
         let _chPendingId = null;   /* channel the buffer belongs to (NOT the
                                     * selected row — selection can move while
                                     * edits are still pending) */
-        let _chFilter = 'all';    /* list status filter: all | configured | unconfigured */
+        let _chFilter = 'configured'; /* list view: configured (this car) | unconfigured (standard list) */
         let _chSignalValuesCache = {}; /* signal-name → {value, stale, unit} */
         let _chSelectMode = false; /* bulk-select mode for multi-delete */
         let _chSelected = new Set(); /* ids ticked while in select mode */
@@ -20834,11 +20921,10 @@
             /* The page leads with the channels this car actually has. The
              * other ~100 are catalogue entries you could activate, and
              * interleaving them buries the 30 that matter. Search still
-             * reaches everything — see _refreshChannelsList. */
-            if (!_chPageFilterInit) {
-                _chPageFilterInit = true;
-                _setChFilter('configured');
-            }
+             * reaches everything — see _refreshChannelsList — and browsing
+             * the standard list is a detour you come back from, so arriving
+             * here always lands on the car. */
+            _chFilter = 'configured';
             await _chLoad();
             _chRefreshContextStrip();
         }
@@ -20848,7 +20934,6 @@
              * restarts it on open. */
             if (_chTimer) { clearTimeout(_chTimer); _chTimer = null; }
         }
-        let _chPageFilterInit = false;
 
         function _chOpenDrawer(title) {
             const shared = document.getElementById('chShared');
@@ -20863,6 +20948,7 @@
 
         async function openChannelsModal() {
             _chMount('modal');
+            _chFilter = 'configured';
             document.getElementById('channelsModal').style.display = 'flex';
             await _chLoad();
         }
@@ -21416,7 +21502,16 @@
                 _chSignalValuesCache = {};
                 sigs.forEach(s => {
                     _chSignalValuesCache[s.name] = {
-                        value: s.value, stale: !!s.stale, unit: s.unit || '', source: s.source
+                        value: s.value, stale: !!s.stale, unit: s.unit || '',
+                        source: s.source,
+                        /* The frame id the Source column prints for CAN rows.
+                         * A channel carries its own decode since ADR-0005, but
+                         * channels bound by an older ECU-preset apply left the
+                         * decode in the layout's signals[] — for those the
+                         * registry is the only place the frame id lives, and
+                         * without it the cell falls back to a registry name,
+                         * which is exactly what ADR-0035 set out to remove. */
+                        can_id: s.can_id | 0
                     };
                 });
             } catch(e) { /* silent */ }
@@ -21995,15 +22090,39 @@
         /* Sidebar: every canonical channel + every custom channel, grouped
          * by purpose. Inactive (not yet in user's channels.json) rows fade
          * to 40% — click activates + auto-binds in one motion. */
-        /* Channel-list status filter (_chFilter declared with the other
-         * channel state above): 'all' | 'configured' | 'unconfigured'. Lets
-         * the user collapse the full canonical catalog down to just the
-         * channels they've set up, which makes picking far easier. */
+        /* Channel-list view (_chFilter declared with the other channel state
+         * above): 'configured' — this car — or 'unconfigured', the standard
+         * list you browse to add from. It is no longer a row of chips the
+         * user has to interpret; 'configured' is simply what the list is,
+         * and the catalogue is somewhere you go and come back from. */
         function _setChFilter(f) {
             _chFilter = f;
-            document.querySelectorAll('#chFilter .ch2-filter-btn').forEach(b =>
-                b.classList.toggle('active', b.dataset.f === f));
             _refreshChannelsList();
+        }
+
+        function _chBrowseCatalogue() {
+            if (_chSelectMode) _chToggleSelectMode();
+            _setChFilter('unconfigured');
+        }
+
+        function _chToggleMoreMenu(ev) {
+            if (ev) ev.stopPropagation();
+            const menu = document.getElementById('chMoreMenu');
+            if (!menu) return;
+            const lbl = document.getElementById('chSelectModeLbl');
+            if (lbl) lbl.textContent = _chSelectMode ? 'Stop selecting' : 'Select several…';
+            menu.classList.toggle('open');
+            if (menu.classList.contains('open'))
+                setTimeout(() => document.addEventListener('click', _chCloseMoreMenuOutside), 0);
+        }
+        function _chCloseMoreMenu() {
+            document.getElementById('chMoreMenu')?.classList.remove('open');
+            document.removeEventListener('click', _chCloseMoreMenuOutside);
+        }
+        function _chCloseMoreMenuOutside(e) {
+            const menu = document.getElementById('chMoreMenu');
+            const btn  = document.getElementById('chMoreBtn');
+            if (menu && !menu.contains(e.target) && e.target !== btn) _chCloseMoreMenu();
         }
 
         function _refreshChannelsList() {
@@ -22110,12 +22229,20 @@
                      + `will be added when it reconnects.</div>`;
             }).join('');
 
+            /* Browsing the standard list is a place you went, so it says so
+             * and offers the way back. Without this the chip-less list would
+             * silently be showing ~100 channels the car doesn't have. */
+            const browseBanner = (_chFilter === 'unconfigured')
+                ? `<div class="ch2-browse-bar"><span>Showing the standard channel list — click one to see what it is, then Add it.</span>`
+                + `<button class="btn" style="padding:3px 10px; font-size:11px;" onclick="_setChFilter('configured')">Back to my car</button></div>`
+                : '';
+
             const order = Object.keys(grouped).map(Number).sort((a, b) => a - b);
             if (!order.length && !spillover.length) {
                 const msg = (_chFilter === 'configured' && !q)
                     ? 'No channels set up yet — use “+ Add channels” to bring some in.'
                     : 'No matches.';
-                list.innerHTML = pendingBanner
+                list.innerHTML = browseBanner + pendingBanner
                     + `<div class="ch2-empty"><div class="ch2-empty-msg">${msg}</div></div>`;
                 return;
             }
@@ -22138,29 +22265,7 @@
                         /* Greyed unless an actual signal is bound. */
                         const inact = bound ? '' : 'inactive';
                         const cls = _chZoneStateClass(c);
-                        /* The Source cell answers "where does this come from",
-                         * not "what is the registry slot called" (ADR-0035).
-                         * The badge carries the provenance (OBD2 / CAN / CALC /
-                         * RDM-7); supplementary text only where it adds
-                         * identity: the CAN frame id for bus channels — the
-                         * one fact that tells two same-named decodes apart —
-                         * and the raw signal name only when provenance is
-                         * unknown (old firmware) so nothing prints blank. */
-                        let srcTxt = '';
-                        if (bound) {
-                            if (c.source === 'can') {
-                                const cid = c.decode && c.decode.can_id;
-                                srcTxt = cid ? ('0x' + (cid >>> 0).toString(16).toUpperCase()) : c.signal;
-                            } else if (!c.source || c.source === 'unknown') {
-                                /* 'unknown' is the firmware's honest answer when
-                                 * the bound signal isn't registered this boot
-                                 * (e.g. its ECU frames haven't arrived) — keep
-                                 * the signal name so the cell never goes blank. */
-                                srcTxt = c.signal;
-                            }
-                        }
-                        const sub = bound ? `${_chSourceBadge(c)} ${_textEscape(srcTxt)}`.trim()
-                                          : _chSourceBadge(c);
+                        const sub = _chSourceCell(c, bound);
                         const unit = c.units_display || c.units_native || '';
                         /* Render same shape for both states: "value unit".
                          * Unbound rows still get "— rpm" so the user sees
@@ -22200,7 +22305,7 @@
                     }).join('');
             }).join('');
 
-            let html = pendingBanner + _renderGroups(order, grouped);
+            let html = browseBanner + pendingBanner + _renderGroups(order, grouped);
             if (spillover.length) {
                 const sg = {};
                 spillover.forEach(c => { (sg[c.group || 0] = sg[c.group || 0] || []).push(c); });
@@ -22289,8 +22394,6 @@
         function _chToggleSelectMode() {
             _chSelectMode = !_chSelectMode;
             if (!_chSelectMode) _chSelected.clear();
-            const btn = document.getElementById('chSelectModeBtn');
-            if (btn) btn.classList.toggle('active', _chSelectMode);
             const bar = document.getElementById('chBulkBar');
             if (bar) bar.style.display = _chSelectMode ? 'flex' : 'none';
             _chUpdateBulkBar();
@@ -23004,18 +23107,47 @@
             _patchSigPickerLive();
         }
 
-        /* Provenance tag — OBD2 / CAN / RDM-7 / unbound — keyed off the
-         * authoritative `source` the firmware reports per channel
-         * (/api/channels, derived from the bound signal's signal_t.source).
-         * Makes OBD2 channels obviously distinct from raw CAN at a glance. */
+        /* Provenance tag — only where the kind of source is the point.
+         *
+         * Five coloured pills in a column of thirty rows was noise: a CAN
+         * pill on a channel whose frame id sits right next to it said
+         * nothing, and a RDM-7 pill labelled something the user never chose
+         * and cannot change. What a reader actually needs to tell apart is
+         * OBD2 from CAN — everything else the text already says. So only
+         * OBD2 and calculated channels wear a tag; CAN prints its frame id,
+         * built-ins say so in plain words, unbound says it isn't set up. */
         function _chSourceBadge(c) {
             const s = c && c.source;
-            if (s === 'math')     return '<span class="ch2-srctag math">CALC</span>';
-            if (s === 'obd2')     return '<span class="ch2-srctag obd2">OBD2</span>';
-            if (s === 'internal') return '<span class="ch2-srctag internal">RDM-7</span>';
-            if (s === 'can')      return '<span class="ch2-srctag can">CAN</span>';
-            if (!c || !c.signal)  return '<span class="ch2-srctag unbound">unbound</span>';
-            return '';  /* unknown source — omit rather than mislabel */
+            if (s === 'math') return '<span class="ch2-srctag math">Calc</span>';
+            if (s === 'obd2') return '<span class="ch2-srctag obd2">OBD2</span>';
+            return '';
+        }
+
+        /* The whole Source cell for one row (ADR-0035's rule, restyled):
+         * answer "where does this come from" in the fewest marks that stay
+         * truthful, and never render blank — an empty cell under a "Source"
+         * heading reads as "no source", which is the one wrong answer. */
+        function _chSourceCell(c, bound) {
+            if (!bound) return '<span class="ch2-srctxt none">Not set up</span>';
+            const s = c.source;
+            if (s === 'can') {
+                /* The frame id is the one fact that tells two same-named
+                 * decodes apart; it also reads unmistakably as "CAN". Prefer
+                 * the channel's own decode (ADR-0005), fall back to the live
+                 * registry for channels whose decode still lives in the
+                 * layout, and only then to the raw name. */
+                const cid = (c.decode && c.decode.can_id)
+                         || (_chSignalValuesCache[c.signal] || {}).can_id;
+                return cid
+                    ? `<span class="ch2-srctxt mono">0x${(cid >>> 0).toString(16).toUpperCase()}</span>`
+                    : `<span class="ch2-srctxt">${_textEscape(c.signal)}</span>`;
+            }
+            if (s === 'internal') return '<span class="ch2-srctxt">Built in</span>';
+            if (s === 'obd2' || s === 'math') return _chSourceBadge(c);
+            /* 'unknown' is the firmware's honest answer when the bound signal
+             * isn't registered this boot (its frames haven't arrived) — keep
+             * the raw name rather than claim there's no source. */
+            return `<span class="ch2-srctxt">${_textEscape(c.signal || '')}</span>`;
         }
 
         function _renderSourceSection(c) {
@@ -23346,6 +23478,174 @@
                 });
             });
             return makes;
+        }
+
+        /* ── OBD2 scan → channels ─────────────────────────────────────────
+         *
+         * The firmware owns every part of this that could drift: it runs the
+         * discovery (bitrate + addressing auto-search), it maps answering
+         * PIDs to channels (CANONICAL_OBD2_MAP), and it does the binding.
+         * This page asks two questions — "what did the car answer" and
+         * "which of those do you want" — and never holds a PID table of its
+         * own. See ADR-0037. */
+        let _obdScanRows = [];      /* rows from /api/obd2/scan */
+        let _obdScanPick = new Set();
+        let _obdScanning = false;
+        let _obdScanDone = false;   /* a scan has run this session */
+
+        function openObdScan() {
+            const m = document.getElementById('chObdScanModal');
+            if (!m) return;
+            _obdScanRows = [];
+            _obdScanPick.clear();
+            _obdScanning = false;
+            _obdScanDone = false;
+            m.style.display = 'flex';
+            _renderObdScan();
+        }
+
+        function closeObdScan() {
+            const m = document.getElementById('chObdScanModal');
+            if (m) m.style.display = 'none';
+        }
+
+        function _renderObdScan() {
+            const body = document.getElementById('chObdScanBody');
+            const status = document.getElementById('chObdScanStatus');
+            const addBtn = document.getElementById('chObdScanAddBtn');
+            if (!body) return;
+
+            if (_obdScanning) {
+                body.innerHTML = '<div style="padding:28px 4px; text-align:center;">'
+                    + '<div class="spinner" style="margin:0 auto 14px;"></div>'
+                    + '<div style="font-size:13px; color:var(--text);">Asking the car what it can report&hellip;</div>'
+                    + '<div style="font-size:11px; color:var(--text-muted); margin-top:6px; line-height:1.55;">'
+                    + 'Trying both common bus speeds and both addressing modes. This takes a few seconds.'
+                    + '</div></div>';
+                if (status) status.textContent = '';
+                if (addBtn) addBtn.style.display = 'none';
+                return;
+            }
+
+            if (!_obdScanRows.length) {
+                /* Two different nothings: never scanned, and scanned with no
+                 * answer. The second needs troubleshooting; the first needs
+                 * a button and a sentence about what OBD2 even is. */
+                body.innerHTML = _obdScanDone
+                    ? '<div style="font-size:13px; color:var(--text); margin-bottom:10px;">The car didn’t answer.</div>'
+                      + '<div style="font-size:12px; color:var(--text-muted); line-height:1.75;">Worth checking:<br>'
+                      + '&bull; Ignition on &mdash; some cars only answer with the engine running<br>'
+                      + '&bull; The dash’s CAN wired to pins 6 and 14 of the OBD2 port<br>'
+                      + '&bull; The car is 2008 or newer &mdash; older ones use K-line, which the dash can’t speak<br>'
+                      + '&bull; Your ECU may already be on the bus under its own preset &mdash; try &ldquo;From a pre-defined ECU&rdquo;'
+                      + '</div>'
+                      + '<button class="btn btn-primary" style="margin-top:16px;" onclick="_obdScanStart()">Scan again</button>'
+                    : '<div style="font-size:13px; color:var(--text); line-height:1.65; margin-bottom:12px;">'
+                      + 'Nearly every car built since 2008 can report a standard set of readings &mdash; RPM, '
+                      + 'coolant temperature, speed, throttle and more &mdash; over the OBD2 port.'
+                      + '</div>'
+                      + '<div style="font-size:12px; color:var(--text-muted); line-height:1.7;">'
+                      + 'Turn the ignition on, then scan. The dash asks the car what it supports and offers '
+                      + 'those readings as channels. Nothing changes until you pick.'
+                      + '</div>'
+                      + '<button class="btn btn-primary" style="margin-top:16px;" onclick="_obdScanStart()">Start scan</button>';
+                if (status) status.textContent = '';
+                if (addBtn) addBtn.style.display = 'none';
+                return;
+            }
+
+            const fresh = _obdScanRows.filter(r => !r.bound);
+            const rows = _obdScanRows.map(r => {
+                const on = _obdScanPick.has(r.id);
+                const note = r.bound
+                    ? '<span class="ch2-srctxt" style="font-size:11px;">already set up</span>'
+                    : '<span class="ch2-srctxt mono" style="font-size:11px;">PID 0x'
+                      + ((r.pid | 0).toString(16).toUpperCase().padStart(2, '0')) + '</span>';
+                return '<label class="ch2-scan-row' + (r.bound ? ' done' : '') + '">'
+                    + '<input type="checkbox"' + (on ? ' checked' : '') + (r.bound ? ' disabled' : '')
+                    + ' onchange="_obdScanToggle(\'' + r.id + '\', this.checked)">'
+                    + '<span class="nm">' + _textEscape(r.label) + '</span>'
+                    + '<span class="un">' + _textEscape(r.units || '') + '</span>'
+                    + note + '</label>';
+            }).join('');
+
+            const head = fresh.length
+                ? 'Your car answered. ' + fresh.length + ' reading' + (fresh.length === 1 ? '' : 's')
+                  + ' can be added as channels.'
+                : 'Your car answered, and everything it offers is already set up.';
+            body.innerHTML = '<div style="font-size:13px; color:var(--text); margin-bottom:4px;">' + head + '</div>'
+                + '<div style="font-size:11px; color:var(--text-muted); margin-bottom:12px;">'
+                + (_obdScanPidCount | 0) + ' readings answered in total; these are the ones the dash '
+                + 'knows how to turn into channels.</div>'
+                + '<div class="ch2-scan-list">' + rows + '</div>'
+                + '<button class="btn" style="margin-top:12px;" onclick="_obdScanStart()">Scan again</button>';
+
+            if (status) {
+                const n = _obdScanPick.size;
+                status.textContent = n ? (n + ' selected') : 'Nothing selected';
+            }
+            if (addBtn) {
+                addBtn.style.display = fresh.length ? '' : 'none';
+                addBtn.disabled = _obdScanPick.size === 0;
+                addBtn.textContent = _obdScanPick.size
+                    ? ('Add ' + _obdScanPick.size + ' channel' + (_obdScanPick.size === 1 ? '' : 's'))
+                    : 'Add channels';
+            }
+        }
+
+        let _obdScanPidCount = 0;
+
+        function _obdScanToggle(id, on) {
+            if (on) _obdScanPick.add(id); else _obdScanPick.delete(id);
+            _renderObdScan();
+        }
+
+        async function _obdScanStart() {
+            _obdScanning = true;
+            _obdScanRows = [];
+            _obdScanPick.clear();
+            _renderObdScan();
+            try {
+                const r = await fetch('/api/obd2/scan', { method: 'POST' });
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                const j = await r.json();
+                _obdScanRows = Array.isArray(j.channels) ? j.channels : [];
+                _obdScanPidCount = j.count | 0;
+                /* Pre-tick everything the car answers that isn't already
+                 * sourced — the common answer is "yes, all of it", and a
+                 * page of empty tickboxes is a second job to do. */
+                _obdScanRows.forEach(x => { if (!x.bound) _obdScanPick.add(x.id); });
+            } catch (e) {
+                _obdScanRows = [];
+                showToast('Scan failed: ' + (e.message || e), 'error');
+            }
+            _obdScanDone = true;
+            _obdScanning = false;
+            _renderObdScan();
+        }
+
+        async function _obdScanAdd() {
+            const ids = Array.from(_obdScanPick);
+            if (!ids.length) return;
+            const btn = document.getElementById('chObdScanAddBtn');
+            if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
+            try {
+                const r = await fetch('/api/obd2/adopt', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ channels: ids })
+                });
+                if (!r.ok) throw new Error((await r.text()) || ('HTTP ' + r.status));
+                const j = await r.json();
+                const n = j.bound || ids.length;
+                showToast('Added ' + n + ' channel' + (n === 1 ? '' : 's') + ' from OBD2', 'success');
+                if (j.warning) showToast(j.warning, 'warning');
+                closeObdScan();
+                await _chLoad();
+            } catch (e) {
+                showToast('Could not add: ' + (e.message || e), 'error');
+                _renderObdScan();
+            }
         }
 
         async function openEcuChannelImport() {
