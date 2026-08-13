@@ -1682,6 +1682,15 @@
         body.studio-setup #workspaceGrid { display: none; }
         body.studio-setup .header-toggles { display: none; }
 
+        /* Channels page — same deal, but the panel is a flex column with no
+         * padding of its own: the channels UI manages its own gutters and
+         * needs the full height for the table to scroll inside. */
+        body.studio-channels .studio-mode-panel.channels-panel { display: flex; }
+        body.studio-channels #workspaceGrid { display: none; }
+        body.studio-channels .header-toggles { display: none; }
+        .studio-mode-panel.channels-panel { padding: 0; overflow: hidden; }
+        .ch2-page-wrap { flex: 1; display: flex; min-height: 0; min-width: 0; }
+
         /* Setup-mode card grid */
         .setup-grid {
             display: grid;
@@ -1786,11 +1795,70 @@
         }
         .ch-sync-pill.pending:hover { background: hsla(40, 85%, 55%, 0.18); }
 
+        /* ── The two mounts ───────────────────────────────────────────────
+         * #chShared holds the whole channels UI and is moved between the
+         * modal shell and the Channels page. `.ch2-page` on it selects the
+         * page layout; everything below keys off that one class, so there is
+         * exactly one set of markup and one renderer (ADR-0031). */
+        #chShared { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+        #chShared .ch2-page-only { display: none; }
+        #chShared.ch2-page .ch2-page-only { display: flex; }
+        #chShared.ch2-page .ch2-modal-only { display: none; }
+        .ch2-page-wrap #chShared { width: 100%; }
+
         /* Left pane — active channels only */
         .ch2-list-pane {
             width: 300px;
             border-right: 1px solid var(--border);
             display: flex; flex-direction: column;
+        }
+        /* On the page the list IS the page: full width, and the editor
+         * arrives as a drawer over it rather than stealing half the room. */
+        #chShared.ch2-page .ch2-list-pane {
+            width: auto; flex: 1; border-right: none; min-width: 0;
+        }
+        #chShared.ch2-page .ch2-list-tools {
+            flex-direction: row; align-items: center; gap: 10px;
+            padding: 12px 20px;
+        }
+        #chShared.ch2-page .ch2-list-tools input[type="search"] { max-width: 380px; }
+        #chShared.ch2-page .ch2-topbar { padding: 14px 20px; }
+
+        /* Column headings for the table layout. Grid template is shared with
+         * .ch2-row below — change both together or the headings lie. */
+        .ch2-thead {
+            display: grid;
+            grid-template-columns: var(--ch2-cols);
+            gap: 10px;
+            padding: 8px 20px;
+            margin: 0;
+            font-size: 10px; font-weight: 700; letter-spacing: .06em;
+            text-transform: uppercase; color: var(--text-muted);
+            border-bottom: 1px solid var(--border);
+        }
+        #chShared.ch2-page { --ch2-cols: minmax(160px, 2fr) minmax(120px, 1.4fr) 110px 130px 150px; }
+
+        /* Editor: right-hand pane in the modal, drawer on the page. */
+        .ch2-editor { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+        #chShared.ch2-page .ch2-editor {
+            position: absolute; top: 0; right: 0; bottom: 0;
+            width: 440px; max-width: 92vw;
+            background: var(--panel-elevated);
+            border-left: 1px solid var(--border);
+            box-shadow: -12px 0 28px rgba(0,0,0,0.35);
+            transform: translateX(100%);
+            transition: transform 0.18s ease;
+            z-index: 5;
+        }
+        #chShared.ch2-page.drawer-open .ch2-editor { transform: translateX(0); }
+        @media (prefers-reduced-motion: reduce) {
+            #chShared.ch2-page .ch2-editor { transition: none; }
+        }
+        #chShared.ch2-page .ch2-body { position: relative; }
+        .ch2-drawer-head {
+            align-items: center; justify-content: space-between;
+            padding: 12px 16px; border-bottom: 1px solid var(--border);
+            font-weight: 600; font-size: 13px; flex-shrink: 0;
         }
         .ch2-list-tools {
             display: flex; flex-direction: column; gap: 6px;
@@ -1860,9 +1928,14 @@
         .ch2-filter-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
         .ch2-list { flex: 1; overflow-y: auto; }
 
+        /* One row markup, two layouts. In the modal the source sits under the
+         * name and the extra cells are dropped; on the page the same five
+         * cells become table columns. Grid areas do the work, so the renderer
+         * never has to know which mount it is drawing into. */
         .ch2-row {
             display: grid;
             grid-template-columns: 1fr auto;
+            grid-template-areas: "name val" "src val";
             align-items: baseline;
             gap: 10px;
             padding: 10px 12px;
@@ -1873,6 +1946,31 @@
             cursor: pointer;
             transition: border-color 0.12s, background 0.12s;
         }
+        .ch2-cell-name  { grid-area: name; min-width: 0; }
+        .ch2-cell-src   { grid-area: src;  min-width: 0; }
+        .ch2-cell-val   { grid-area: val; }
+        .ch2-cell-range,
+        .ch2-cell-warn  { display: none; }
+
+        #chShared.ch2-page .ch2-row {
+            grid-template-columns: var(--ch2-cols);
+            grid-template-areas: "name src val range warn";
+            align-items: center;
+            margin: 2px 20px;
+            padding: 9px 12px;
+        }
+        #chShared.ch2-page .ch2-cell-range { grid-area: range; display: block; }
+        #chShared.ch2-page .ch2-cell-warn  { grid-area: warn;  display: block; }
+        #chShared.ch2-page .ch2-cell-range,
+        #chShared.ch2-page .ch2-cell-warn {
+            font-size: 11px; color: var(--text-muted);
+            font-family: 'JetBrains Mono', monospace;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        /* The source line is a sub-label in the modal and a real column on the
+         * page, so it loses its indent and gains the row's baseline. */
+        #chShared.ch2-page .ch2-row-sub { margin-top: 0; font-size: 12px; }
+        #chShared.ch2-page .ch2-group-header { padding-left: 20px; }
         .ch2-row:hover {
             border-color: var(--border-light);
             background: rgba(255,255,255,0.025);
@@ -1911,6 +2009,15 @@
         /* Inactive rows: greyed; click to activate. */
         .ch2-row.inactive { opacity: 0.40; }
         .ch2-row.inactive:hover { opacity: 0.95; }
+
+        /* Search reached past the current view — these are catalogue entries,
+         * not channels this car has, so the heading says so plainly. */
+        .ch2-spill-head {
+            margin: 18px 12px 4px; padding: 8px 10px;
+            border-top: 1px solid var(--border);
+            font-size: 11px; line-height: 1.5; color: var(--text-muted);
+        }
+        #chShared.ch2-page .ch2-spill-head { margin: 18px 20px 4px; }
 
         /* Group header — quiet divider between purpose groups. */
         .ch2-group-header {
@@ -4274,6 +4381,10 @@
               pill provides live device mirroring + remote touch instead.) -->
         <div class="studio-mode-switcher" id="studioModeSwitcher">
             <button class="studio-mode-btn" data-mode="setup"  onclick="setStudioMode('setup')">Setup</button>
+            <!-- Channels is a top-level page, not a card inside Setup: it is
+                 where setup time actually goes, and it dwarfs the things that
+                 used to sit beside it. -->
+            <button class="studio-mode-btn" data-mode="channels" onclick="setStudioMode('channels')">Channels</button>
             <button class="studio-mode-btn active" data-mode="design" onclick="setStudioMode('design')">Design</button>
         </div>
         <div class="top-controls">
@@ -4369,7 +4480,9 @@
                  CAN signals, backup and restore were four sibling cards that
                  all produced the same thing — a channel. They are now the
                  "Add channels" menu inside this page (ADR-0030). -->
-            <div class="setup-card" onclick="openChannelsModal()">
+            <!-- Channels has its own top-level page now; this card is a
+                 signpost to it, not a second way in. -->
+            <div class="setup-card" onclick="setStudioMode('channels')">
                 <div class="card-title"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3v18"/><path d="M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/></svg>Channels</div>
                 <div class="card-body">Everything the dash can read — RPM, Coolant, Lambda. Add them from a pre-defined ECU, a DBC file, or by hand; set ranges and warnings; back the whole setup up to a file.</div>
                 <div class="card-stat" id="setupChannelsStat">—</div>
@@ -4595,8 +4708,19 @@
          values inline), a threshold visualizer with smart inputs and
          "Use canonical defaults" one-tap fill, and a collapsed Advanced
          section for units / decimals / sanity bounds / per-zone colors. -->
+    <!-- The channels UI lives in ONE block (#chShared) that is physically
+         moved between two mounts: the Channels page (its normal home) and
+         this modal (used when Design mode's inspector opens a specific
+         channel). Moving the DOM rather than rendering it twice keeps one
+         set of markup, handlers and state — the ADR-0017 rule, "same
+         markup, same handlers, so which screen was it on has no wrong
+         answer". Layout differences between the two mounts are pure CSS,
+         keyed off .ch2-page on the wrapper. -->
     <div id="channelsModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(10,10,10,0.78); align-items:center; justify-content:center;" onclick="closeChannelsModal()">
-        <div class="ch2-shell" onclick="event.stopPropagation()">
+        <div class="ch2-shell" id="chModalHost" onclick="event.stopPropagation()"></div>
+    </div>
+
+    <div id="chShared">
             <div class="ch2-topbar">
                 <span style="font-weight:600; font-size:14px;">Channels <span id="chCount" style="font-weight:400; font-size:12px; color:var(--text-muted);"></span></span>
                 <div style="display:flex; align-items:center; gap:10px;">
@@ -4622,7 +4746,9 @@
                             <div id="chAddMenuOfflineNote" style="display:none; padding:6px 14px 8px; font-size:10px; line-height:1.45; color:var(--text-muted); max-width:210px; white-space:normal;">Greyed items need the dash connected. Everything else you change is saved here and offered to the dash when it reconnects.</div>
                         </div>
                     </div>
-                    <button class="close-btn" onclick="closeChannelsModal()" style="font-size:18px;">&times;</button>
+                    <!-- Only the modal mount needs a close affordance; on the
+                         page you leave by switching mode. -->
+                    <button class="close-btn ch2-modal-only" onclick="closeChannelsModal()" style="font-size:18px;">&times;</button>
                 </div>
             </div>
             <div class="ch2-body">
@@ -4638,6 +4764,15 @@
                             <button class="ch2-filter-btn" id="chSelectModeBtn" onclick="_chToggleSelectMode()" title="Tick several custom channels and delete them in one go">Select</button>
                         </div>
                     </div>
+                    <!-- Column headings, page mount only. They label the cells
+                         the table layout reveals; in the modal the row collapses
+                         back to name-over-source plus a value, so headings would
+                         be labelling columns that aren't there. -->
+                    <div class="ch2-thead ch2-page-only">
+                        <div>Channel</div><div>Source</div>
+                        <div style="text-align:right;">Value</div>
+                        <div>Range</div><div>Warnings</div>
+                    </div>
                     <div id="chList" class="ch2-list"></div>
                     <div id="chBulkBar" style="display:none; align-items:center; gap:8px; padding:8px 10px; border-top:1px solid rgba(255,255,255,0.08); background:rgba(0,0,0,0.25); flex-shrink:0;">
                         <span id="chBulkCount" style="font-size:12px; color:var(--text-muted); flex:1;">0 selected</span>
@@ -4645,7 +4780,15 @@
                         <button class="ch2-filter-btn" id="chBulkDeleteBtn" style="color:#ef4444; border-color:#ef4444;" onclick="_chBulkDelete()">Delete</button>
                     </div>
                 </div>
-                <div style="flex:1; display:flex; flex-direction:column; min-width:0;">
+                <!-- Editor. In the modal it is the right-hand pane, as before;
+                     on the page it becomes a drawer that slides over the table
+                     so the list keeps its scroll position and you don't lose
+                     your place mid-setup. Same element either way. -->
+                <div class="ch2-editor" id="chEditorPane">
+                    <div class="ch2-drawer-head ch2-page-only">
+                        <span id="chDrawerTitle">Channel</span>
+                        <button class="close-btn" onclick="_chCloseDrawer()" style="font-size:18px;">&times;</button>
+                    </div>
                     <div id="chDetail" class="ch2-detail-pane" style="flex:1;"></div>
                     <div id="chDirtyBar" style="display:none; align-items:center; gap:10px; padding:9px 14px; border-top:1px solid rgba(255,255,255,0.1); background:rgba(20,26,20,0.95); flex-shrink:0;">
                         <span id="chDirtyLabel" style="font-size:12px; color:var(--text-muted); flex:1;">Unsaved changes</span>
@@ -4654,7 +4797,12 @@
                     </div>
                 </div>
             </div>
-        </div>
+    </div>
+
+    <!-- Channels page. #chShared is moved in here on load and whenever the
+         modal releases it. -->
+    <div class="studio-mode-panel channels-panel" id="studioChannelsPanel">
+        <div class="ch2-page-wrap" id="chPageHost"></div>
     </div>
 
     <!-- Import channels from a pre-defined ECU. The customer's words: "you
@@ -20236,8 +20384,8 @@
         function setStudioMode(mode) {
             /* Coerce any unknown/legacy value (e.g. a persisted 'live'
              * from before the Live mode was removed) back to Design. */
-            if (!['setup','design'].includes(mode)) mode = 'design';
-            document.body.classList.remove('studio-setup','studio-design');
+            if (!['setup','channels','design'].includes(mode)) mode = 'design';
+            document.body.classList.remove('studio-setup','studio-channels','studio-design');
             document.body.classList.add('studio-' + mode);
             document.querySelectorAll('.studio-mode-btn').forEach(b => {
                 b.classList.toggle('active', b.dataset.mode === mode);
@@ -20247,6 +20395,11 @@
             /* Mode-specific side-effects */
             if (mode === 'setup') {
                 _refreshSetupStats();
+            }
+            if (mode === 'channels') {
+                _chEnterPage();
+            } else if (typeof _chLeavePage === 'function') {
+                _chLeavePage();
             }
             /* Tell the canvas it might need to re-fit when we come back to Design.
              * The workspace was display:none so its bounding rect was 0. */
@@ -20345,6 +20498,10 @@
         /* Pick up persisted mode at load. Default to Design. */
         (function _initStudioMode() {
             const restore = () => {
+                /* Park the shared channels block on its page before any mode
+                 * is applied, so the Channels tab is never an empty panel and
+                 * the modal has something to borrow. */
+                if (typeof _chMount === 'function') _chMount('page');
                 let mode = 'design';
                 try { mode = localStorage.getItem('rdm7_studio_mode') || 'design'; } catch(e) {}
                 setStudioMode(mode);
@@ -20401,8 +20558,23 @@
         let _chSelectMode = false; /* bulk-select mode for multi-delete */
         let _chSelected = new Set(); /* ids ticked while in select mode */
 
-        async function openChannelsModal() {
-            document.getElementById('channelsModal').style.display = 'flex';
+        /* ── Mounting ────────────────────────────────────────────────────
+         * #chShared is one block of DOM with one set of handlers and one
+         * renderer. _chMount moves it; nothing is cloned, so there is no
+         * second copy to drift (ADR-0031). Page is its home; the modal
+         * borrows it when Design mode's inspector opens a channel. */
+        function _chMount(where) {
+            const shared = document.getElementById('chShared');
+            const host = document.getElementById(
+                where === 'page' ? 'chPageHost' : 'chModalHost');
+            if (!shared || !host || shared.parentElement === host) return;
+            host.appendChild(shared);
+            shared.classList.toggle('ch2-page', where === 'page');
+            if (where !== 'page') _chCloseDrawer();
+        }
+
+        /* Shared load path for both mounts. */
+        async function _chLoad() {
             /* Canonical first, not in parallel: replaying a queued "activate"
              * onto the mirror needs the canonical row to build from, and a
              * Promise.all leaves that a race. */
@@ -20412,6 +20584,43 @@
             _refreshChannelsList();
             _renderChannelDetail();
             _chSchedulePoll();
+        }
+
+        async function _chEnterPage() {
+            _chMount('page');
+            /* The page leads with the channels this car actually has. The
+             * other ~100 are catalogue entries you could activate, and
+             * interleaving them buries the 30 that matter. Search still
+             * reaches everything — see _refreshChannelsList. */
+            if (!_chPageFilterInit) {
+                _chPageFilterInit = true;
+                _setChFilter('configured');
+            }
+            await _chLoad();
+        }
+
+        function _chLeavePage() {
+            /* Stop the 2 Hz poll when the page isn't showing; the modal
+             * restarts it on open. */
+            if (_chTimer) { clearTimeout(_chTimer); _chTimer = null; }
+        }
+        let _chPageFilterInit = false;
+
+        function _chOpenDrawer(title) {
+            const shared = document.getElementById('chShared');
+            if (!shared || !shared.classList.contains('ch2-page')) return;
+            shared.classList.add('drawer-open');
+            const t = document.getElementById('chDrawerTitle');
+            if (t) t.textContent = title || 'Channel';
+        }
+        function _chCloseDrawer() {
+            document.getElementById('chShared')?.classList.remove('drawer-open');
+        }
+
+        async function openChannelsModal() {
+            _chMount('modal');
+            document.getElementById('channelsModal').style.display = 'flex';
+            await _chLoad();
         }
 
         /* Menu items that genuinely need the dash grey out with the reason
@@ -20938,6 +21147,9 @@
             }
             document.getElementById('channelsModal').style.display = 'none';
             if (_chSelectMode) _chToggleSelectMode();
+            /* Hand the shared block back to the page so the Channels tab is
+             * never an empty panel. */
+            _chMount('page');
         }
 
 
@@ -21512,16 +21724,28 @@
              * has a firmware record (is_active) — i.e. one the user has set
              * up, whether or not a signal is bound; "Available" = canonical
              * channels not yet activated. */
-            const filtered = merged.filter(c => {
-                if (_chFilter === 'configured' && !c.is_active) return false;
-                if (_chFilter === 'unconfigured' && c.is_active) return false;
+            const matchesQuery = c => {
                 if (!q) return true;
                 const groupName = (_CH_GROUP_SHORT[c.group || 0] || '').toLowerCase();
                 return c.id.toLowerCase().includes(q)
                     || (c.label || '').toLowerCase().includes(q)
                     || (c.signal || '').toLowerCase().includes(q)
                     || groupName.includes(q);
+            };
+            const filtered = merged.filter(c => {
+                if (_chFilter === 'configured' && !c.is_active) return false;
+                if (_chFilter === 'unconfigured' && c.is_active) return false;
+                return matchesQuery(c);
             });
+
+            /* Search must never hide a channel just because the current view
+             * is "Configured". Searching for something you haven't set up yet
+             * is exactly when you'd search. Those hits are appended under
+             * their own heading instead of being silently absent — the list
+             * leads with your car, but nothing is unreachable. */
+            const spillover = (q && _chFilter === 'configured')
+                ? merged.filter(c => !c.is_active && matchesQuery(c))
+                : [];
 
             const grouped = {};
             filtered.forEach(c => {
@@ -21531,14 +21755,14 @@
             });
 
             const order = Object.keys(grouped).map(Number).sort((a, b) => a - b);
-            if (!order.length) {
+            if (!order.length && !spillover.length) {
                 const msg = (_chFilter === 'configured' && !q)
-                    ? 'No channels set up yet — switch to All to add some.'
+                    ? 'No channels set up yet — use “+ Add channels” to bring some in.'
                     : 'No matches.';
                 list.innerHTML = `<div class="ch2-empty"><div class="ch2-empty-msg">${msg}</div></div>`;
                 return;
             }
-            list.innerHTML = order.map(g => {
+            const _renderGroups = (order, grouped) => order.map(g => {
                 const items = grouped[g].sort((a, b) => {
                     /* Bound (has-signal) first within a group, then alpha.
                      * `is_active` is true whenever the channel has a
@@ -21576,15 +21800,39 @@
                         const click = _chSelectMode
                             ? (deletable ? `_chToggleRowSelect('${c.id}')` : '')
                             : `_selectChannel('${c.id}')`;
+                        /* Range + warnings: printed, never blank. A channel
+                         * with no thresholds set says so rather than leaving
+                         * a gap that reads as "0". */
+                        const num = v => (v == null || !isFinite(v)) ? null : _chDispRound(_chToDisplay(c, v));
+                        const lo = num(c.min), hi = num(c.max);
+                        const rangeTxt = (lo != null && hi != null) ? `${lo}–${hi}` : '—';
+                        const lw = num(c.low_warn), hw = num(c.high_warn);
+                        const warnTxt = (lw != null && hw != null) ? `${lw} / ${hw}`
+                                      : (hw != null) ? `high ${hw}`
+                                      : (lw != null) ? `low ${lw}` : '—';
                         return `<div id="chRow_${c.id}" class="ch2-row ${sel} ${inact}" style="${dimmed}" onclick="${click}">
-                            <div style="display:flex; align-items:center;">${check}<div>
+                            <div class="ch2-cell-name" style="display:flex; align-items:center;">${check}
                                 <div class="ch2-row-name">${c.label || c.id}</div>
-                                ${sub ? `<div class="ch2-row-sub">${_chSourceBadge(c)} ${sub}</div>` : ''}
-                            </div></div>
-                            <div class="ch2-row-val ${cls}">${valHtml}</div>
+                            </div>
+                            <div class="ch2-cell-src">${sub ? `<div class="ch2-row-sub">${_chSourceBadge(c)} ${sub}</div>` : ''}</div>
+                            <div class="ch2-cell-val ch2-row-val ${cls}">${valHtml}</div>
+                            <div class="ch2-cell-range">${rangeTxt}</div>
+                            <div class="ch2-cell-warn">${warnTxt}</div>
                         </div>`;
                     }).join('');
             }).join('');
+
+            let html = _renderGroups(order, grouped);
+            if (spillover.length) {
+                const sg = {};
+                spillover.forEach(c => { (sg[c.group || 0] = sg[c.group || 0] || []).push(c); });
+                const sOrder = Object.keys(sg).map(Number).sort((a, b) => a - b);
+                html += `<div class="ch2-spill-head">Not set up yet — `
+                     +  `${spillover.length} match${spillover.length === 1 ? '' : 'es'} `
+                     +  `in the standard list. Click one to add it.</div>`
+                     +  _renderGroups(sOrder, sg);
+            }
+            list.innerHTML = html;
         }
 
         /* Strip leading/trailing underscores + lowercase so names that
@@ -21673,6 +21921,11 @@
             _chSelectedId = id;
             _refreshChannelsList();
             _renderChannelDetail();
+            /* On the page the editor is a drawer, so picking a row has to
+             * open it. No-op in the modal, where the editor is always there. */
+            const c = _chCache.find(x => x.id === id)
+                   || _chCanonical.find(d => d.id === id);
+            _chOpenDrawer(c ? (c.label || id) : id);
         }
 
         /* ── Bulk select + delete (DBC-import cleanup) ──────────────────── */
