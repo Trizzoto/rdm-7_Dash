@@ -82,6 +82,10 @@ const SAMPLE_SIGNALS_VALUES = SAMPLE_LAYOUT.signals.map((s, i) => ({
   max: [6800, 142, 103, 1.8, 7.2][i] || 0
 }));
 
+/* Whether the stub dash is "recording" right now. Lives here so /api/log/start
+ * and /api/canraw/start actually change what the status endpoints report. */
+const recState = { log: false, logSince: 0, raw: false, rawSince: 0, rate: 10 };
+
 const MOCK = {
   'GET  /api/layout/current':   () => SAMPLE_LAYOUT,
   'GET  /api/layout/raw':       () => SAMPLE_LAYOUT,
@@ -132,19 +136,31 @@ const MOCK = {
   'GET  /api/sd/files':         () => ({ files: [] }),
   'POST /api/sd/copy':          () => ({ ok: true }),
   'POST /api/sd/delete':        () => ({ ok: true }),
-  'GET  /api/log/status':       () => ({ active: false, file: '', samples: 0, rate_hz: 10, storage: 'lfs', sd_mounted: false, lfs_max_bytes: 1024*1024 }),
+  /* Recording state is held, not hardcoded: start/stop used to answer
+     {ok:true} while status stayed active:false forever, so the Record button
+     could be clicked but never showed a running state — the one thing worth
+     checking about it. recState below is the store. */
+  'GET  /api/log/status':       () => ({
+    active: recState.log, file: recState.log ? 'log_dev_live.csv' : '',
+    samples: recState.log ? Math.floor((Date.now() - recState.logSince) / 100) : 0,
+    rate_hz: recState.rate, storage: 'lfs', sd_mounted: false,
+    lfs_max_bytes: 1024*1024 }),
   'GET  /api/log/list':         () => ([
     { name: 'log_demo_lfs.csv', size: 44000, storage: 'lfs' }
   ]),
-  'GET  /api/log/config':       () => ({ rate_hz: 50 }),
+  'GET  /api/log/config':       () => ({ rate_hz: recState.rate }),
   'POST /api/log/config':       () => ({ ok: true }),
-  'POST /api/log/start':        () => ({ ok: true }),
-  'POST /api/log/stop':         () => ({ ok: true }),
+  'POST /api/log/start':        () => { recState.log = true; recState.logSince = Date.now(); return { ok: true }; },
+  'POST /api/log/stop':         () => { recState.log = false; return { ok: true }; },
   'POST /api/log/delete':       () => ({ ok: true }),
   'POST /api/log/upload':       () => ({ status: 'ok', name: 'uploaded.csv', size: 12345, storage: 'lfs' }),
-  'GET  /api/canraw/status':    () => ({ active: false, file: '', frames: 0, elapsed_ms: 0, storage: 'lfs', lfs_max_bytes: 1024*1024, sd_mounted: false }),
-  'POST /api/canraw/start':     () => ({ status: 'started' }),
-  'POST /api/canraw/stop':      () => ({ status: 'stopped' }),
+  'GET  /api/canraw/status':    () => ({
+    active: recState.raw, file: recState.raw ? 'canraw_dev_live.csv' : '',
+    frames: recState.raw ? Math.floor((Date.now() - recState.rawSince) / 2) : 0,
+    elapsed_ms: recState.raw ? Date.now() - recState.rawSince : 0,
+    storage: 'lfs', lfs_max_bytes: 1024*1024, sd_mounted: false }),
+  'POST /api/canraw/start':     () => { recState.raw = true; recState.rawSince = Date.now(); return { status: 'started' }; },
+  'POST /api/canraw/stop':      () => { recState.raw = false; return { status: 'stopped' }; },
   'GET  /api/replay/status':    () => ({ replaying: false, file: '', speed: 1, progress: 0 }),
   'POST /api/replay/start':     () => ({ ok: true }),
   'POST /api/replay/stop':      () => ({ ok: true }),
@@ -174,6 +190,58 @@ const MOCK = {
  * real Channels modal, then re-export for the dash. Delete the file to
  * fall back to the built-in mock set. */
 const SAVED_CHANNELS = path.join(ROOT, 'tools', 'dev_channels.json');
+
+/* Stand-in ECU catalog for /api/channels/source-options. Real makes with real
+ * frames, trimmed to a few signals each — enough to drive the ECU column, the
+ * version column, the tick list and the frame/bit line in each row. Only
+ * kind:"ecu" rows carry a decode, which is what the picker filters on. */
+const _ecuSig = (label, signal_name, can_id, bit_start, bit_length, scale, unit, decimals) =>
+  ({ kind: 'ecu', label, signal_name, can_id, bit_start, bit_length,
+     scale, offset: 0, is_signed: false, endian: 0, decimals, unit });
+const DEV_ECU_MAKES = [
+  { make: 'MaxxECU', is_active: true, versions: [
+    { version: '1.3', display: 'MaxxECU 1.3', is_active: true, signals: [
+      _ecuSig('RPM', 'RPM', 0x520, 0, 16, 1, 'rpm', 0),
+      _ecuSig('Coolant Temp', 'COOLANT_TEMP', 0x521, 0, 16, 0.1, 'C', 1),
+      _ecuSig('Manifold Pressure', 'MAP', 0x522, 16, 16, 0.1, 'kPa', 1),
+      _ecuSig('Lambda', 'LAMBDA', 0x523, 0, 16, 0.001, '', 3),
+      _ecuSig('Battery Voltage', 'BATTERY_VOLTAGE', 0x524, 0, 16, 0.01, 'V', 2),
+      _ecuSig('Total Fuel Trim', 'TOTAL_FUEL_TRIM', 0x525, 0, 16, 0.1, '%', 1),
+    ] },
+    { version: '1.2', display: 'MaxxECU 1.2', is_active: false, signals: [
+      _ecuSig('RPM', 'RPM', 0x520, 0, 16, 1, 'rpm', 0),
+      _ecuSig('Coolant Temp', 'COOLANT_TEMP', 0x521, 0, 16, 0.1, 'C', 1),
+    ] },
+  ] },
+  { make: 'Haltech', is_active: false, versions: [
+    { version: 'Nexus', display: 'Haltech Nexus', is_active: false, signals: [
+      _ecuSig('Engine RPM', 'ENGINE_RPM', 0x360, 0, 16, 1, 'rpm', 0),
+      _ecuSig('Manifold Pressure', 'MANIFOLD_PRESSURE', 0x360, 16, 16, 0.1, 'kPa', 1),
+      _ecuSig('Throttle Position', 'THROTTLE_POSITION', 0x360, 32, 16, 0.1, '%', 1),
+      _ecuSig('Oil Pressure', 'OIL_PRESSURE', 0x372, 0, 16, 0.1, 'kPa', 1),
+      _ecuSig('Battery Volt', 'BATTERY_VOLT', 0x372, 16, 16, 0.1, 'V', 1),
+      _ecuSig('Ambient Air Temp', 'AMBIENT_AIR_TEMP', 0x3E0, 48, 16, 0.1, 'C', 1),
+    ] },
+  ] },
+  { make: 'Link', is_active: false, versions: [
+    { version: 'G4X', display: 'Link G4X', is_active: false, signals: [
+      _ecuSig('Engine Speed', 'ENGINE_SPEED', 0x3E8, 0, 16, 1, 'rpm', 0),
+      _ecuSig('MGP', 'MGP', 0x3E8, 16, 16, 0.1, 'kPa', 1),
+      _ecuSig('TPS', 'TPS', 0x3E9, 0, 16, 0.1, '%', 1),
+      _ecuSig('IAT', 'IAT', 0x3E9, 16, 16, 0.1, 'C', 1),
+      _ecuSig('Gear Position', 'GEAR_POSITION', 0x3EA, 0, 8, 1, '', 0),
+    ] },
+  ] },
+  /* Virtual buckets the real endpoint also returns. The picker must filter
+   * these OUT — they carry no importable decode. */
+  { make: 'OBD2', is_active: false, versions: [
+    { version: 'Standard', display: 'OBD2 Standard (any 2008+ car)', is_active: false,
+      signals: [{ kind: 'obd2', label: 'Engine RPM', signal_name: 'RPM', service: 1, pid: 0x0C, unit: 'rpm' }] },
+  ] },
+  { make: 'Custom', is_active: false, versions: [
+    { version: 'User-defined', display: 'Custom CAN + DBC imports', is_active: false, signals: [] },
+  ] },
+];
 
 const DEFAULT_CHANNELS = [
   { id: 'oil_pressure', label: 'Oil Pressure', group: 0, tier: 0, is_canonical: true,
@@ -337,6 +405,11 @@ const server = http.createServer((req, res) => {
     }
     /* Channels — explicit handlers (need body + the persisted store). */
     if ((url === '/api/channels' || url === '/api/channels/active') && req.method === 'GET') {
+      /* ?stub=1 mimics RDM Studio's local-mode answer: a truthful HTTP 200
+         carrying offline:true. Lets the editor's "a 200 is not proof of a
+         dash" branch be exercised in the browser. */
+      if (/[?&]stub=1/.test(req.url))
+        return sendJson(res, { channels: [], capacity: 128, offline: true });
       return sendJson(res, { count: channelStore.length, capacity: 128, channels: channelStore });
     }
     if (url === '/api/channels/canonical' && req.method === 'GET') {
@@ -452,6 +525,47 @@ const server = http.createServer((req, res) => {
           console.log(`[channels] imported ${channelStore.length} channels -> ${SAVED_CHANNELS}`);
           sendJson(res, { ok: true, count: channelStore.length });
         } catch (e) { sendJson(res, { ok: false, error: e.message }, 400); }
+      });
+    }
+    /* Source options + bulk preset import — enough of the real shapes to
+     * exercise "Add channels > From a pre-defined ECU" in the browser. The
+     * firmware answers from its preconfig catalog and resolves each label
+     * through the ECU alias table; here a handful of real MaxxECU/Haltech/
+     * Link rows stand in, and import-preset just mints a channel per label
+     * so the picker's counts and refresh path are honest. */
+    if (url.startsWith('/api/channels/source-options') && req.method === 'GET') {
+      return sendJson(res, { makes: DEV_ECU_MAKES, current_signal: '' });
+    }
+    if (url === '/api/channels/import-preset' && req.method === 'POST') {
+      return readBody(req, (body) => {
+        try {
+          const d = JSON.parse(body || '{}');
+          const mk = DEV_ECU_MAKES.find(m => m.make === d.make);
+          const vr = mk && (mk.versions || []).find(v => v.version === d.version);
+          if (!vr) return sendJson(res, { error: 'no such make/version' }, 404);
+          const want = Array.isArray(d.labels) && d.labels.length
+            ? vr.signals.filter(s => d.labels.includes(s.label))
+            : vr.signals;
+          let applied = 0;
+          want.forEach(s => {
+            const id = 'custom_' + s.signal_name.toLowerCase();
+            if (channelStore.find(c => c.id === id)) return;
+            channelStore.push({
+              id, label: s.label, group: 11, units_native: s.unit || '',
+              units_display: s.unit || '', decimals: s.decimals | 0,
+              signal: s.signal_name, min: 0, max: 100, is_stale: true,
+              decode: {
+                can_id: s.can_id, bit_start: s.bit_start,
+                bit_length: s.bit_length, scale: s.scale,
+                offset: s.offset, is_signed: !!s.is_signed, endian: s.endian,
+              },
+            });
+            applied++;
+          });
+          persistChannelStore();
+          console.log(`[channels] import-preset ${d.make}/${d.version}: +${applied}`);
+          sendJson(res, { status: 'ok', applied, make: d.make, version: d.version });
+        } catch (e) { sendJson(res, { error: e.message }, 400); }
       });
     }
     /* Asset data must 404 when absent — an empty 200 makes exportRdm embed

@@ -1444,6 +1444,7 @@ static void _open_scan_overlay(void) {
  * builders; declaring here keeps the call-site order legal. */
 static void _can_bus_popup_close(lv_event_t *e);
 static void _testing_popup_close(lv_event_t *e);
+static void _logger_popup_close(lv_event_t *e);
 
 /* "View More" button in the CAN BUS section header. Opens the live CAN ID
  * list (ui_can_list) so the user can see every ID + binary bytes ticking
@@ -2137,11 +2138,16 @@ static void _show_peaks_async(void *arg) {
 
 static void _view_peaks_btn_cb(lv_event_t *e) {
     (void)e;
-    /* Close the Testing popup before peaks_ui takes over the screen —
-     * popups live on lv_layer_top() so they'd otherwise float above the
-     * peaks screen. peaks_ui captures lv_scr_act() as its return screen
-     * at call time, so leaving settings_screen active means Back returns
-     * to Device Settings (not the dashboard). */
+    /* Close the host popup before peaks_ui takes over the screen — popups
+     * live on lv_layer_top() so they'd otherwise float above the peaks
+     * screen. peaks_ui captures lv_scr_act() as its return screen at call
+     * time, so leaving settings_screen active means Back returns to Device
+     * Settings (not the dashboard).
+     *
+     * The button now lives in the Live Data & Logging popup (ADR-0030), so
+     * that is the one to close; _testing_popup_close stays because the old
+     * Testing overlay pointer is still torn down on settings teardown. */
+    _logger_popup_close(NULL);
     _testing_popup_close(NULL);
     lv_async_call(_show_peaks_async, NULL);
 }
@@ -2950,7 +2956,7 @@ static void _logger_popup_close(lv_event_t *e) {
 static void _logger_popup_open(lv_event_t *e) {
     (void)e;
     if (s_logger_overlay && lv_obj_is_valid(s_logger_overlay)) return;
-    s_logger_overlay = _make_popup_shell(620, 340, "Data Logging",
+    s_logger_overlay = _make_popup_shell(620, 380, "Live Data & Logging",
                                          _logger_popup_close);
 
     /* Signal log: Start button + rate dropdown + status text. */
@@ -3030,12 +3036,50 @@ static void _logger_popup_open(lv_event_t *e) {
     lv_obj_set_style_text_font(s_canraw_status_label, THEME_FONT_TINY, 0);
     lv_obj_set_style_text_color(s_canraw_status_label, THEME_COLOR_TEXT_MUTED, 0);
 
+    /* Live values, folded in from the old separate "Peak Hold" card. Watching
+     * the numbers and writing them down are the same job, and Studio now says
+     * so too — this keeps the dash and the web editor telling one story
+     * (ADR-0030). Peaks ARE the dash's live-signal view: every signal, with
+     * its min and max. */
+    lv_obj_t *view_btn = lv_btn_create(s_logger_overlay);
+    lv_obj_set_size(view_btn, 170, 32);
+    lv_obj_align(view_btn, LV_ALIGN_TOP_LEFT, 0, 222);
+    lv_obj_set_style_bg_color(view_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(view_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(view_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(view_btn, 1, 0);
+    lv_obj_set_style_border_color(view_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(view_btn, 0, 0);
+    lv_obj_t *view_lbl = lv_label_create(view_btn);
+    lv_label_set_text(view_lbl, "Live Values...");
+    lv_obj_center(view_lbl);
+    lv_obj_set_style_text_font(view_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(view_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_add_event_cb(view_btn, _view_peaks_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *reset_btn = lv_btn_create(s_logger_overlay);
+    lv_obj_set_size(reset_btn, 170, 32);
+    lv_obj_align(reset_btn, LV_ALIGN_TOP_LEFT, 180, 222);
+    lv_obj_set_style_bg_color(reset_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(reset_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(reset_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(reset_btn, 1, 0);
+    lv_obj_set_style_border_color(reset_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(reset_btn, 0, 0);
+    lv_obj_t *reset_lbl = lv_label_create(reset_btn);
+    lv_label_set_text(reset_lbl, "Reset Min/Max");
+    lv_obj_center(reset_lbl);
+    lv_obj_set_style_text_font(reset_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(reset_lbl, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_add_event_cb(reset_btn, _reset_peaks_btn_cb, LV_EVENT_CLICKED, NULL);
+
     lv_obj_t *note = lv_label_create(s_logger_overlay);
     lv_label_set_text(note,
+        "Live Values shows every signal with its min and max. "
         "Signal log writes decoded values (CSV). Raw CAN captures every frame.");
     lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(note, 560);
-    lv_obj_align(note, LV_ALIGN_TOP_LEFT, 0, 220);
+    lv_obj_align(note, LV_ALIGN_TOP_LEFT, 0, 266);
     lv_obj_set_style_text_font(note, THEME_FONT_TINY, 0);
     lv_obj_set_style_text_color(note, THEME_COLOR_TEXT_MUTED, 0);
 
@@ -3049,55 +3093,11 @@ static void _testing_popup_close(lv_event_t *e) {
     s_sim_btn_label         = NULL;
 }
 
-static void _testing_popup_open(lv_event_t *e) {
-    (void)e;
-    if (s_testing_overlay && lv_obj_is_valid(s_testing_overlay)) return;
-    s_testing_overlay = _make_popup_shell(560, 190, "Peak Hold",
-                                          _testing_popup_close);
-
-    /* Peak Hold row */
-    lv_obj_t *view_btn = lv_btn_create(s_testing_overlay);
-    lv_obj_set_size(view_btn, 150, 32);
-    lv_obj_align(view_btn, LV_ALIGN_TOP_LEFT, 0, 58);
-    lv_obj_set_style_bg_color(view_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(view_btn, LV_OPA_80, LV_STATE_PRESSED);
-    lv_obj_set_style_radius(view_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_border_width(view_btn, 1, 0);
-    lv_obj_set_style_border_color(view_btn, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_shadow_width(view_btn, 0, 0);
-    lv_obj_t *view_lbl = lv_label_create(view_btn);
-    lv_label_set_text(view_lbl, "View Peaks...");
-    lv_obj_center(view_lbl);
-    lv_obj_set_style_text_font(view_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(view_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_add_event_cb(view_btn, _view_peaks_btn_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t *reset_btn = lv_btn_create(s_testing_overlay);
-    lv_obj_set_size(reset_btn, 150, 32);
-    lv_obj_align(reset_btn, LV_ALIGN_TOP_LEFT, 160, 58);
-    lv_obj_set_style_bg_color(reset_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(reset_btn, LV_OPA_80, LV_STATE_PRESSED);
-    lv_obj_set_style_radius(reset_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_border_width(reset_btn, 1, 0);
-    lv_obj_set_style_border_color(reset_btn, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_shadow_width(reset_btn, 0, 0);
-    lv_obj_t *reset_lbl = lv_label_create(reset_btn);
-    lv_label_set_text(reset_lbl, "Reset Peaks");
-    lv_obj_center(reset_lbl);
-    lv_obj_set_style_text_font(reset_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(reset_lbl, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_add_event_cb(reset_btn, _reset_peaks_btn_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t *note = lv_label_create(s_testing_overlay);
-    lv_label_set_text(note,
-        "Tracks the highest and lowest value seen for every signal. "
-        "View shows the table; Reset clears all peaks.");
-    lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(note, 500);
-    lv_obj_align(note, LV_ALIGN_TOP_LEFT, 0, 104);
-    lv_obj_set_style_text_font(note, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(note, THEME_COLOR_TEXT_MUTED, 0);
-}
+/* _testing_popup_open (the standalone "Peak Hold" popup) is gone — its two
+ * buttons moved into the Live Data & Logging popup, where watching values and
+ * recording them sit together (ADR-0030). _testing_popup_close survives above:
+ * settings teardown still clears the overlay pointer, and it is now a no-op in
+ * the normal case. */
 
 static void _odo_popup_close(lv_event_t *e) {
     (void)e;
@@ -3312,13 +3312,12 @@ static void _build_device_grid(lv_obj_t *content) {
         "Slider + auto-dim wire/signal hookup.",
         bri_stat, _dimmer_popup_open);
 
-    _make_setup_card(grid, LV_SYMBOL_SD_CARD, "Data Logging",
-        "Signal log + Raw CAN capture + share.",
+    /* One card. The old "Peak Hold" card next door was the live-signal view;
+     * it now opens from inside this popup, matching Studio's merged Live Data
+     * & Logging page (ADR-0030). */
+    _make_setup_card(grid, LV_SYMBOL_SD_CARD, "Live Data & Logging",
+        "Live values, min/max, signal log + Raw CAN.",
         "IDLE", _logger_popup_open);
-
-    _make_setup_card(grid, LV_SYMBOL_UP, "Peak Hold",
-        "Min/max peak readings for every signal.",
-        "PEAKS", _testing_popup_open);
 
     /* Simulator — moved out of the old Peak Hold & Testing popup into its own
      * card. Tapping it toggles the demo sweep directly; the stat shows the

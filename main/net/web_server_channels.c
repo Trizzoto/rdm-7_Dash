@@ -30,6 +30,7 @@
 #include "can/obd2.h"
 #include "signal.h"
 #include "ui/settings/preset_picker.h"  /* preconfig_items[] master catalog */
+#include "ui/screens/first_run_wizard.h" /* shared bulk ECU->channels apply */
 #include "esp_log.h"
 #include "esp_http_server.h"
 #include "esp_system.h"
@@ -1506,9 +1507,105 @@ static esp_err_t channels_import_handler(httpd_req_t *req) {
 	return ESP_OK;
 }
 
+/* ── POST /api/channels/import-preset — bulk "add this ECU's channels" ─────
+ *
+ * Body: { "make":"MaxxECU", "version":"1.3",
+ *         "labels":["RPM","Coolant Temp"],   (optional — omit for all)
+ *         "replace": false }                 (optional — default additive)
+ *
+ * Studio had no bulk path onto channels: source-options could only bind ONE
+ * preset signal to ONE channel that already existed, so setting up a car meant
+ * hand-creating every channel first. The dash's own setup wizard had done the
+ * bulk apply since day one, alias table and all — this exposes that same code
+ * rather than growing a second, drifting copy in JavaScript (ADR-0030).
+ *
+ * The 128-channel cap and every collision rule are enforced inside the shared
+ * path, so a partial apply reports the count it actually managed. */
+static esp_err_t channels_import_preset_handler(httpd_req_t *req) {
+	char buf[2048];   /* a full Haltech tick-list of labels is the worst case */
+	if (recv_json_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
+
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+		return ESP_FAIL;
+	}
+	cJSON *jmake = cJSON_GetObjectItemCaseSensitive(root, "make");
+	cJSON *jver  = cJSON_GetObjectItemCaseSensitive(root, "version");
+	cJSON *jlab  = cJSON_GetObjectItemCaseSensitive(root, "labels");
+	cJSON *jrep  = cJSON_GetObjectItemCaseSensitive(root, "replace");
+	if (!cJSON_IsString(jmake) || !cJSON_IsString(jver)) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Need make + version");
+		return ESP_FAIL;
+	}
+
+	/* Copy make/version out of the cJSON tree: the apply below runs long
+	 * enough that holding the parsed tree across it buys nothing, and the
+	 * tree is freed before the LVGL lock is taken. */
+	char make[32] = {0}, version[32] = {0};
+	strncpy(make,    jmake->valuestring, sizeof(make) - 1);
+	strncpy(version, jver->valuestring,  sizeof(version) - 1);
+	const bool replace = cJSON_IsTrue(jrep);
+
+	/* Point into the cJSON strings for the label filter — valid until the
+	 * tree is deleted, which is after the apply returns. */
+	const char **labels = NULL;
+	int n_labels = 0;
+	if (cJSON_IsArray(jlab)) {
+		int n = cJSON_GetArraySize(jlab);
+		if (n > 0) {
+			labels = calloc((size_t)n, sizeof(*labels));
+			if (!labels) {
+				cJSON_Delete(root);
+				httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+				return ESP_FAIL;
+			}
+			for (int i = 0; i < n; i++) {
+				cJSON *e = cJSON_GetArrayItem(jlab, i);
+				if (cJSON_IsString(e)) labels[n_labels++] = e->valuestring;
+			}
+		}
+	}
+
+	/* The apply rewrites the layout and channels.json — a long hold, but the
+	 * wizard takes exactly the same one on the LVGL task when it applies an
+	 * ECU. 6 s covers the largest preset (Haltech Nexus, 68 signals). */
+	if (!rdm_lvgl_lock(6000)) {
+		free(labels);
+		cJSON_Delete(root);
+		return web_server_send_busy(req);
+	}
+	int applied = first_run_wizard_apply_ecu(make, version, labels, n_labels,
+	                                         replace);
+	rdm_lvgl_unlock();
+
+	free(labels);
+	cJSON_Delete(root);
+
+	if (applied <= 0) {
+		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND,
+			"No signals matched that make/version");
+		return ESP_FAIL;
+	}
+
+	cJSON *resp = cJSON_CreateObject();
+	cJSON_AddStringToObject(resp, "status", "ok");
+	cJSON_AddNumberToObject(resp, "applied", applied);
+	cJSON_AddStringToObject(resp, "make", make);
+	cJSON_AddStringToObject(resp, "version", version);
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return web_server_send_json(req, resp);
+}
+
 static const httpd_uri_t channels_export_uri = {
 	.uri = "/api/channels/export", .method = HTTP_GET,
 	.handler = channels_export_handler, .user_ctx = NULL
+};
+
+static const httpd_uri_t channels_import_preset_uri = {
+	.uri = "/api/channels/import-preset", .method = HTTP_POST,
+	.handler = channels_import_preset_handler, .user_ctx = NULL
 };
 
 static const httpd_uri_t channels_import_uri = {
@@ -1584,5 +1681,6 @@ void web_server_channels_register(httpd_handle_t server) {
 	REGISTER_URI(server, &channels_bind_source_uri);
 	REGISTER_URI(server, &channels_export_uri);
 	REGISTER_URI(server, &channels_import_uri);
-	ESP_LOGI(TAG, "channel endpoints: list, canonical, activate, update, delete, source-options, bind-source, export, import");
+	REGISTER_URI(server, &channels_import_preset_uri);
+	ESP_LOGI(TAG, "channel endpoints: list, canonical, activate, update, delete, source-options, bind-source, export, import, import-preset");
 }

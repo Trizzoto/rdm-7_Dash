@@ -1766,6 +1766,26 @@
         }
         .ch2-body { display: flex; flex: 1; min-height: 0; }
 
+        /* Where your channel edits are going. Three states, always printed —
+         * a blank here would read as "connected", which is the one wrong
+         * answer (ADR-0030). State in greys; only the "needs sending" case
+         * earns colour, because it is the only one asking for an action. */
+        .ch-sync-pill {
+            font-size: 10px; font-weight: 600; letter-spacing: 0.3px;
+            padding: 3px 9px; border-radius: var(--radius-pill, 999px);
+            border: 1px solid var(--border); color: var(--text-muted);
+            white-space: nowrap; user-select: none;
+        }
+        .ch-sync-pill.live    { cursor: default; }
+        .ch-sync-pill.offline { cursor: default; border-style: dashed; }
+        .ch-sync-pill.pending {
+            cursor: pointer;
+            color: hsl(40, 85%, 62%);
+            border-color: hsl(40, 60%, 42%);
+            background: hsla(40, 85%, 55%, 0.08);
+        }
+        .ch-sync-pill.pending:hover { background: hsla(40, 85%, 55%, 0.18); }
+
         /* Left pane — active channels only */
         .ch2-list-pane {
             width: 300px;
@@ -4345,30 +4365,14 @@
     <div class="studio-mode-panel setup-panel" id="studioSetupPanel">
         <div class="setup-section-title">Vehicle &amp; channels</div>
         <div class="setup-grid">
+            <!-- One card, one concept. Pre-defined ECUs, DBC import, custom
+                 CAN signals, backup and restore were four sibling cards that
+                 all produced the same thing — a channel. They are now the
+                 "Add channels" menu inside this page (ADR-0030). -->
             <div class="setup-card" onclick="openChannelsModal()">
                 <div class="card-title"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3v18"/><path d="M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/></svg>Channels</div>
-                <div class="card-body">The vocabulary your dash speaks — RPM, Coolant, Lambda. Tune thresholds and bind to signals.</div>
+                <div class="card-body">Everything the dash can read — RPM, Coolant, Lambda. Add them from a pre-defined ECU, a DBC file, or by hand; set ranges and warnings; back the whole setup up to a file.</div>
                 <div class="card-stat" id="setupChannelsStat">—</div>
-            </div>
-            <div class="setup-card" onclick="openSignalDashboard()">
-                <div class="card-title"><svg viewBox="0 0 24 24"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="14 7 21 7 21 14"/></svg>Live Signals</div>
-                <div class="card-body">Raw CAN signals as they arrive. Live values, min/max, staleness.</div>
-                <div class="card-stat" id="setupSignalsStat">—</div>
-            </div>
-            <div class="setup-card" onclick="openDbcImportModal && openDbcImportModal()">
-                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Import DBC</div>
-                <div class="card-body">Load a DBC file from your tuning software — bulk-import signal definitions.</div>
-                <div class="card-stat">CSV / DBC supported</div>
-            </div>
-            <div class="setup-card" onclick="openSignalManager && openSignalManager()">
-                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/><circle cx="18" cy="17" r="2.4"/><path d="M18 14.6v-1.2M18 20.6v-1.2M15.4 17h-1.2M21.8 17h-1.2"/></svg>Custom CAN Signals</div>
-                <div class="card-body">Hand-decode one-off CAN frames not covered by a preset — set CAN ID, bit range, scale and offset.</div>
-                <div class="card-stat" id="setupCustomSignalsStat">Advanced</div>
-            </div>
-            <div class="setup-card" onclick="openPresetAuthorModal && openPresetAuthorModal()">
-                <div class="card-title"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="12" y1="13" x2="12" y2="17"/><line x1="10" y1="15" x2="14" y2="15"/></svg>Create Preset</div>
-                <div class="card-body">Author a reusable ECU preset from scratch — saved to the device and shown in the source picker.</div>
-                <div class="card-stat">/lfs/presets</div>
             </div>
         </div>
 
@@ -4412,10 +4416,13 @@
 
         <div class="setup-section-title" style="margin-top:30px;">Logging &amp; dashboards</div>
         <div class="setup-grid">
+            <!-- Live values and recording are one surface: it opens live, and
+                 Record is what turns watching into a file (ADR-0030). The old
+                 "Live Signals" card pointed at a read-only twin of this table. -->
             <div class="setup-card" onclick="openDataLogger && openDataLogger()">
-                <div class="card-title"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>Data Logger</div>
-                <div class="card-body">Record CAN signals to SD card. Selectable rate, replay, and share raw traces.</div>
-                <div class="card-stat">CSV / SD card</div>
+                <div class="card-title"><svg viewBox="0 0 24 24"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="14 7 21 7 21 14"/></svg>Live Data &amp; Logging</div>
+                <div class="card-body">Watch every signal arrive — live value, min/max, staleness. Press Record to write it to the SD card.</div>
+                <div class="card-stat" id="setupSignalsStat">—</div>
             </div>
             <div class="setup-card" onclick="openSwitcherSetup && openSwitcherSetup()">
                 <div class="card-title"><svg viewBox="0 0 24 24"><polyline points="7 17 2 12 7 7"/><line x1="2" y1="12" x2="22" y2="12"/><polyline points="17 7 22 12 17 17"/></svg>Dashboard Switcher</div>
@@ -4431,10 +4438,13 @@
 
         <div class="setup-section-title" style="margin-top:30px;">Files &amp; storage</div>
         <div class="setup-grid">
+            <!-- A .rdm is the whole dashboard, not just the picture. Customers
+                 read "bundle" and guessed it was the channel backup, so both
+                 cards now list what is actually inside (ADR-0030). -->
             <div class="setup-card" onclick="importRdm && importRdm()">
-                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Import .rdm</div>
-                <div class="card-body">Load a layout bundle (.rdm) from a file into the editor.</div>
-                <div class="card-stat">Bundle import</div>
+                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Open dashboard bundle</div>
+                <div class="card-body">Load a whole dashboard from a .rdm file — the layout, its images and fonts, and the channel setup that came with it.</div>
+                <div class="card-stat">.rdm file</div>
             </div>
             <div class="setup-card" onclick="openLoadJsonModal && openLoadJsonModal()">
                 <div class="card-title"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg>Load JSON</div>
@@ -4442,25 +4452,18 @@
                 <div class="card-stat">Paste &amp; preview</div>
             </div>
             <div class="setup-card" onclick="exportRdm && exportRdm()">
-                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Export .rdm</div>
-                <div class="card-body">Save the current layout (plus assets) as a portable .rdm bundle.</div>
-                <div class="card-stat">Bundle export</div>
+                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Save dashboard bundle</div>
+                <div class="card-body">Save this dashboard to a .rdm file — layout, images, fonts and the dash's channel setup, all in one. To back up only the channels, use Channels &rsaquo; Add channels.</div>
+                <div class="card-stat">.rdm file</div>
             </div>
             <div class="setup-card" onclick="downloadScreenshot && downloadScreenshot()">
                 <div class="card-title"><svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>Export Screenshot</div>
                 <div class="card-body">Grab a still of the live dash screen as a JPEG.</div>
                 <div class="card-stat">JPEG</div>
             </div>
-            <div class="setup-card" onclick="backupChannels && backupChannels()">
-                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Backup Channels</div>
-                <div class="card-body">Download this dash's channel setup (CAN decode, thresholds, units) as a file.</div>
-                <div class="card-stat">channels.json</div>
-            </div>
-            <div class="setup-card" onclick="restoreChannels && restoreChannels()">
-                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Restore Channels</div>
-                <div class="card-body">Load a saved channel setup onto this dash. Replaces the current setup and reboots.</div>
-                <div class="card-stat">Reboots dash</div>
-            </div>
+            <!-- Backup/Restore Channels used to live here, three sections away
+                 from the page that owns channels. They are now on the Channels
+                 page itself, under "Add channels" (ADR-0030). -->
             <div class="setup-card" onclick="openStorageManager && openStorageManager()">
                 <div class="card-title"><svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>File Manager</div>
                 <div class="card-body">Browse layouts, images and fonts on the device and SD card.</div>
@@ -4576,29 +4579,10 @@
     </div>
 
     <!-- Signal Dashboard modal -->
-    <div id="signalDashModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;" onclick="closeSignalDashboard()">
-        <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; width:720px; max-width:95vw; max-height:85vh; display:flex; flex-direction:column; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                <span style="font-weight:600; font-size:14px;">Signal Dashboard <span id="sigDashCount" style="color:var(--text-muted); font-weight:400; font-size:11px; margin-left:6px;"></span></span>
-                <button class="close-btn" onclick="closeSignalDashboard()" style="font-size:18px;">&times;</button>
-            </div>
-            <div style="flex:1; overflow:auto; border:1px solid var(--border); border-radius:var(--radius-md);">
-                <table style="width:100%; font-size:12px; border-collapse:collapse;">
-                    <thead style="position:sticky; top:0; background:var(--panel-elevated); z-index:1;">
-                        <tr style="text-align:left;">
-                            <th style="padding:8px 10px; border-bottom:1px solid var(--border);">Name</th>
-                            <th style="padding:8px 10px; border-bottom:1px solid var(--border); text-align:right;">Value</th>
-                            <th style="padding:8px 10px; border-bottom:1px solid var(--border); text-align:right;">Min</th>
-                            <th style="padding:8px 10px; border-bottom:1px solid var(--border); text-align:right;">Max</th>
-                            <th style="padding:8px 10px; border-bottom:1px solid var(--border);">Unit</th>
-                            <th style="padding:8px 10px; border-bottom:1px solid var(--border);">Status</th>
-                        </tr>
-                    </thead>
-                    <tbody id="sigDashBody"></tbody>
-                </table>
-            </div>
-        </div>
-    </div>
+    <!-- The "Signal Dashboard" modal that stood here was a read-only twin of
+         the table now inside Live Data & Logging. Two surfaces for one set of
+         numbers, one card apart, and neither mentioned the other — merged in
+         ADR-0030. openSignalDashboard() survives as an alias. -->
 
     <!-- Channels modal — v2 channel registry editor (redesigned).
          One unified list shows every canonical channel; inactive ones
@@ -4615,12 +4599,37 @@
         <div class="ch2-shell" onclick="event.stopPropagation()">
             <div class="ch2-topbar">
                 <span style="font-weight:600; font-size:14px;">Channels <span id="chCount" style="font-weight:400; font-size:12px; color:var(--text-muted);"></span></span>
-                <button class="close-btn" onclick="closeChannelsModal()" style="font-size:18px;">&times;</button>
+                <div style="display:flex; align-items:center; gap:10px;">
+                    <!-- Live/offline state of the channel set. Reads "Live —
+                         edits go straight to the dash" when connected, and
+                         names the pending-edit count when not (ADR-0030). -->
+                    <span id="chSyncPill" class="ch-sync-pill" onclick="_chSyncPillClick()" title="Where your channel edits are going"></span>
+                    <!-- Every way a channel comes into being, in one menu:
+                         a pre-defined ECU, a DBC file, or typed by hand —
+                         plus the backup file that holds the lot. These were
+                         four separate Setup cards (ADR-0030). -->
+                    <div class="layout-menu-wrap">
+                        <button class="btn btn-primary" onclick="_chToggleAddMenu(event)" id="chAddMenuBtn" style="padding:6px 12px; font-size:12px;">+ Add channels &#9662;</button>
+                        <div class="layout-menu" id="chAddMenu">
+                            <div class="layout-menu-label">Add channels</div>
+                            <div class="layout-menu-item" data-needs-dash="1" onclick="_chCloseAddMenu(); openEcuChannelImport()"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><circle cx="7" cy="6.5" r="0.9" fill="currentColor" stroke="none"/></svg>From a pre-defined ECU&hellip;</div>
+                            <div class="layout-menu-item" onclick="_chCloseAddMenu(); openDbcImportModal()"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>From a DBC file&hellip;</div>
+                            <div class="layout-menu-item" onclick="_chCloseAddMenu(); _chOpenNew()"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Custom channel&hellip;</div>
+                            <div class="layout-menu-sep"></div>
+                            <div class="layout-menu-label">Channel setup file</div>
+                            <div class="layout-menu-item" onclick="_chCloseAddMenu(); backupChannels()"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Back up to a file&hellip;</div>
+                            <div class="layout-menu-item" data-needs-dash="1" onclick="_chCloseAddMenu(); restoreChannels()"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Restore from a file&hellip;</div>
+                            <div id="chAddMenuOfflineNote" style="display:none; padding:6px 14px 8px; font-size:10px; line-height:1.45; color:var(--text-muted); max-width:210px; white-space:normal;">Greyed items need the dash connected. Everything else you change is saved here and offered to the dash when it reconnects.</div>
+                        </div>
+                    </div>
+                    <button class="close-btn" onclick="closeChannelsModal()" style="font-size:18px;">&times;</button>
+                </div>
             </div>
             <div class="ch2-body">
                 <div class="ch2-list-pane">
                     <div class="ch2-list-tools">
-                        <button class="btn btn-primary ch2-new-btn" onclick="_chOpenNew()" title="Create a channel from a custom CAN signal">+ New channel</button>
+                        <!-- "+ New channel" lived here as well as in the topbar
+                             menu; one way in is less confusing than two. -->
                         <input id="chSearch" type="search" placeholder="Search channels, signals, groups" oninput="_refreshChannelsList()">
                         <div class="ch2-filter" id="chFilter">
                             <button class="ch2-filter-btn active" data-f="all" onclick="_setChFilter('all')">All</button>
@@ -4644,6 +4653,50 @@
                         <button class="btn btn-primary" onclick="_flushChannelEdits()">Save</button>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Import channels from a pre-defined ECU. The customer's words: "you
+         have a list of all the ones you have on the dash, maxxecu, link,
+         haltech etc". Pick the ECU and version, tick what you want, and every
+         tick becomes a real channel with its decode already filled in — the
+         old flow could only bind one signal at a time to a channel you had
+         already created by hand (ADR-0030). -->
+    <div id="chEcuImpModal" class="ch2-picker-overlay" onclick="closeEcuChannelImport()">
+        <div class="ch2-picker-shell ch2-picker-shell-wide" onclick="event.stopPropagation()">
+            <div class="ch2-picker-head">
+                <div>
+                    <div class="title">Add channels from a pre-defined ECU</div>
+                    <div class="subtitle">Pick your ECU, then choose which of its signals become channels.</div>
+                </div>
+                <button class="close-btn" onclick="closeEcuChannelImport()" style="font-size:18px;">&times;</button>
+            </div>
+            <div class="ch2-picker-body-cols">
+                <input id="chEcuImpSearch" class="ch2-picker-search" type="search" placeholder="Filter by ECU or signal name" oninput="_renderEcuImportCols()">
+                <div class="preset-columns ch2-src-cols">
+                    <div class="preset-col">
+                        <div class="preset-col-header">ECU</div>
+                        <div id="chEcuImpMakes"></div>
+                    </div>
+                    <div class="preset-col">
+                        <div class="preset-col-header">Version</div>
+                        <div id="chEcuImpVersions"></div>
+                    </div>
+                    <div class="preset-col">
+                        <div class="preset-col-header" style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+                            <span>Signals</span>
+                            <span id="chEcuImpAllWrap" style="display:none;">
+                                <button class="ch2-filter-btn" onclick="_ecuImportToggleAll()" id="chEcuImpAllBtn" style="padding:2px 8px; font-size:10px;">None</button>
+                            </span>
+                        </div>
+                        <div id="chEcuImpSignals"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="preset-selection-bar">
+                <span id="chEcuImpStatus" class="selection-text">Select an ECU to see its signals</span>
+                <button class="btn btn-primary" id="chEcuImpAddBtn" disabled onclick="_ecuImportCreate()">Add channels</button>
             </div>
         </div>
     </div>
@@ -4705,16 +4758,22 @@
         </div>
     </div>
 
-    <!-- Data Logger modal -->
+    <!-- Live Data & Logging — one page (ADR-0030).
+         It opens LIVE: the table below is the old "Live Signals" modal,
+         which was a read-only twin of this same data one card away. Record
+         is what turns watching into a file, so it is the primary control
+         and sits above the numbers it captures. The file/replay machinery
+         is real but secondary, so it collapses into a disclosure. -->
     <div id="dataLoggerModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;" onclick="closeDataLogger()">
-        <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; width:520px; max-width:90vw; max-height:85vh; display:flex; flex-direction:column; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
-                <span style="font-weight:600; font-size:14px;">Data Logger</span>
+        <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; width:760px; max-width:94vw; height:82vh; display:flex; flex-direction:column; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <span style="font-weight:600; font-size:14px;">Live Data &amp; Logging <span id="sigDashCount" style="color:var(--text-muted); font-weight:400; font-size:11px; margin-left:6px;"></span></span>
                 <button class="close-btn" onclick="closeDataLogger()" style="font-size:18px;">&times;</button>
             </div>
-            <div style="display:flex; gap:10px; align-items:flex-end; margin-bottom:6px;">
-                <label style="font-size:11px; color:var(--text-muted); flex:1;">Sample Rate
-                    <select id="logRateSelect" style="width:100%; margin-top:2px; padding:5px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
+            <div style="display:flex; gap:10px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
+                <button id="logToggleBtn" class="btn btn-primary" style="padding:7px 16px;" onclick="toggleDataLogger()" title="Save these values to the SD card at the chosen rate">&#9679; Record</button>
+                <label style="font-size:11px; color:var(--text-muted); display:flex; align-items:center; gap:5px;">at
+                    <select id="logRateSelect" style="padding:5px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
                         <option value="1">1 Hz</option>
                         <option value="2">2 Hz</option>
                         <option value="5">5 Hz</option>
@@ -4726,22 +4785,42 @@
                         <option value="0">Max</option>
                     </select>
                 </label>
-                <button id="logToggleBtn" class="btn" style="padding:7px 16px;" onclick="toggleDataLogger()" title="Sample every signal at the chosen rate (decoded values, regular intervals)">Start Signal Log</button>
+                <span style="width:1px; height:20px; background:var(--border);"></span>
                 <!-- Raw CAN: writes every frame (no decoding) to its own
                      *.csv so users can ship the trace off-device for DBC-
                      side analysis. Mutually exclusive with signal logging. -->
-                <button id="canrawToggleBtn" class="btn btn-secondary" style="padding:7px 16px;" onclick="toggleCanRaw()" title="Capture every CAN frame for offline decoding in SavvyCAN">Start Raw CAN</button>
+                <button id="canrawToggleBtn" class="btn btn-secondary" style="padding:7px 14px;" onclick="toggleCanRaw()" title="Capture every CAN frame, undecoded, for offline analysis in SavvyCAN">Record Raw CAN</button>
                 <!-- Send a captured Raw CAN trace to the shared cloud bucket so
                      it can be debugged off-device. Tagged with car make/model. -->
-                <button id="canrawShareBtn" class="btn btn-secondary" style="padding:7px 16px;" onclick="openCanShare()" title="Upload a Raw CAN trace tagged with car make/model for shared debugging">Share Raw CAN</button>
+                <button id="canrawShareBtn" class="btn btn-secondary" style="padding:7px 14px;" onclick="openCanShare()" title="Upload a Raw CAN trace tagged with car make/model for shared debugging">Share Raw CAN</button>
+                <span id="logStatusLine" style="font-size:11px; color:var(--text-muted); margin-left:auto;">Idle</span>
             </div>
-            <!-- Picker hint — explains when to use which logger so users
-                 don't pick the wrong one for their use case. -->
             <div style="font-size:10px; color:var(--text-muted); margin-bottom:10px; line-height:1.5;">
-                <b>Signal Log</b> &mdash; decoded values at a fixed rate. Good for plotting + replaying through dashboard widgets.<br>
-                <b>Raw CAN</b> &mdash; every frame, exact timing, SavvyCAN-compatible CSV. Good for offline DBC decoding.
+                <b>Record</b> &mdash; the decoded values below, at a fixed rate. Good for plotting and replaying through dashboard widgets.
+                <b>Raw CAN</b> &mdash; every frame, exact timing, SavvyCAN-compatible CSV. Good for decoding a bus you haven't mapped yet.
             </div>
-            <div id="logStatusLine" style="font-size:11px; color:var(--text-muted); margin-bottom:10px;">Idle</div>
+
+            <!-- The live table. This IS the page; everything else acts on it. -->
+            <input id="sigDashSearch" type="search" placeholder="Filter signals" oninput="_renderSignalRows()"
+                   style="width:100%; margin-bottom:8px; padding:6px 9px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
+            <div style="flex:1; overflow:auto; border:1px solid var(--border); border-radius:var(--radius-md); min-height:0;">
+                <table style="width:100%; font-size:12px; border-collapse:collapse;">
+                    <thead style="position:sticky; top:0; background:var(--panel-elevated); z-index:1;">
+                        <tr style="text-align:left;">
+                            <th style="padding:8px 10px; border-bottom:1px solid var(--border);">Name</th>
+                            <th style="padding:8px 10px; border-bottom:1px solid var(--border); text-align:right;">Value</th>
+                            <th style="padding:8px 10px; border-bottom:1px solid var(--border); text-align:right;">Min</th>
+                            <th style="padding:8px 10px; border-bottom:1px solid var(--border); text-align:right;">Max</th>
+                            <th style="padding:8px 10px; border-bottom:1px solid var(--border);">Unit</th>
+                            <th style="padding:8px 10px; border-bottom:1px solid var(--border);">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sigDashBody"></tbody>
+                </table>
+            </div>
+
+            <details id="logFilesDetails" style="margin-top:10px; flex-shrink:0;">
+                <summary style="cursor:pointer; font-size:11px; color:var(--text-muted); padding:4px 0; user-select:none;">Saved recordings &amp; replay</summary>
             <!-- Replay status — visible only while a replay is running. Lets
                  the user track progress and stop early. -->
             <div id="logReplayLine" style="display:none; font-size:11px; color:var(--text-muted); margin-bottom:10px; padding:6px 10px; background:var(--bg); border:1px solid var(--border); border-radius:4px; display:flex; align-items:center; justify-content:space-between; gap:8px;">
@@ -4765,7 +4844,8 @@
                 <button class="btn btn-secondary" style="padding:5px 12px; font-size:11px;" onclick="uploadLogFile()">Upload</button>
             </div>
             <div id="logStorageLine" style="font-size:11px; color:var(--text-muted); margin-bottom:4px;">Logs</div>
-            <div id="logList" style="flex:1; overflow:auto; border:1px solid var(--border); border-radius:var(--radius-md); font-size:11px; min-height:120px; max-height:260px;"></div>
+            <div id="logList" style="overflow:auto; border:1px solid var(--border); border-radius:var(--radius-md); font-size:11px; min-height:100px; max-height:200px;"></div>
+            </details>
         </div>
     </div>
 
@@ -4969,8 +5049,8 @@
                     <span style="font-size:10px; color:var(--text-muted);">Add forum-documented PIDs</span>
                 </button>
                 <button class="btn btn-secondary" style="padding:10px 12px; text-align:left; display:flex; flex-direction:column; align-items:flex-start; gap:3px;" onclick="closeObd2Setup(); openSignalDashboard();">
-                    <span style="font-size:12px; font-weight:600; color:var(--text);">Signal Dashboard</span>
-                    <span style="font-size:10px; color:var(--text-muted);">Watch live values</span>
+                    <span style="font-size:12px; font-weight:600; color:var(--text);">Live Data</span>
+                    <span style="font-size:10px; color:var(--text-muted);">Watch live values, record a log</span>
                 </button>
             </div>
         </div>
@@ -17601,25 +17681,53 @@
          * The channel registry is device-local (ADR-0005) and used to be
          * trapped on-device — the endpoints existed but nothing called
          * them. Backup = plain download; Restore = whole-file replace +
-         * reboot, so it confirms first. */
+         * reboot, so it confirms first.
+         *
+         * These now live on the Channels page's "Add channels" menu rather
+         * than under Files & storage, three sections away from the thing
+         * they back up (ADR-0030). This is the CHANNEL SETUP file — a .rdm
+         * bundle is the whole dashboard and carries a copy of this inside
+         * it; the customer read "bundle" and reasonably guessed it was this. */
         async function backupChannels() {
-            try {
-                const r = await fetch('/api/channels/export');
-                if (!r.ok) throw new Error('HTTP ' + r.status);
-                const blob = await r.blob();
+            const serial = (window._deviceSerial || 'dash').replace(/[^A-Za-z0-9-]/g, '');
+            const save = (blob, note) => {
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
-                const serial = (window._deviceSerial || 'dash').replace(/[^A-Za-z0-9-]/g, '');
                 a.href = url; a.download = `channels_${serial}.json`;
                 a.click();
                 URL.revokeObjectURL(url);
-                showToast('Channel setup downloaded', 'success');
+                showToast(note, 'success');
+            };
+            try {
+                const r = await fetch('/api/channels/export');
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                save(await r.blob(), 'Channel setup downloaded');
             } catch (e) {
-                showToast('Backup failed (device offline?)', 'error');
+                /* Offline, the mirror IS the setup as far as this app knows —
+                 * refusing to save a copy of what is on screen would be
+                 * obtuse. Say which it is so nobody mistakes a desk copy for
+                 * a fresh read off the car. */
+                const m = _chLoadJson(_CH_MIRROR_KEY, null);
+                if (!m || !Array.isArray(m.channels)) {
+                    showToast('Nothing to back up yet — connect the dash once first', 'error');
+                    return;
+                }
+                save(new Blob([JSON.stringify({
+                    schema_version: m.schema_version || 2,
+                    channels: _chApplyQueue(m.channels),
+                }, null, 2)], { type: 'application/json' }),
+                    `Saved your offline copy (from ${new Date(m.ts).toLocaleDateString()})`);
             }
         }
 
         function restoreChannels() {
+            /* Restore replaces channels.json on the dash and reboots it —
+             * there is no offline equivalent, so say that instead of opening
+             * a file picker that can only end in a failed POST. */
+            if (typeof _chOnline !== 'undefined' && !_chOnline) {
+                showToast('Restoring a channel setup needs the dash connected', 'error');
+                return;
+            }
             const input = document.createElement('input');
             input.type = 'file';
             input.accept = '.json,application/json';
@@ -18411,6 +18519,19 @@
 
         function _attrEscape(s) { return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
         function _textEscape(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+        /* A string safe to drop into an inline onclick="..." as a quoted JS
+         * argument. Escapes for JS first, then for the HTML attribute — the
+         * older `'${x.replace(/'/g,"\\'")}'` idiom dotted around this file
+         * handles the apostrophe but breaks on a double quote, which ends the
+         * attribute early. ECU and signal labels are the values going through
+         * here, so both matter. */
+        function _jsArg(s) {
+            return "'" + String(s)
+                .replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+                .replace(/[\r\n]/g, ' ')
+                .replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+                .replace(/</g, '&lt;').replace(/>/g, '&gt;') + "'";
+        }
 
         async function onEcuPresetAutoChange(checked) {
             try {
@@ -20051,47 +20172,59 @@
             catch (e) { window.location.href = url; }
         }
 
-        /* ── Signal Dashboard modal ─────────────────────────────────── */
+        /* ── Live signal table (inside Live Data & Logging) ───────────────
+         * Was its own "Signal Dashboard" modal until ADR-0030 merged the two.
+         * The rows are kept in _sigDashRows so the search box can re-render
+         * without waiting for the next poll. */
 
-        let _sigDashTimer = null;
+        let _sigDashRows = [];
 
         async function _refreshSignalDashboard() {
-            try {
-                const r = await fetch('/api/signals/values');
-                if (!r.ok) return;
-                const data = await r.json();
-                const sigs = Array.isArray(data) ? data : (data.signals || []);
-                const body = document.getElementById('sigDashBody');
-                if (!body) return;
-                document.getElementById('sigDashCount').textContent = `(${sigs.length} signals)`;
-                body.innerHTML = sigs.map(s => {
-                    const fresh = !s.stale;
-                    const statusColor = fresh ? 'hsl(140,60%,55%)' : 'hsl(0,60%,55%)';
-                    const statusText  = fresh ? 'LIVE' : 'STALE';
-                    const fmt = (v) => (v == null) ? '-' : (Number.isInteger(v) ? v : Number(v).toFixed(3));
-                    return `<tr style="border-bottom:1px solid var(--border);">
-                        <td style="padding:6px 10px;">${s.name || '-'}</td>
-                        <td style="padding:6px 10px; text-align:right; font-family:'JetBrains Mono',monospace;">${fmt(s.value)}</td>
-                        <td style="padding:6px 10px; text-align:right; font-family:'JetBrains Mono',monospace; color:var(--text-muted);">${fmt(s.min)}</td>
-                        <td style="padding:6px 10px; text-align:right; font-family:'JetBrains Mono',monospace; color:var(--text-muted);">${fmt(s.max)}</td>
-                        <td style="padding:6px 10px; color:var(--text-muted);">${s.unit || ''}</td>
-                        <td style="padding:6px 10px; color:${statusColor}; font-size:10px; font-weight:600;">${statusText}</td>
-                    </tr>`;
-                }).join('');
-            } catch (e) { /* silent */ }
+            const r = await fetch('/api/signals/values');
+            if (!r.ok) return;
+            const data = await r.json();
+            _sigDashRows = Array.isArray(data) ? data : (data.signals || []);
+            _renderSignalRows();
         }
 
-        function openSignalDashboard() {
-            document.getElementById('signalDashModal').style.display = 'flex';
-            _refreshSignalDashboard();
-            if (_sigDashTimer) clearInterval(_sigDashTimer);
-            _sigDashTimer = setInterval(_refreshSignalDashboard, 500);
+        function _renderSignalRows() {
+            const body = document.getElementById('sigDashBody');
+            if (!body) return;
+            const q = (document.getElementById('sigDashSearch')?.value || '').toLowerCase();
+            const rows = q
+                ? _sigDashRows.filter(s => (s.name || '').toLowerCase().includes(q))
+                : _sigDashRows;
+            const cnt = document.getElementById('sigDashCount');
+            if (cnt) cnt.textContent = q
+                ? `(${rows.length} of ${_sigDashRows.length} signals)`
+                : `(${_sigDashRows.length} signals)`;
+            if (!rows.length) {
+                body.innerHTML = `<tr><td colspan="6" style="padding:22px; text-align:center; color:var(--text-muted); font-size:11px;">`
+                    + (_sigDashRows.length ? 'No signals match that filter.'
+                       : 'No signals yet — set up channels first, or connect the dash.')
+                    + `</td></tr>`;
+                return;
+            }
+            body.innerHTML = rows.map(s => {
+                const fresh = !s.stale;
+                const statusColor = fresh ? 'hsl(140,60%,55%)' : 'hsl(0,60%,55%)';
+                const statusText  = fresh ? 'LIVE' : 'STALE';
+                const fmt = (v) => (v == null) ? '-' : (Number.isInteger(v) ? v : Number(v).toFixed(3));
+                return `<tr style="border-bottom:1px solid var(--border);">
+                    <td style="padding:6px 10px;">${_textEscape(s.name || '-')}</td>
+                    <td style="padding:6px 10px; text-align:right; font-family:'JetBrains Mono',monospace;">${fmt(s.value)}</td>
+                    <td style="padding:6px 10px; text-align:right; font-family:'JetBrains Mono',monospace; color:var(--text-muted);">${fmt(s.min)}</td>
+                    <td style="padding:6px 10px; text-align:right; font-family:'JetBrains Mono',monospace; color:var(--text-muted);">${fmt(s.max)}</td>
+                    <td style="padding:6px 10px; color:var(--text-muted);">${_textEscape(s.unit || '')}</td>
+                    <td style="padding:6px 10px; color:${statusColor}; font-size:10px; font-weight:600;">${statusText}</td>
+                </tr>`;
+            }).join('');
         }
 
-        function closeSignalDashboard() {
-            document.getElementById('signalDashModal').style.display = 'none';
-            if (_sigDashTimer) { clearInterval(_sigDashTimer); _sigDashTimer = null; }
-        }
+        /* Kept so anything still pointing at "Live Signals" lands on the
+         * merged page rather than a missing modal. */
+        function openSignalDashboard() { openDataLogger(); }
+        function closeSignalDashboard() { closeDataLogger(); }
 
         /* ── Studio mode switcher ──────────────────────────────────────
          * Setup / Design. Persisted in localStorage. (The former third
@@ -20247,10 +20380,49 @@
 
         async function openChannelsModal() {
             document.getElementById('channelsModal').style.display = 'flex';
-            await Promise.all([_fetchChannelsActive(), _fetchChannelsCanonical(), _fetchSignalValues()]);
+            /* Canonical first, not in parallel: replaying a queued "activate"
+             * onto the mirror needs the canonical row to build from, and a
+             * Promise.all leaves that a race. */
+            await _fetchChannelsCanonical();
+            await Promise.all([_fetchChannelsActive(), _fetchSignalValues()]);
+            _chSyncAddMenuAvailability();
             _refreshChannelsList();
             _renderChannelDetail();
             _chSchedulePoll();
+        }
+
+        /* Menu items that genuinely need the dash grey out with the reason
+         * rather than failing on click. Bulk ECU import resolves against the
+         * dash's preset catalog; restore replaces channels.json and reboots. */
+        function _chSyncAddMenuAvailability() {
+            const menu = document.getElementById('chAddMenu');
+            if (!menu) return;
+            menu.querySelectorAll('[data-needs-dash]').forEach(el => {
+                el.style.opacity = _chOnline ? '' : '0.4';
+                el.style.pointerEvents = _chOnline ? '' : 'none';
+                el.title = _chOnline ? '' : 'Needs the dash connected';
+            });
+            const note = document.getElementById('chAddMenuOfflineNote');
+            if (note) note.style.display = _chOnline ? 'none' : '';
+        }
+
+        function _chToggleAddMenu(ev) {
+            if (ev) ev.stopPropagation();
+            const menu = document.getElementById('chAddMenu');
+            _chSyncAddMenuAvailability();
+            menu.classList.toggle('open');
+            if (menu.classList.contains('open')) {
+                setTimeout(() => document.addEventListener('click', _chCloseAddMenuOutside), 0);
+            }
+        }
+        function _chCloseAddMenu() {
+            document.getElementById('chAddMenu')?.classList.remove('open');
+            document.removeEventListener('click', _chCloseAddMenuOutside);
+        }
+        function _chCloseAddMenuOutside(e) {
+            const menu = document.getElementById('chAddMenu');
+            const btn  = document.getElementById('chAddMenuBtn');
+            if (menu && !menu.contains(e.target) && e.target !== btn) _chCloseAddMenu();
         }
 
         /* Self-rescheduling live poll with an in-flight guard — NEVER
@@ -20761,27 +20933,316 @@
             } catch(e) { /* silent */ }
         }
 
+        /* ── Offline channel setup — the tune-file model ──────────────────
+         *
+         * "It's all live while the device is connected, but while offline and
+         * you make changes it prompts when coming back online." Before this,
+         * every channel screen was a thin skin over live HTTP: with no dash
+         * on the other end the list came up empty and nothing could be set up
+         * at all — you had to be sitting at the car (ADR-0030).
+         *
+         * Two pieces of state, and one invariant:
+         *
+         *   MIRROR  the last channel set + canonical registry actually read
+         *           from a dash, kept in localStorage.
+         *   QUEUE   the mutations made since, as the very API calls that
+         *           would have been sent. Queueing the CALL rather than a
+         *           diff is what keeps this honest: replaying it on reconnect
+         *           runs the firmware's own resolution, so an offline edit
+         *           and an online one take exactly the same code path. No
+         *           second implementation to drift.
+         *
+         *   INVARIANT:  what you see == mirror + queue replayed over it.
+         *
+         * Anything genuinely needing the device (bulk ECU import, restore
+         * from file, reboot) stays blocked while offline and says why —
+         * inventing local answers for those would be guessing. */
+
+        const _CH_MIRROR_KEY  = 'rdm7_channels_mirror';
+        const _CH_QUEUE_KEY   = 'rdm7_channels_queue';
+        /* Mutations we can queue and replay verbatim. import-preset is
+         * deliberately absent: it resolves against the dash's preset catalog,
+         * so offline we have nothing truthful to show for it. */
+        const _CH_QUEUEABLE = [
+            '/api/channels/update', '/api/channels/create',
+            '/api/channels/delete', '/api/channels/activate',
+            '/api/channels/bind-source',
+        ];
+
+        let _chOnline = true;        /* last channel fetch reached a dash */
+        let _chSyncPrompting = false; /* guards re-entry into the sync prompt */
+        /* Have we offered to send the queue since the dash was last away?
+         * NOT the same as "did we just reconnect": edit offline, close Studio,
+         * come back tomorrow at the car, and the page loads fresh with
+         * _chOnline already true — there is no transition to notice, and the
+         * offer would never be made. Keyed on "offered since last absence"
+         * instead, which covers both that and a mid-session reconnect. */
+        let _chSyncOffered = false;
+
+        function _chLoadJson(key, fallback) {
+            try { const s = localStorage.getItem(key); return s ? JSON.parse(s) : fallback; }
+            catch (e) { return fallback; }
+        }
+        function _chSaveJson(key, val) {
+            try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* quota */ }
+        }
+
+        function _chQueue()          { return _chLoadJson(_CH_QUEUE_KEY, []); }
+        function _chQueueCount()     { return _chQueue().length; }
+        function _chQueueClear()     { try { localStorage.removeItem(_CH_QUEUE_KEY); } catch (e) {} }
+        function _chQueuePush(op)    { const q = _chQueue(); q.push(op); _chSaveJson(_CH_QUEUE_KEY, q); }
+
+        /* Snapshot whatever we last read from a real dash. Called after every
+         * successful channel fetch and after each device-side mutation. */
+        function _chStoreOfflineSnapshot() {
+            if (!_chOnline || !_chCache.length) return;
+            _chSaveJson(_CH_MIRROR_KEY, {
+                ts: Date.now(),
+                serial: window._deviceSerial || '',
+                capacity: _chCapacity,
+                channels: _chCache,
+                canonical: _chCanonical,
+            });
+        }
+
+        /* Replay the queued ops onto a channel array so the UI shows the
+         * result of edits that have not reached a dash yet. Best-effort by
+         * design — the dash is the authority and re-states the truth the
+         * moment the queue is sent. */
+        function _chApplyQueue(channels) {
+            const out = channels.map(c => Object.assign({}, c));
+            _chQueue().forEach(op => {
+                const b = op.body || {};
+                if (op.path === '/api/channels/update') {
+                    const c = out.find(x => x.id === b.id);
+                    if (c) Object.assign(c, b.fields || {});
+                } else if (op.path === '/api/channels/delete') {
+                    const ids = b.ids || (b.id ? [b.id] : []);
+                    ids.forEach(id => {
+                        const i = out.findIndex(x => x.id === id);
+                        if (i >= 0) out.splice(i, 1);
+                    });
+                } else if (op.path === '/api/channels/activate') {
+                    if (!out.find(x => x.id === b.id)) {
+                        const def = _chCanonical.find(d => d.id === b.id);
+                        if (def) out.push({
+                            id: def.id, label: def.label, group: def.group,
+                            units_native: def.units_native,
+                            units_display: def.units_display_default,
+                            decimals: def.decimals, signal: '',
+                            min: def.min_default, max: def.max_default,
+                            low_warn: def.low_warn, high_warn: def.high_warn,
+                            is_stale: true, _pending: true,
+                        });
+                    }
+                } else if (op.path === '/api/channels/create') {
+                    const id = b.id || ('custom_' + String(b.label || 'channel')
+                        .toLowerCase().replace(/[^a-z0-9]+/g, '_'));
+                    if (!out.find(x => x.id === id)) out.push(Object.assign(
+                        { id, signal: '', is_stale: true, _pending: true }, b));
+                } else if (op.path === '/api/channels/bind-source') {
+                    const c = out.find(x => x.id === b.channel_id);
+                    /* An ecu_preset bind resolves its signal name on the dash;
+                     * offline we can only say which source was chosen. */
+                    if (c) c.signal = b.signal_name || b.label || c.signal;
+                }
+            });
+            return out;
+        }
+
+        /* Serve the channel list from the mirror when no dash answers. */
+        function _chLoadFromMirror() {
+            const m = _chLoadJson(_CH_MIRROR_KEY, null);
+            if (!m) return false;
+            if (!_chCanonical.length && Array.isArray(m.canonical)) _chCanonical = m.canonical;
+            if (typeof m.capacity === 'number' && m.capacity > 0) _chCapacity = m.capacity;
+            _chCache = _chApplyQueue(Array.isArray(m.channels) ? m.channels : []);
+            /* Nothing offline is live — a stale reading shown as current is
+             * how someone ends up trusting a number the car never sent. */
+            _chCache.forEach(c => { c.is_stale = true; c.current_value = null; });
+            return true;
+        }
+
+        /* The pill in the Channels topbar. It is the only place that says
+         * where an edit is going, so it never renders blank. */
+        function _chRenderSyncPill() {
+            const el = document.getElementById('chSyncPill');
+            if (!el) return;
+            const n = _chQueueCount();
+            const mirror = _chLoadJson(_CH_MIRROR_KEY, null);
+            if (_chOnline && !n) {
+                el.className = 'ch-sync-pill live';
+                el.textContent = 'Live on the dash';
+                el.title = 'The dash is connected — every change is saved to it as you make it.';
+            } else if (_chOnline && n) {
+                el.className = 'ch-sync-pill pending';
+                el.textContent = `${n} change${n === 1 ? '' : 's'} to send`;
+                el.title = 'Click to send your offline changes to the dash.';
+            } else if (n) {
+                el.className = 'ch-sync-pill pending';
+                el.textContent = `Offline · ${n} change${n === 1 ? '' : 's'} waiting`;
+                el.title = 'The dash is not connected. Your changes are saved here and will be offered to the dash when it reconnects.';
+            } else {
+                el.className = 'ch-sync-pill offline';
+                el.textContent = mirror ? 'Offline · your copy' : 'Offline · nothing saved yet';
+                el.title = mirror
+                    ? `Editing the copy saved from your dash on ${new Date(mirror.ts).toLocaleString()}. Changes are sent when it reconnects.`
+                    : 'Connect the dash once so its channel setup can be saved here for offline editing.';
+            }
+        }
+
+        function _chSyncPillClick() {
+            if (_chQueueCount() && _chOnline) _chPromptPendingSync(true);
+            else if (_chQueueCount()) _chPromptPendingSync(false);
+        }
+
+        /* Replay the queue through the real endpoints, in order. */
+        async function _chSendQueue() {
+            const q = _chQueue();
+            if (!q.length) return { sent: 0, failed: [] };
+            let sent = 0;
+            const failed = [];
+            for (const op of q) {
+                try {
+                    const r = await fetch(op.path, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(op.body),
+                    });
+                    if (r.ok) { sent++; continue; }
+                    failed.push(`${op.label || op.path}: ${(await r.text().catch(() => '')).slice(0, 60) || 'HTTP ' + r.status}`);
+                } catch (e) {
+                    /* Lost the dash again mid-send — keep everything that has
+                     * not landed rather than dropping edits on the floor. */
+                    const rest = q.slice(q.indexOf(op));
+                    _chSaveJson(_CH_QUEUE_KEY, rest);
+                    return { sent, failed, interrupted: true };
+                }
+            }
+            _chQueueClear();
+            return { sent, failed };
+        }
+
+        /* Offered once, when a dash answers and edits are waiting. */
+        async function _chPromptPendingSync(forceOnline) {
+            if (_chSyncPrompting) return;
+            const n = _chQueueCount();
+            if (!n) return;
+            if (!forceOnline && !_chOnline) {
+                showToast(`${n} change${n === 1 ? '' : 's'} saved here — they'll be offered to the dash when it reconnects`);
+                return;
+            }
+            _chSyncPrompting = true;
+            try {
+                const ok = await confirmAsync('Send your offline changes?',
+                    `You changed ${n} thing${n === 1 ? '' : 's'} about this car's channels while the dash was disconnected. ` +
+                    `Send them to the dash now? Choosing Cancel keeps them here — you can send them later from the pill in the corner, ` +
+                    `or discard them by restoring the dash's own setup.`,
+                    'Send to dash');
+                if (!ok) return;
+                const res = await _chSendQueue();
+                if (res.interrupted) {
+                    showToast(`Sent ${res.sent}, then lost the dash — the rest are still saved here`, 'error');
+                } else if (res.failed.length) {
+                    showToast(`Sent ${res.sent}, ${res.failed.length} refused by the dash`, 'error');
+                    updateStatus(res.failed.slice(0, 3).join(' · '), true);
+                } else if (res.sent) {
+                    showToast(`Sent ${res.sent} change${res.sent === 1 ? '' : 's'} to the dash`, 'success');
+                }
+                await _fetchChannelsActive();
+                _refreshChannelsList();
+                _renderChannelDetail();
+            } finally {
+                _chSyncPrompting = false;
+                _chRenderSyncPill();
+            }
+        }
+
+        /* Divert exactly the queueable channel mutations while offline, and
+         * nothing else. Installed once over window.fetch: every call site in
+         * this file (21 of them, and any added later) posts these paths
+         * directly, so wrapping here is what makes offline editing complete
+         * rather than "complete for the three screens someone remembered".
+         * Non-channel URLs, and channel URLs while online, are untouched. */
+        (function _installChannelOfflineShim() {
+            const _origFetch = window.fetch.bind(window);
+            window.fetch = function (input, init) {
+                const url = (typeof input === 'string') ? input : (input && input.url) || '';
+                const path = url.split('?')[0];
+                if (!_CH_QUEUEABLE.includes(path) || _chOnline)
+                    return _origFetch(input, init);
+                /* Offline: bank the call and answer as the dash would have. */
+                let body = {};
+                try { body = JSON.parse((init && init.body) || '{}'); } catch (e) {}
+                _chQueuePush({ path, body, ts: Date.now(), label: _chOpLabel(path, body) });
+                _chRenderSyncPill();
+                return Promise.resolve(new Response(
+                    JSON.stringify({ status: 'ok', queued: true }),
+                    { status: 200, headers: { 'Content-Type': 'application/json' } }));
+            };
+        })();
+
+        /* Human name for a queued op, used in the failure list. */
+        function _chOpLabel(path, b) {
+            const who = b.id || b.channel_id || b.label || (b.ids || []).join(', ') || '';
+            if (path.endsWith('/update'))      return `edit ${who}`;
+            if (path.endsWith('/create'))      return `add ${who}`;
+            if (path.endsWith('/delete'))      return `delete ${who}`;
+            if (path.endsWith('/activate'))    return `turn on ${who}`;
+            if (path.endsWith('/bind-source')) return `set source for ${who}`;
+            return path;
+        }
+
         async function _fetchChannelsActive() {
             try {
                 const r = await fetch('/api/channels');
                 if (!r.ok) return;
                 const data = await r.json();
+                /* A 200 is not proof of a dash. RDM Studio's local mode answers
+                 * this endpoint itself with an honest empty collection (and
+                 * says `offline: true`, as it does on /api/device/info) so the
+                 * editor doesn't 404 on the tauri:// origin. Taking that as
+                 * "connected" would blank the mirror and silently disable
+                 * offline editing on the one client most likely to be at a
+                 * desk. Trust the flag, not the status code. */
+                if (data.offline) throw new Error('no dash — local mode');
+                _chOnline = true;
                 _chCache = Array.isArray(data.channels) ? data.channels : [];
                 if (typeof data.capacity === 'number' && data.capacity > 0)
                     _chCapacity = data.capacity;
-                const el = document.getElementById('chCount');
-                if (el) {
-                    const n = _chCache.length;
-                    el.textContent = `(${n} of ${_chCapacity} used)`;
-                    /* Warn as the registry fills — a full registry silently
-                     * broke activation before; make it visible early. */
-                    el.style.color = n >= _chCapacity ? '#ef4444'
-                                   : n >= _chCapacity - 12 ? 'hsl(40,80%,60%)' : '';
-                    el.title = n >= _chCapacity - 12
-                        ? 'Channel registry is nearly full — use Select to delete unused channels'
-                        : '';
+                _chStoreOfflineSnapshot();
+                _chRenderSyncPill();
+                _chUpdateCountLabel();
+                /* A dash is answering and there is work waiting — this is the
+                 * prompt the customer asked for. Offered once per absence, so
+                 * it does not nag on every poll tick. */
+                if (!_chSyncOffered && _chQueueCount()) {
+                    _chSyncOffered = true;
+                    _chPromptPendingSync(true);
                 }
-            } catch (e) { /* silent */ }
+            } catch (e) {
+                /* No dash answered. Fall back to the copy saved from the last
+                 * one, with any queued edits replayed over it, so the page is
+                 * usable at a desk instead of coming up empty. */
+                _chOnline = false;
+                _chSyncOffered = false;   /* offer again when it comes back */
+                _chLoadFromMirror();
+                _chUpdateCountLabel();
+                _chRenderSyncPill();
+            }
+        }
+
+        function _chUpdateCountLabel() {
+            const el = document.getElementById('chCount');
+            if (!el) return;
+            const n = _chCache.length;
+            el.textContent = `(${n} of ${_chCapacity} used)`;
+            /* Warn as the registry fills — a full registry silently
+             * broke activation before; make it visible early. */
+            el.style.color = n >= _chCapacity ? '#ef4444'
+                           : n >= _chCapacity - 12 ? 'hsl(40,80%,60%)' : '';
+            el.title = n >= _chCapacity - 12
+                ? 'Channel registry is nearly full — use Select to delete unused channels'
+                : '';
         }
 
         async function _fetchChannelsCanonical() {
@@ -20791,7 +21252,13 @@
                 if (!r.ok) return;
                 const data = await r.json();
                 _chCanonical = Array.isArray(data.channels) ? data.channels : [];
-            } catch (e) { /* silent */ }
+                _chStoreOfflineSnapshot();
+            } catch (e) {
+                /* The canonical list is firmware-baked and never changes for a
+                 * given build, so the mirrored copy is as good as the live one. */
+                const m = _chLoadJson(_CH_MIRROR_KEY, null);
+                if (m && Array.isArray(m.canonical)) _chCanonical = m.canonical;
+            }
         }
 
         /* Lightweight 2 Hz live-value poll. Patches values in place so we
@@ -22093,6 +22560,226 @@
             _sourceOptionsCache = null;
         }
 
+        /* ── Add channels from a pre-defined ECU ──────────────────────────
+         * The bulk counterpart to the one-at-a-time source picker above.
+         * Reads the same /api/channels/source-options catalog, but shows
+         * only the real ECU makes (the OBD2 / RDM-7 / Custom buckets are
+         * virtual — they have no CAN decode to import and are reached from
+         * their own surfaces), and posts the ticked labels to
+         * /api/channels/import-preset, which runs the firmware's own
+         * alias -> canonical -> custom resolution (ADR-0030). */
+
+        let _ecuImpCache = null;
+        let _ecuImpSel   = { make: null, version: null };
+        let _ecuImpTicks = new Set();   /* preconfig labels, not signal names */
+
+        /* Buckets that source-options synthesises rather than reading from
+         * the ECU preset catalog. They carry no importable CAN decode. */
+        const _ECU_IMP_VIRTUAL = ['OBD2', 'RDM-7', 'Custom'];
+
+        async function openEcuChannelImport() {
+            _ecuImpCache = null;
+            _ecuImpSel   = { make: null, version: null };
+            _ecuImpTicks = new Set();
+            const search = document.getElementById('chEcuImpSearch');
+            if (search) search.value = '';
+            document.getElementById('chEcuImpModal').classList.add('open');
+            document.getElementById('chEcuImpMakes').innerHTML =
+                '<div style="padding:20px; text-align:center; color:var(--text-muted); font-size:11px;">Loading…</div>';
+            document.getElementById('chEcuImpVersions').innerHTML = '';
+            document.getElementById('chEcuImpSignals').innerHTML = '';
+            _ecuImportUpdateBar();
+
+            try {
+                const r = await fetch('/api/channels/source-options');
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                const data = await r.json();
+                _ecuImpCache = {
+                    makes: (data.makes || []).filter(m =>
+                        !_ECU_IMP_VIRTUAL.includes(m.make) &&
+                        (m.versions || []).some(v => (v.signals || [])
+                            .some(s => s.kind === 'ecu'))),
+                };
+                /* Land on the car's active ECU when there is one — that is
+                 * almost always the set the user came here to import. */
+                const act = _ecuImpCache.makes.find(m => m.is_active);
+                if (act) {
+                    _ecuImpSel.make = act.make;
+                    const av = (act.versions || []).find(v => v.is_active) || (act.versions || [])[0];
+                    if (av) { _ecuImpSel.version = av.version; _ecuImportTickAll(true); }
+                }
+                _renderEcuImportCols();
+            } catch (e) {
+                document.getElementById('chEcuImpMakes').innerHTML =
+                    '<div style="padding:20px; text-align:center; color:hsl(0,70%,55%); font-size:11px;">'
+                    + 'Could not read the ECU list.<br>This needs the dash connected.</div>';
+            }
+            setTimeout(() => search?.focus(), 60);
+        }
+
+        function closeEcuChannelImport() {
+            document.getElementById('chEcuImpModal').classList.remove('open');
+            _ecuImpCache = null;
+            _ecuImpTicks = new Set();
+        }
+
+        /* The signals of the currently-selected make+version, ECU-kind only. */
+        function _ecuImportSignals() {
+            if (!_ecuImpCache || !_ecuImpSel.make || !_ecuImpSel.version) return [];
+            const m = _ecuImpCache.makes.find(x => x.make === _ecuImpSel.make);
+            const v = m?.versions?.find(x => x.version === _ecuImpSel.version);
+            return (v?.signals || []).filter(s => s.kind === 'ecu');
+        }
+
+        function _ecuImportTickAll(on) {
+            _ecuImpTicks = new Set();
+            if (on) _ecuImportSignals().forEach(s => _ecuImpTicks.add(s.label));
+        }
+
+        function _ecuImportPickMake(make) {
+            _ecuImpSel.make = make;
+            const m = _ecuImpCache?.makes.find(x => x.make === make);
+            _ecuImpSel.version = (m?.versions || [])[0]?.version || null;
+            _ecuImportTickAll(true);
+            _renderEcuImportCols();
+        }
+
+        function _ecuImportPickVersion(version) {
+            _ecuImpSel.version = version;
+            _ecuImportTickAll(true);
+            _renderEcuImportCols();
+        }
+
+        function _ecuImportToggle(label) {
+            if (_ecuImpTicks.has(label)) _ecuImpTicks.delete(label);
+            else _ecuImpTicks.add(label);
+            _renderEcuImportCols();
+        }
+
+        function _ecuImportToggleAll() {
+            const sigs = _ecuImportSignals();
+            _ecuImportTickAll(_ecuImpTicks.size < sigs.length);
+            _renderEcuImportCols();
+        }
+
+        function _renderEcuImportCols() {
+            if (!_ecuImpCache) return;
+            const q = (document.getElementById('chEcuImpSearch')?.value || '').toLowerCase();
+
+            const makes = _ecuImpCache.makes.filter(m => {
+                if (!q) return true;
+                if ((m.make || '').toLowerCase().includes(q)) return true;
+                return (m.versions || []).some(v => (v.signals || []).some(s =>
+                    (s.label || '').toLowerCase().includes(q)));
+            }).sort((a, b) => {
+                if (a.is_active !== b.is_active) return b.is_active - a.is_active;
+                return (a.make || '').localeCompare(b.make || '');
+            });
+
+            document.getElementById('chEcuImpMakes').innerHTML = makes.map(m => {
+                const sel = _ecuImpSel.make === m.make ? ' active' : '';
+                const n = (m.versions || []).reduce((t, v) =>
+                    t + (v.signals || []).filter(s => s.kind === 'ecu').length, 0);
+                const badge = m.is_active
+                    ? ' <span style="color:var(--accent); font-size:9px; font-weight:700;">YOUR ECU</span>' : '';
+                return `<div class="preset-col-item${sel}" onclick="_ecuImportPickMake(${_jsArg(m.make)})">
+                    <div>${_textEscape(m.make)}${badge}</div>
+                    <div class="preset-detail">${n} signals · ${(m.versions || []).length} ver</div>
+                </div>`;
+            }).join('') || '<div style="padding:20px; text-align:center; color:var(--text-muted); font-size:11px;">No matches.</div>';
+
+            const selMake = _ecuImpCache.makes.find(m => m.make === _ecuImpSel.make);
+            document.getElementById('chEcuImpVersions').innerHTML =
+                (selMake?.versions || []).map(v => {
+                    const sel = _ecuImpSel.version === v.version ? ' active' : '';
+                    const n = (v.signals || []).filter(s => s.kind === 'ecu').length;
+                    return `<div class="preset-col-item${sel}" onclick="_ecuImportPickVersion(${_jsArg(v.version)})">
+                        <div>${_textEscape(v.version)}</div>
+                        <div class="preset-detail">${n} signals</div>
+                    </div>`;
+                }).join('') || (_ecuImpSel.make ? '' :
+                    '<div style="padding:20px; text-align:center; color:var(--text-muted); font-size:11px;">Pick an ECU.</div>');
+
+            /* Signal rows carry a neutral tick square, filled when chosen —
+             * matching the "state in greys, accent marks not paints" rule the
+             * rest of the app follows. Each row prints its frame + bit
+             * position so two same-named signals stay tellable apart. */
+            const sigs = _ecuImportSignals().filter(s =>
+                !q || (s.label || '').toLowerCase().includes(q));
+            document.getElementById('chEcuImpSignals').innerHTML = sigs.map(s => {
+                const on = _ecuImpTicks.has(s.label);
+                const mark = `<span style="display:inline-block; width:11px; height:11px; flex-shrink:0; margin-right:8px; border-radius:2px; border:1px solid ${on ? 'var(--accent)' : 'var(--border)'}; background:${on ? 'var(--accent)' : 'transparent'};"></span>`;
+                const hex = '0x' + (s.can_id >>> 0).toString(16).toUpperCase();
+                return `<div class="preset-col-item" onclick="_ecuImportToggle(${_jsArg(s.label)})" style="display:flex; align-items:center;">
+                    ${mark}
+                    <div style="min-width:0; flex:1;">
+                        <div>${_textEscape(s.label)}</div>
+                        <div class="preset-detail">${hex} · bit ${s.bit_start}+${s.bit_length}</div>
+                    </div>
+                </div>`;
+            }).join('') || (_ecuImpSel.version ?
+                '<div style="padding:20px; text-align:center; color:var(--text-muted); font-size:11px;">No matches.</div>' : '');
+
+            const allWrap = document.getElementById('chEcuImpAllWrap');
+            if (allWrap) {
+                allWrap.style.display = _ecuImportSignals().length ? '' : 'none';
+                const btn = document.getElementById('chEcuImpAllBtn');
+                if (btn) btn.textContent =
+                    _ecuImpTicks.size >= _ecuImportSignals().length ? 'None' : 'All';
+            }
+            _ecuImportUpdateBar();
+        }
+
+        function _ecuImportUpdateBar() {
+            const status = document.getElementById('chEcuImpStatus');
+            const btn    = document.getElementById('chEcuImpAddBtn');
+            const n = _ecuImpTicks.size;
+            if (status) {
+                status.textContent = !_ecuImpSel.make
+                    ? 'Select an ECU to see its signals'
+                    : `${_ecuImpSel.make} ${_ecuImpSel.version || ''} — ${n} signal${n === 1 ? '' : 's'} selected`;
+            }
+            if (btn) {
+                btn.disabled = n === 0;
+                btn.textContent = n ? `Add ${n} channel${n === 1 ? '' : 's'}` : 'Add channels';
+            }
+        }
+
+        async function _ecuImportCreate() {
+            const btn = document.getElementById('chEcuImpAddBtn');
+            if (!btn || btn.disabled) return;
+            const labels = Array.from(_ecuImpTicks);
+            const orig = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'Adding…';
+            try {
+                const r = await fetch('/api/channels/import-preset', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        make: _ecuImpSel.make, version: _ecuImpSel.version,
+                        labels, replace: false,
+                    }),
+                });
+                if (!r.ok) throw new Error((await r.text().catch(() => '')) || 'HTTP ' + r.status);
+                const d = await r.json();
+                /* Report what the dash actually did, not what was asked for —
+                 * the 128-channel cap and collision guards can apply fewer. */
+                const msg = d.applied === labels.length
+                    ? `Added ${d.applied} channel${d.applied === 1 ? '' : 's'} from ${d.make} ${d.version}`
+                    : `Added ${d.applied} of ${labels.length} — the rest were already set up or hit the channel limit`;
+                showToast(msg, d.applied === labels.length ? 'success' : 'warn');
+                updateStatus(msg, d.applied !== labels.length);
+                closeEcuChannelImport();
+                await _fetchChannelsActive();
+                _refreshChannelsList();
+                _chStoreOfflineSnapshot();
+            } catch (e) {
+                showToast('Import failed: ' + (e.message || e), 'error');
+                btn.disabled = false;
+                btn.textContent = orig;
+            }
+        }
+
         /* 3-column drilldown — mirrors the Signal Manager preset picker.
          *   col 1 = ECU (make)
          *   col 2 = Version
@@ -23238,10 +23925,22 @@
                             line.style.color = 'var(--text-muted)';
                         }
                     }
+                    /* Labels keep the word "Stop" while running — toggleDataLogger
+                     * and toggleCanRaw read the button text to decide which way
+                     * they are going. The recording state also goes red: on a
+                     * page that is live either way, the button is the only thing
+                     * that says whether any of it is being written down. */
                     const btn = document.getElementById('logToggleBtn');
-                    if (btn) btn.textContent = active ? 'Stop Signal Log' : 'Start Signal Log';
+                    if (btn) {
+                        btn.textContent = active ? '■ Stop recording' : '● Record';
+                        btn.style.background = active ? 'hsl(0,65%,45%)' : '';
+                        btn.style.borderColor = active ? 'hsl(0,65%,45%)' : '';
+                    }
                     const rawBtn = document.getElementById('canrawToggleBtn');
-                    if (rawBtn) rawBtn.textContent = canrawActive ? 'Stop Raw CAN' : 'Start Raw CAN';
+                    if (rawBtn) {
+                        rawBtn.textContent = canrawActive ? 'Stop Raw CAN' : 'Record Raw CAN';
+                        rawBtn.style.color = canrawActive ? 'hsl(0,70%,62%)' : '';
+                    }
 
                     /* Storage-tier legend above the file list — explain WHERE
                      * the next log will be saved + LFS cap warning so users
@@ -23446,16 +24145,39 @@
             });
         });
 
+        /* The page opens LIVE — values first, recording controls above them
+         * (ADR-0030). One self-rescheduling tick drives both the signal table
+         * and the logger status. Deliberately NOT setInterval: this now makes
+         * two requests per tick, and a fixed interval against the dash
+         * overlaps itself and piles up (see the same guard on the channels
+         * poll). Values refresh every tick; the logger's status and file list
+         * are slower-moving, so they go every other one. */
         function openDataLogger() {
             document.getElementById('dataLoggerModal').style.display = 'flex';
+            const search = document.getElementById('sigDashSearch');
+            if (search) search.value = '';
+            _refreshSignalDashboard().catch(() => {});
             _refreshLogStatus();
-            if (_logStatusTimer) clearInterval(_logStatusTimer);
-            _logStatusTimer = setInterval(_refreshLogStatus, 1000);
+            _logSchedulePoll();
+        }
+
+        let _logTick = 0;
+        function _logSchedulePoll() {
+            if (_logStatusTimer) clearTimeout(_logStatusTimer);
+            _logStatusTimer = setTimeout(async () => {
+                const modal = document.getElementById('dataLoggerModal');
+                if (!modal || modal.style.display === 'none') { _logStatusTimer = null; return; }
+                try { await _refreshSignalDashboard(); } catch (e) { /* offline tick */ }
+                if (++_logTick % 2 === 0) {
+                    try { await _refreshLogStatus(); } catch (e) { /* offline tick */ }
+                }
+                if (_logStatusTimer !== null) _logSchedulePoll();
+            }, 500);
         }
 
         function closeDataLogger() {
             document.getElementById('dataLoggerModal').style.display = 'none';
-            if (_logStatusTimer) { clearInterval(_logStatusTimer); _logStatusTimer = null; }
+            if (_logStatusTimer) { clearTimeout(_logStatusTimer); _logStatusTimer = null; }
         }
 
         /* ── Share Raw CAN modal ────────────────────────────────────── */

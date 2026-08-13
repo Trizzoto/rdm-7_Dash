@@ -1090,11 +1090,25 @@ static bool _wiz_ensure_channel_for_signal(const char *sname,
     return true;
 }
 
-/* Apply every preconfig item belonging to (ecu, version) to BOTH the
- * layout JSON (persistent) AND the live signal registry (immediate),
- * then trigger channel resolution so channels rebind to the new
- * signals. Returns number of items written. */
-static int _apply_ecu_preconfigs(const char *ecu, const char *version) {
+/* True when `label` is one of the n entries in `labels`. A NULL list means
+ * "no filter" — every signal in the set is wanted. */
+static bool _label_wanted(const char *const *labels, int n, const char *label) {
+    if (!labels) return true;
+    if (!label) return false;
+    for (int i = 0; i < n; i++)
+        if (labels[i] && strcmp(labels[i], label) == 0) return true;
+    return false;
+}
+
+/* Apply preconfig items belonging to (ecu, version) to BOTH the layout JSON
+ * (persistent) AND the live signal registry (immediate), then trigger channel
+ * resolution so channels rebind to the new signals. Returns number of items
+ * written. See first_run_wizard.h for the labels/replace contract. */
+int first_run_wizard_apply_ecu(const char *ecu, const char *version,
+                               const char *const *labels, int n_labels,
+                               bool replace) {
+    if (!ecu || !version) return 0;
+
     /* Bulk-guard channel persistence: every set_signal / set_decode /
      * create_custom below would otherwise synchronously rewrite the WHOLE
      * channels.json (one full-file LittleFS write per edit — ~100+ for a
@@ -1106,8 +1120,13 @@ static int _apply_ecu_preconfigs(const char *ecu, const char *version) {
      * THIS ECU provides come back populated. The force-rebind pass below
      * only overrides channels the ECU covers and leaves the rest as-is —
      * without this clear, a prior run's bindings on uncovered channels
-     * would survive and show as prepopulated on a re-run. */
-    _wiz_clear_vehicle_channel_bindings();
+     * would survive and show as prepopulated on a re-run.
+     *
+     * Skipped for an additive import (Studio's "+ Add channels > From a
+     * pre-defined ECU"): the user is adding to a setup, not declaring a
+     * new one, so wiping their other bindings would be a destructive
+     * surprise from a menu item that says "Add". */
+    if (replace) _wiz_clear_vehicle_channel_bindings();
 
     /* Always write into the layout that's actually loaded right now —
      * hardcoding "default" silently strands the writes when the user
@@ -1135,6 +1154,7 @@ static int _apply_ecu_preconfigs(const char *ecu, const char *version) {
         if (it->obd2_pid) continue;
         if (strcmp(it->ecu, ecu) != 0) continue;
         if (strcmp(it->version, version) != 0) continue;
+        if (!_label_wanted(labels, n_labels, it->label)) continue;
 
         char sname[32];
         _wiz_derive_signal_name(it->label, sname, sizeof(sname));
@@ -1231,15 +1251,24 @@ static int _apply_ecu_preconfigs(const char *ecu, const char *version) {
      * bound each signal fresh). Channels this ECU doesn't cover are left
      * untouched, so user-picked sources for them survive a re-run. */
 
-    /* Save the picked ECU so the dashboard remembers it across reboots. */
-    config_store_save_ecu(ecu, version);
+    /* Save the picked ECU so the dashboard remembers it across reboots.
+     * Only for a full setup — importing a handful of Haltech signals on
+     * top of a MaxxECU car must not relabel the car's ECU. */
+    if (replace) config_store_save_ecu(ecu, version);
     s_channels_changed = true;
-    ESP_LOGI(TAG, "Applied %d preconfigs from %s/%s into layout '%s'",
-             applied, ecu, version, active_layout);
+    ESP_LOGI(TAG, "Applied %d preconfigs from %s/%s into layout '%s' (%s)",
+             applied, ecu, version, active_layout,
+             replace ? "replace" : "additive");
     /* Restore a signal-derived filter — the apply just registered new
      * signals so the rebuild will use them. */
     can_set_promiscuous_mode(false);
     return applied;
+}
+
+/* The wizard's own semantics: this ECU IS the car's ECU, so every signal
+ * comes in and prior vehicle bindings are cleared first. */
+static int _apply_ecu_preconfigs(const char *ecu, const char *version) {
+    return first_run_wizard_apply_ecu(ecu, version, NULL, 0, true);
 }
 
 /* Render (or re-render) the result card showing the top match + buttons.

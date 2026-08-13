@@ -35,6 +35,7 @@ Read the relevant ADR before changing the area it covers. The "we already tried 
 | [0025](0025-analyse-is-a-grid-you-arrange.md) | Accepted | Analyse is a grid you arrange, not a layout we chose | `../rdm7-desktop/src/tauri-overlay.html` (GPS workspace, Analyse view) |
 | [0026](0026-analyse-is-a-mosaic.md) | Accepted | Analyse is a mosaic, and it may be taller than the window — supersedes 0025's row-major grid | `../rdm7-desktop/src/tauri-overlay.html` (Analyse panel tree, drag-to-place, brand-bar session line) |
 | [0027](0027-the-drawn-line-is-never-decimated.md) | Accepted | The drawn line is never decimated — the trace gets its own canvas layer, every sample at every zoom | `../rdm7-desktop/src/tauri-overlay.html` (Analyse + Corners maps) |
+| [0030](0030-channels-are-one-page.md) | Accepted | Channels are one page, and it works with the dash unplugged — five Setup cards become one menu; offline edits queue as API calls and replay on reconnect | `main/web/index.html`, `main/net/web_server_channels.c`, `main/ui/screens/first_run_wizard.*`, `main/ui/settings/device_settings.c`, `../rdm7-desktop/src/transport.js` |
 
 ## When to write a new ADR
 
@@ -81,7 +82,10 @@ Existing ADRs vary slightly from this skeleton — none rigorous. Match the surr
 
 ## Numbering
 
-Strictly sequential. The next ADR is `0028`. Don't reuse numbers, even if a draft is abandoned — leave a stub if needed (`0011-abandoned.md` with one line of explanation).
+Strictly sequential. The next ADR is `0031`. Don't reuse numbers, even if a draft is abandoned — leave a stub if needed (`0011-abandoned.md` with one line of explanation).
+
+`0029` is deliberately unclaimed: a draft of it exists outside this repo (the
+GPS "a recording plays as a session" work). Take `0031`, not `0029`.
 
 Numbers are sometimes claimed by code before the file is written — `ADR-0026`
 lived in `rdm7-desktop/src/tauri-overlay.html` for a day before
