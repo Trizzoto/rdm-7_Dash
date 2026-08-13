@@ -2010,6 +2010,32 @@
         .ch2-row.inactive { opacity: 0.40; }
         .ch2-row.inactive:hover { opacity: 0.95; }
 
+        /* Preview panel for a channel you haven't added yet. */
+        .ch2-add-preview { padding: 16px; }
+        .ch2-add-row {
+            font-size: 11px; font-weight: 600; letter-spacing: .04em;
+            text-transform: uppercase; color: var(--text-muted); margin-bottom: 12px;
+        }
+        .ch2-add-grid {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px;
+            margin-bottom: 14px;
+        }
+        .ch2-add-grid div { display: flex; flex-direction: column; gap: 2px; }
+        .ch2-add-grid b {
+            font-size: 10px; font-weight: 600; text-transform: uppercase;
+            letter-spacing: .04em; color: var(--text-muted);
+        }
+        .ch2-add-grid span { font-size: 13px; color: var(--text); }
+        .ch2-add-note {
+            font-size: 11px; line-height: 1.5; color: var(--text-muted);
+            padding: 9px 11px; border-radius: 5px; margin-bottom: 8px;
+            background: var(--bg); border: 1px solid var(--border);
+        }
+        .ch2-add-note.ok   { border-color: hsl(140,40%,32%); color: hsl(140,55%,68%); }
+        .ch2-add-note.warn { border-color: hsl(40,50%,35%);  color: hsl(40,80%,70%); }
+        .ch2-add-btn { width: 100%; margin-top: 6px; padding: 9px; font-size: 13px; }
+        .ch2-add-btn:disabled { opacity: .5; cursor: not-allowed; }
+
         /* Search reached past the current view — these are catalogue entries,
          * not channels this car has, so the heading says so plainly. */
         .ch2-spill-head {
@@ -17885,9 +17911,35 @@
                 let text;
                 try { text = await file.text(); JSON.parse(text); }
                 catch (e) { showToast('Not a valid channels.json file', 'error'); return; }
+                /* Take a copy of what is about to be destroyed, before asking.
+                 * "This cannot be undone" is only acceptable if there is a way
+                 * back, and the way back is a file the user didn't know to
+                 * make. Saving it first costs one download and turns an
+                 * irreversible action into a reversible one (ADR-0032). */
+                let rescued = false;
+                try {
+                    const cur = await fetch('/api/channels/export');
+                    if (cur.ok) {
+                        const blob = await cur.blob();
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        const serial = (window._deviceSerial || 'dash').replace(/[^A-Za-z0-9-]/g, '');
+                        a.href = url;
+                        a.download = `channels_${serial}_before-restore.json`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                        rescued = true;
+                    }
+                } catch (e) { /* offline or no current setup — say so below */ }
+
                 const ok = await confirmAsync('Restore Channel Setup',
                     'REPLACES this dash’s entire channel setup (CAN decode, thresholds, units) ' +
-                    'with the file’s contents, then reboots the dash. This cannot be undone.',
+                    'with the file’s contents, then reboots the dash.\n\n' +
+                    (rescued
+                        ? 'Your current setup has just been saved to your downloads as ' +
+                          '“channels_…_before-restore.json” — restore that file to get it back.'
+                        : 'WARNING: the current setup could NOT be saved first, so there is ' +
+                          'no way back from this.'),
                     'Restore');
                 if (!ok) return;
                 try {
@@ -21829,7 +21881,7 @@
                 const sOrder = Object.keys(sg).map(Number).sort((a, b) => a - b);
                 html += `<div class="ch2-spill-head">Not set up yet — `
                      +  `${spillover.length} match${spillover.length === 1 ? '' : 'es'} `
-                     +  `in the standard list. Click one to add it.</div>`
+                     +  `in the standard list. Click one to see what it is.</div>`
                      +  _renderGroups(sOrder, sg);
             }
             list.innerHTML = html;
@@ -21884,40 +21936,18 @@
         /* Click a channel row. If it's inactive (canonical only, not in
          * the user's channels.json yet), activate it AND try to auto-bind
          * a signal. Then render the detail panel. */
+        /* Selecting a row NEVER creates anything.
+         *
+         * This used to activate a canonical channel the instant you clicked
+         * its greyed row — "discovery and config in the same view". The
+         * trouble is that the result is permanent: channel_manager_delete
+         * refuses any non-custom id, so an accidental click consumes one of
+         * 128 slots for good and the only way back is restoring a backup.
+         * With ~100 catalogue rows a click away, a mis-click was a trap. The
+         * row now previews the channel and asks (ADR-0032). */
         async function _selectChannel(id) {
             if (!(await _chConfirmPendingEdits())) return; /* save failed — stay put */
             _chMathFormOpen = false;
-            const isActive = !!_chCache.find(c => c.id === id);
-            const canonical = _chCanonical.find(d => d.id === id);
-            if (!isActive && canonical) {
-                try {
-                    const r = await fetch('/api/channels/activate', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({id}),
-                    });
-                    if (!r.ok) {
-                        /* A full registry used to fail here in total silence —
-                         * the row just stayed grey. Surface the firmware's
-                         * reason (e.g. "Channel limit reached (128 max)"). */
-                        let msg = 'Could not activate channel';
-                        try { msg = (await r.text()).replace(/^.*"message":"([^"]*)".*$/, '$1') || msg; } catch (_) {}
-                        if (typeof updateStatus === 'function') updateStatus(msg, true);
-                    }
-                    await Promise.all([_fetchChannelsActive(), _fetchSignalValues()]);
-                    /* Auto-bind only on strict match. Suggestion-quality
-                     * matches stay visible in the picker for the user. */
-                    const match = _strictSignalMatch(id);
-                    if (match && _chCache.find(c => c.id === id)) {
-                        await fetch('/api/channels/update', {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({id, fields: {signal: match}}),
-                        });
-                        await _fetchChannelsActive();
-                    }
-                } catch(e) { console.warn('activate failed', e); }
-            }
             _chSelectedId = id;
             _refreshChannelsList();
             _renderChannelDetail();
@@ -22496,6 +22526,92 @@
             _renderChannelDetail();
         }
 
+        /* Preview for a catalogue channel that isn't set up yet. Says what it
+         * is, what it would be measured in, and that adding it is one-way —
+         * then makes adding a deliberate press rather than a side effect of
+         * looking (ADR-0032). */
+        function _renderAddPreview(def) {
+            const unit = def.units_display_default || def.units_native || '';
+            const range = (def.min_default != null && def.max_default != null)
+                ? `${def.min_default} – ${def.max_default}${unit ? ' ' + unit : ''}` : '—';
+            const group = _CH_GROUP_LABELS[def.group || 0] || 'Other';
+            const match = _strictSignalMatch(def.id);
+            const full = _chCache.length >= _chCapacity;
+            return `
+                <div class="ch2-detail-head">
+                    <div style="min-width:0;">
+                        <div class="ch2-detail-title">${_textEscape(def.label || def.id)}</div>
+                        <div class="ch2-detail-meta">${_textEscape(group)}${def.notes ? ' · ' + _textEscape(def.notes) : ''}</div>
+                    </div>
+                </div>
+                <div class="ch2-add-preview">
+                    <div class="ch2-add-row"><span>Not set up on this dash</span></div>
+                    <div class="ch2-add-grid">
+                        <div><b>Units</b><span>${_textEscape(unit || '—')}</span></div>
+                        <div><b>Typical range</b><span>${_textEscape(range)}</span></div>
+                        <div><b>Group</b><span>${_textEscape(group)}</span></div>
+                        <div><b>Slots used</b><span>${_chCache.length} of ${_chCapacity}</span></div>
+                    </div>
+                    ${match
+                        ? `<div class="ch2-add-note ok">A signal called <b>${_textEscape(match)}</b> is already arriving — it will be connected automatically.</div>`
+                        : `<div class="ch2-add-note">No matching signal is arriving yet. You can add the channel now and pick its source afterwards.</div>`}
+                    <div class="ch2-add-note warn">Adding is permanent: built-in channels can have their source cleared, but they can't be removed from the dash afterwards.</div>
+                    <button class="btn btn-primary ch2-add-btn" id="chAddBtn"
+                            ${full ? 'disabled' : ''}
+                            onclick="_chActivateSelected()">
+                        ${full ? `No slots left (${_chCapacity} used)` : 'Add this channel'}
+                    </button>
+                </div>`;
+        }
+
+        /* The deliberate act. Everything the old click-to-activate did, plus
+         * saying so afterwards. */
+        async function _chActivateSelected() {
+            const id = _chSelectedId;
+            const def = _chCanonical.find(d => d.id === id);
+            if (!id || !def || _chCache.find(c => c.id === id)) return;
+            const btn = document.getElementById('chAddBtn');
+            if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
+            try {
+                const r = await fetch('/api/channels/activate', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({id}),
+                });
+                if (!r.ok) {
+                    /* A full registry used to fail here in total silence —
+                     * the row just stayed grey. Surface the firmware's
+                     * reason (e.g. "Channel limit reached (128 max)"). */
+                    let msg = 'Could not add channel';
+                    try { msg = (await r.text()).replace(/^.*"message":"([^"]*)".*$/, '$1') || msg; } catch (_) {}
+                    showToast(msg, 'error');
+                    if (typeof updateStatus === 'function') updateStatus(msg, true);
+                    if (btn) { btn.disabled = false; btn.textContent = 'Add this channel'; }
+                    return;
+                }
+                await Promise.all([_fetchChannelsActive(), _fetchSignalValues()]);
+                /* Auto-bind only on strict match. Suggestion-quality
+                 * matches stay visible in the picker for the user. */
+                const match = _strictSignalMatch(id);
+                if (match && _chCache.find(c => c.id === id)) {
+                    await fetch('/api/channels/update', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({id, fields: {signal: match}}),
+                    });
+                    await _fetchChannelsActive();
+                }
+                showToast(`Added ${def.label || id}${match ? ' — connected to ' + match : ''}`, 'success');
+                _chStoreOfflineSnapshot();
+            } catch (e) {
+                showToast('Could not add channel: ' + (e.message || e), 'error');
+                if (btn) { btn.disabled = false; btn.textContent = 'Add this channel'; }
+                return;
+            }
+            _refreshChannelsList();
+            _renderChannelDetail();
+        }
+
         function _renderChannelDetail() {
             const wrap = document.getElementById('chDetail');
             if (!wrap) return;
@@ -22503,7 +22619,13 @@
             _chStopNewProbe();
             let c = _chCache.find(x => x.id === _chSelectedId);
             if (!c) {
-                wrap.innerHTML = `<div class="ch2-detail-empty">${_chCache.length ? 'Pick a channel from the list.' : ''}</div>`;
+                /* Not set up on this dash. If it's a catalogue entry, preview
+                 * what it is and offer to add it — explicitly, because adding
+                 * cannot be undone (ADR-0032). */
+                const def = _chCanonical.find(x => x.id === _chSelectedId);
+                wrap.innerHTML = def
+                    ? _renderAddPreview(def)
+                    : `<div class="ch2-detail-empty">${_chCache.length ? 'Pick a channel from the list.' : ''}</div>`;
                 _chUpdateDirtyBar();
                 return;
             }

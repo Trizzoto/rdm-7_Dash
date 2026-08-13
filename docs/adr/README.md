@@ -37,6 +37,7 @@ Read the relevant ADR before changing the area it covers. The "we already tried 
 | [0027](0027-the-drawn-line-is-never-decimated.md) | Accepted | The drawn line is never decimated — the trace gets its own canvas layer, every sample at every zoom | `../rdm7-desktop/src/tauri-overlay.html` (Analyse + Corners maps) |
 | [0030](0030-channels-are-one-page.md) | Accepted | Channels are one page, and it works with the dash unplugged — five Setup cards become one menu; offline edits queue as API calls and replay on reconnect | `main/web/index.html`, `main/net/web_server_channels.c`, `main/ui/screens/first_run_wizard.*`, `main/ui/settings/device_settings.c`, `../rdm7-desktop/src/transport.js` |
 | [0031](0031-channels-is-a-page.md) | Accepted | Channels is a page, and it leads with the car you have — third Studio mode, one DOM block moved between page and modal, configured channels first with search still reaching the catalogue | `main/web/index.html` |
+| [0032](0032-adding-a-channel-is-a-decision.md) | Accepted | Adding a channel is a decision, and destroying one leaves a copy behind — clicking a catalogue row previews instead of permanently activating; Restore exports the outgoing setup first | `main/web/index.html` |
 
 ## When to write a new ADR
 
@@ -83,7 +84,7 @@ Existing ADRs vary slightly from this skeleton — none rigorous. Match the surr
 
 ## Numbering
 
-Strictly sequential. The next ADR is `0032`. Don't reuse numbers, even if a draft is abandoned — leave a stub if needed (`0011-abandoned.md` with one line of explanation).
+Strictly sequential. The next ADR is `0033`. Don't reuse numbers, even if a draft is abandoned — leave a stub if needed (`0011-abandoned.md` with one line of explanation).
 
 `0029` is deliberately unclaimed: a draft of it exists outside this repo (the
 GPS "a recording plays as a session" work). Take `0031`, not `0029`.
