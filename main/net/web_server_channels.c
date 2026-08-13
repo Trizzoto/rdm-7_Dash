@@ -31,6 +31,7 @@
 #include "signal.h"
 #include "ui/settings/preset_picker.h"  /* preconfig_items[] master catalog */
 #include "ui/screens/first_run_wizard.h" /* shared bulk ECU->channels apply */
+#include "system/rdm_lv_async.h"        /* rdm_async_call — defer to LVGL task */
 #include "esp_log.h"
 #include "esp_http_server.h"
 #include "esp_system.h"
@@ -995,10 +996,14 @@ static esp_err_t channels_source_options_handler(httpd_req_t *req) {
 	if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
 		httpd_query_key_value(query, "id", channel_id, sizeof(channel_id));
 	}
-	if (!channel_id[0]) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing id");
-		return ESP_FAIL;
-	}
+	/* `id` is OPTIONAL. It is used for exactly one thing — looking up that
+	 * channel's bound signal so the matching row comes back is_current — and
+	 * the rest of the catalog (makes, versions, signals, live values) does not
+	 * depend on it. The bulk "Add channels > From a pre-defined ECU" picker
+	 * (ADR-0030) is not editing one channel, so it has no id to send; demanding
+	 * one made it 400 and the picker reported the dash as unreachable. With no
+	 * id, current_signal stays empty and no row is marked current, which is the
+	 * truthful answer for that caller. */
 
 	/* Read the active layout (for the ECU make/version highlight) BEFORE taking
 	 * the lock — it's LittleFS I/O with no live state, and this handler used to
@@ -1519,8 +1524,46 @@ static esp_err_t channels_import_handler(httpd_req_t *req) {
  * bulk apply since day one, alias table and all — this exposes that same code
  * rather than growing a second, drifting copy in JavaScript (ADR-0030).
  *
- * The 128-channel cap and every collision rule are enforced inside the shared
- * path, so a partial apply reports the count it actually managed. */
+ * Answers 202 + the matched count and runs the apply on the LVGL task; the
+ * caller refetches /api/channels for the real delta. The 128-channel cap and
+ * every collision rule are enforced inside the shared path, so fewer channels
+ * than were asked for is a normal outcome, not an error. */
+/* Longest preconfig label, rounded up — matches the preconfig_label buffer the
+ * bind-source handler uses for the same strings. */
+#define IMPORT_LABEL_MAX 40
+
+typedef struct {
+	char  make[32];
+	char  version[32];
+	char *labels;      /* n_labels * IMPORT_LABEL_MAX, flat; NULL = all */
+	int   n_labels;
+	bool  replace;
+} import_preset_job_t;
+
+/* Runs on the LVGL task via rdm_async_call — see the comment at the deferral
+ * point for why this cannot happen on the httpd worker. */
+static void _import_preset_worker(void *arg) {
+	import_preset_job_t *job = arg;
+	if (!job) return;
+
+	const char **ptrs = NULL;
+	if (job->n_labels > 0 && job->labels) {
+		ptrs = calloc((size_t)job->n_labels, sizeof(*ptrs));
+		if (ptrs) {
+			for (int i = 0; i < job->n_labels; i++)
+				ptrs[i] = job->labels + (size_t)i * IMPORT_LABEL_MAX;
+		}
+	}
+	int applied = first_run_wizard_apply_ecu(job->make, job->version,
+	                                         ptrs, ptrs ? job->n_labels : 0,
+	                                         job->replace);
+	ESP_LOGI(TAG, "import-preset %s/%s applied %d channel(s)",
+	         job->make, job->version, applied);
+	free(ptrs);
+	free(job->labels);
+	free(job);
+}
+
 static esp_err_t channels_import_preset_handler(httpd_req_t *req) {
 	char buf[2048];   /* a full Haltech tick-list of labels is the worst case */
 	if (recv_json_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
@@ -1568,32 +1611,82 @@ static esp_err_t channels_import_preset_handler(httpd_req_t *req) {
 		}
 	}
 
-	/* The apply rewrites the layout and channels.json — a long hold, but the
-	 * wizard takes exactly the same one on the LVGL task when it applies an
-	 * ECU. 6 s covers the largest preset (Haltech Nexus, 68 signals). */
-	if (!rdm_lvgl_lock(6000)) {
+	/* Count matching preconfig rows BEFORE scheduling anything. The apply is
+	 * unconditional work whether or not it matches — it opens and commits the
+	 * layout, re-resolves every channel and rebuilds the CAN acceptance filter
+	 * — so a request that matches nothing would still mutate state the caller
+	 * never asked to change. Counting first also lets a typo answer 404 in
+	 * milliseconds instead of 202-then-silence. Reading preconfig_items[] is a
+	 * const-table scan, so it needs no lock and can happen right here. */
+	int matches = 0;
+	for (int i = 0; i < preconfig_items_count; i++) {
+		const preconfig_item_t *it = &preconfig_items[i];
+		if (!it->ecu || !it->version || !it->label || !it->can_id) continue;
+		if (it->obd2_pid) continue;
+		if (strcmp(it->ecu, make) != 0) continue;
+		if (strcmp(it->version, version) != 0) continue;
+		if (labels) {
+			bool wanted = false;
+			for (int j = 0; j < n_labels && !wanted; j++)
+				if (labels[j] && strcmp(labels[j], it->label) == 0) wanted = true;
+			if (!wanted) continue;
+		}
+		matches++;
+	}
+	if (matches == 0) {
 		free(labels);
 		cJSON_Delete(root);
-		return web_server_send_busy(req);
-	}
-	int applied = first_run_wizard_apply_ecu(make, version, labels, n_labels,
-	                                         replace);
-	rdm_lvgl_unlock();
-
-	free(labels);
-	cJSON_Delete(root);
-
-	if (applied <= 0) {
 		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND,
 			"No signals matched that make/version");
 		return ESP_FAIL;
 	}
 
+	/* Run the apply ON THE LVGL TASK, not here.
+	 *
+	 * The first cut took rdm_lvgl_lock() and called it inline on the httpd
+	 * worker. On the bench that hung until the client gave up — 19 s, no
+	 * response, nothing applied, dash otherwise healthy. The apply ends in
+	 * can_set_promiscuous_mode(), which reconfigures the TWAI driver, and
+	 * doing that while holding the LVGL mutex inverts lock order against the
+	 * CAN RX task (which needs that same mutex to drain its queue). The wizard
+	 * has always called this from the LVGL task, where the recursive mutex
+	 * makes it a non-issue. CLAUDE.md says it plainly: use lv_async_call from
+	 * the web server. rdm_async_call is its thread-safe form.
+	 *
+	 * So this answers 202 with the matched count and defers the work. The
+	 * caller refetches /api/channels and reports the real delta, which is the
+	 * number the user actually cares about and cannot be wrong. */
+	import_preset_job_t *job = calloc(1, sizeof(*job));
+	if (job && n_labels > 0) {
+		job->labels = calloc((size_t)n_labels, IMPORT_LABEL_MAX);
+		if (!job->labels) { free(job); job = NULL; }
+	}
+	if (!job) {
+		free(labels);
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+		return ESP_FAIL;
+	}
+	strncpy(job->make,    make,    sizeof(job->make) - 1);
+	strncpy(job->version, version, sizeof(job->version) - 1);
+	job->replace  = replace;
+	job->n_labels = n_labels;
+	for (int i = 0; i < n_labels; i++) {
+		strncpy(job->labels + (size_t)i * IMPORT_LABEL_MAX, labels[i],
+		        IMPORT_LABEL_MAX - 1);
+	}
+
+	free(labels);
+	cJSON_Delete(root);
+
+	rdm_async_call(_import_preset_worker, job);
+
 	cJSON *resp = cJSON_CreateObject();
-	cJSON_AddStringToObject(resp, "status", "ok");
-	cJSON_AddNumberToObject(resp, "applied", applied);
+	cJSON_AddStringToObject(resp, "status", "started");
+	cJSON_AddNumberToObject(resp, "matched", matches);
 	cJSON_AddStringToObject(resp, "make", make);
 	cJSON_AddStringToObject(resp, "version", version);
+	httpd_resp_set_status(req, "202 Accepted");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 	return web_server_send_json(req, resp);
 }

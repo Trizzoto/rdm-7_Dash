@@ -62,7 +62,8 @@ definition is a different job from setting this car up, and it was the least
 used of the five while sitting in the most prominent place. `openPresetAuthorModal`
 is untouched and still reachable from the source picker.
 
-**Bulk ECU import is a firmware endpoint, not JavaScript.** "From a pre-defined
+**Bulk ECU import is a firmware endpoint, deferred to the LVGL task, not
+JavaScript.** "From a pre-defined
 ECU" needed something Studio never had: turning a whole preset into channels.
 The one-at-a-time source picker could only bind a preset signal to a channel
 that already existed, so setting up a car meant hand-creating every channel
@@ -78,6 +79,12 @@ the car's, so clear prior vehicle bindings and record it as the active ECU.
 Studio's menu passes `false`: a menu item that says "Add" must not wipe
 someone's other bindings, and importing a few Haltech signals must not relabel
 a MaxxECU car.
+
+It answers **202 with the matched count** and does the work on the LVGL task
+via `rdm_async_call`, rather than 200 with an applied count. That is not a
+style choice — see "Then flashed to the bench dash" below. The client waits for
+the channel count to settle and reports the real delta, which is both the
+number the user cares about and the one that cannot be wrong.
 
 **Live values and recording are one page.** The "Signal Dashboard" modal was a
 read-only twin of a table the Data Logger had no reason not to show. Merged:
@@ -143,7 +150,14 @@ both that and a mid-session reconnect.
 ## Consequences
 
 - "Vehicle & channels" is one card. Setup has six fewer cards overall.
-- A new endpoint: 139 of 160 `max_uri_handlers` used.
+- A new endpoint: the dash reports **147 of 160** `max_uri_handlers` used, 0
+  failures (`uri_registration` in `GET /api/selftest`, read off the hardware —
+  CLAUDE.md's "~138" was stale). 13 spare.
+- `GET /api/channels/source-options` now takes `?id=` as **optional**. It was
+  mandatory, and used for one thing: marking the row matching that channel's
+  bound signal `is_current`. The bulk picker is not editing one channel, so it
+  has no id to send and got a 400 — which the modal, correctly but unhelpfully,
+  reported as "this needs the dash connected".
 - `_apply_ecu_preconfigs` is a two-line wrapper over the exported function, so
   the wizard's behaviour is unchanged by construction.
 - The `openSignalDashboard()` / `closeSignalDashboard()` names survive as
@@ -190,3 +204,47 @@ asserting rendered effects rather than just successful posts:
 One bug caught this way that review would not have: the ECU import modal's id
 was `chEcuImportModal` in the markup and `chEcuImpModal` in the JavaScript. It
 threw on open.
+
+### Then flashed to the bench dash (RDM-DCB4-D926), which found two more
+
+The browser work above ran against the dev server's mocks. Real hardware
+disagreed with them twice, both in ways the mock had papered over:
+
+- **`source-options` required `?id=`.** The mock did not. On the dash the bulk
+  picker's id-less call 400'd, and the modal reported the dash as unreachable —
+  a correct message for the wrong reason. `id` is now optional, because it was
+  only ever used to mark one row `is_current` and the bulk picker has no
+  current channel.
+- **A zero-match import hung for the full client timeout.** `import-preset`
+  called the apply unconditionally, and the apply is unconditional work: it
+  opens and commits the layout, re-resolves every channel and rebuilds the CAN
+  acceptance filter. So a request matching nothing mutated state the caller
+  never asked to change. Matching rows are now counted first, from the const
+  preconfig table with no lock, and zero returns 404 having touched nothing —
+  35 ms instead of a timeout.
+- **…and then a matching import hung too**, which is what the first fix
+  revealed rather than caused. Two real MaxxECU signals: 19 s, no response,
+  nothing applied, dash otherwise answering `/api/selftest` fine. The apply
+  ends in `can_set_promiscuous_mode()`, which reconfigures the TWAI driver;
+  doing that from the httpd worker **while holding the LVGL mutex** inverts
+  lock order against the CAN RX task, which needs that same mutex to drain its
+  queue. The wizard never hit this because it has always run on the LVGL task,
+  where the recursive mutex makes it a non-issue.
+
+  CLAUDE.md states the rule outright — *"Use `lv_async_call()` from any other
+  context (web server, etc.)"* — and this ignored it. The endpoint now
+  validates, counts, copies its arguments, answers 202, and defers via
+  `rdm_async_call`. **A handler that takes the LVGL lock and calls into driver
+  reconfiguration is a deadlock waiting for the right request**; the lock is
+  for short, bounded state reads, not for whole subsystem operations.
+
+Also corrected off the hardware: `RDM-7` is excluded from the ECU picker, but
+not for the reason first written. It is a *real* preset set (12 rows), not a
+synthesised bucket like OBD2 and Custom — it is the dash's own GPIO and
+internal signals (fuel sender, indicators, calculated gear, FPS), all with
+`can_id` 0 because they never come off the bus. Importing them as CAN channels
+would decode nothing.
+
+The dash lists 7 real ECU makes for the picker — Ford, Haltech, MaxxECU, ECU
+Master, MegaSquirt, Link ECU, Toyota — with MaxxECU the largest at 146 signals
+across 2 versions.

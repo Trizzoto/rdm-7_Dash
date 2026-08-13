@@ -22573,9 +22573,17 @@
         let _ecuImpSel   = { make: null, version: null };
         let _ecuImpTicks = new Set();   /* preconfig labels, not signal names */
 
-        /* Buckets that source-options synthesises rather than reading from
-         * the ECU preset catalog. They carry no importable CAN decode. */
-        const _ECU_IMP_VIRTUAL = ['OBD2', 'RDM-7', 'Custom'];
+        /* Makes that source-options returns but this picker must not offer,
+         * for two different reasons — checked against a real dash:
+         *   OBD2, Custom — synthesised by the endpoint, not preset rows. There
+         *     is nothing for import-preset to match, and both have their own
+         *     surfaces (the OBD2 setup card, "Custom channel…").
+         *   RDM-7 — a REAL preset set (12 rows), but not an ECU: it is the
+         *     dash's own GPIO and internal signals (fuel sender, indicators,
+         *     calculated gear, FPS), all with can_id 0 because they never come
+         *     off the bus. Importing them here would mint CAN channels that
+         *     decode nothing; they are configured from Wire inputs instead. */
+        const _ECU_IMP_NOT_AN_ECU = ['OBD2', 'RDM-7', 'Custom'];
 
         async function openEcuChannelImport() {
             _ecuImpCache = null;
@@ -22596,7 +22604,7 @@
                 const data = await r.json();
                 _ecuImpCache = {
                     makes: (data.makes || []).filter(m =>
-                        !_ECU_IMP_VIRTUAL.includes(m.make) &&
+                        !_ECU_IMP_NOT_AN_ECU.includes(m.make) &&
                         (m.versions || []).some(v => (v.signals || [])
                             .some(s => s.kind === 'ecu'))),
                 };
@@ -22762,15 +22770,31 @@
                 });
                 if (!r.ok) throw new Error((await r.text().catch(() => '')) || 'HTTP ' + r.status);
                 const d = await r.json();
-                /* Report what the dash actually did, not what was asked for —
-                 * the 128-channel cap and collision guards can apply fewer. */
-                const msg = d.applied === labels.length
-                    ? `Added ${d.applied} channel${d.applied === 1 ? '' : 's'} from ${d.make} ${d.version}`
-                    : `Added ${d.applied} of ${labels.length} — the rest were already set up or hit the channel limit`;
-                showToast(msg, d.applied === labels.length ? 'success' : 'warn');
-                updateStatus(msg, d.applied !== labels.length);
+                /* 202: the dash runs the apply on its LVGL task and answers
+                 * straight away, because doing it inline hung the request
+                 * (see the endpoint's comment). Wait for the channel count to
+                 * settle, then report the REAL delta — the 128-channel cap and
+                 * the collision guards can apply fewer than were asked for,
+                 * and the honest number is the one the dash ends up with. */
+                const before = _chCache.length;
+                btn.textContent = 'Adding…';
+                let now = before;
+                for (let i = 0; i < 20; i++) {           /* ~10 s ceiling */
+                    await new Promise(r2 => setTimeout(r2, 500));
+                    await _fetchChannelsActive();
+                    if (_chCache.length !== now) { now = _chCache.length; }
+                    else if (now > before) break;        /* grew, then settled */
+                }
+                const added = now - before;
+                const asked = labels.length;
+                const msg = added === asked
+                    ? `Added ${added} channel${added === 1 ? '' : 's'} from ${d.make} ${d.version}`
+                    : added > 0
+                        ? `Added ${added} of ${asked} — the rest were already set up or hit the channel limit`
+                        : `Nothing added — those ${asked === 1 ? 'channels are' : 'are'} already set up, or the registry is full`;
+                showToast(msg, added === asked ? 'success' : 'warn');
+                updateStatus(msg, added !== asked);
                 closeEcuChannelImport();
-                await _fetchChannelsActive();
                 _refreshChannelsList();
                 _chStoreOfflineSnapshot();
             } catch (e) {
