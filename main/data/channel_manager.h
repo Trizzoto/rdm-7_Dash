@@ -206,8 +206,16 @@ channel_t *channel_manager_create_custom(
 	const char *units_native, const char *units_display, uint8_t decimals,
 	float min, float max);
 
-/** Remove a channel by id. Returns false if not found or builtin-locked. */
+/** Remove a channel by id. Returns false if not found or builtin-locked
+ *  (custom-only — the accidental-caller-safe form). */
 bool channel_manager_delete(const char *id);
+
+/** Remove ANY active record, canonical included — the deliberate form
+ *  (ADR-0034). A removed canonical channel returns to catalogue state:
+ *  its definition is const flash data and immortal, so it can always be
+ *  added again; its record (source binding, thresholds, unit choices)
+ *  is gone. Callers own the confirm UX. */
+bool channel_manager_remove(const char *id);
 
 /* ── Field mutation (drives listener notifications + dirty flag) ──── */
 

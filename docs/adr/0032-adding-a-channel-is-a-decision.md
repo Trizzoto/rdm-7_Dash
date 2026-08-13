@@ -1,7 +1,9 @@
 # ADR-0032: Adding a channel is a decision, and destroying one leaves a copy behind
 
 Date: 2026-08-13
-Status: Accepted
+Status: Accepted (superseded in part by 0034 — canonical channels are now
+removable, so "adding is permanent" no longer holds; the prevention rule
+here stands)
 Repos: RDM-7_Dash (`main/web/index.html`)
 Follows ADR-0031, which made Channels a page. This makes it safe to use badly.
 

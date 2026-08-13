@@ -128,6 +128,13 @@ static lv_timer_t *s_channels_refresh_timer = NULL;
 #define WIZ_CH_MAX_ROWS 144
 static lv_obj_t  *s_channels_rows[WIZ_CH_MAX_ROWS]       = {NULL};
 static lv_obj_t  *s_channels_value_lbls[WIZ_CH_MAX_ROWS] = {NULL};
+/* Wizard-OWNED copies of every row's channel id. Rows used to point at
+ * channel_t::id — memory that dies with the record. That held while
+ * records were immortal; channel removal (ADR-0034) ends that, and a
+ * freed record would have left every one of its row references dangling
+ * (the rpm-bar stale-globals bug class). 144 × 32 B of .bss buys ids
+ * that outlive any record. */
+static char       s_channels_id_pool[WIZ_CH_MAX_ROWS][32];
 /* id pointer — canonical_def.id or channel_t.id. NULL means slot
  * vacant. Replaces the old s_channels_refs[] (channel_t pointer) so
  * ghost rows have something to bind their click handler to before
@@ -2013,30 +2020,68 @@ static void _row_clicked_cb(lv_event_t *e) {
     const char *id = (const char *)lv_event_get_user_data(e);
     if (!id || !id[0]) return;
 
-    /* Ghost row — activate the canonical channel, run a canonical
-     * sweep so any signal already in the registry matching this id
-     * auto-binds, then refresh the row so the active styling kicks in. */
-    channel_t *c = channel_manager_get(id);
-    if (!c && canonical_channel_exists(id)) {
-        c = channel_manager_activate(id);
-        if (c) {
-            channel_manager_resolve_signals();
-            _wiz_canonical_bind_channel(c);
-            s_channels_changed = true;
-            /* Re-style the activated row so accent strip + value column
-             * flip to the bound look immediately. */
-            for (uint16_t i = 0; i < s_channels_count; i++) {
-                if (s_channels_ids[i] &&
-                    strcmp(s_channels_ids[i], id) == 0) {
-                    _rebuild_channel_row(i);
-                    break;
-                }
-            }
-            _refresh_hero_stats();
-        }
-    }
+    /* Tapping NEVER creates. This used to activate a ghost row on the
+     * spot — the exact trap ADR-0032 closed in the web editor, and worse
+     * here because a scroll flick on glass lands as taps. The tap now
+     * only selects; the detail pane renders a preview for ghost rows
+     * with an explicit "Add this channel" button (ADR-0034 brings the
+     * two editors to the same rule). */
     _select_channel_by_id(id);
     _channels_refresh_cb(NULL);
+}
+
+/* "Add this channel" in the ghost preview — the deliberate act. Runs the
+ * activation + canonical auto-bind that the row tap used to fire. */
+static void _ghost_add_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    const char *id = s_selected_ch_id;
+    if (!id[0] || channel_manager_get(id)) return;
+    if (!canonical_channel_exists(id)) return;
+    channel_t *c = channel_manager_activate(id);
+    if (!c) return;   /* registry full — hero stats stay honest */
+    channel_manager_resolve_signals();
+    _wiz_canonical_bind_channel(c);
+    s_channels_changed = true;
+    for (uint16_t i = 0; i < s_channels_count; i++) {
+        if (s_channels_ids[i] && strcmp(s_channels_ids[i], id) == 0) {
+            _rebuild_channel_row(i);
+            break;
+        }
+    }
+    _refresh_hero_stats();
+    _render_detail_pane();     /* ghost preview → full editor */
+    _channels_refresh_cb(NULL);
+}
+
+/* "Remove from this dash" — two taps, no timer. The first arms; the
+ * second (same pane render, same channel) executes. Any pane rebuild
+ * disarms, so selecting elsewhere or editing a field resets it. */
+static bool s_remove_armed = false;
+
+static void _remove_channel_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    if (!s_selected_ch_id[0]) return;
+    if (!s_remove_armed) {
+        s_remove_armed = true;
+        lv_obj_t *btn = lv_event_get_target(e);
+        lv_obj_t *lbl = lv_obj_get_child(btn, 0);
+        if (lbl) lv_label_set_text(lbl, "Tap again to remove");
+        lv_obj_set_style_bg_color(btn, THEME_COLOR_BTN_DANGER, 0);
+        return;
+    }
+    char removed_id[32];
+    strncpy(removed_id, s_selected_ch_id, sizeof(removed_id) - 1);
+    removed_id[sizeof(removed_id) - 1] = '\0';
+    if (!channel_manager_remove(removed_id)) return;
+    s_channels_changed = true;
+    s_selected_ch_id[0] = '\0';
+    ESP_LOGI(TAG, "Removed channel '%s' (returns to catalogue if canonical)",
+             removed_id);
+    /* Full list rebuild: a canonical id keeps its (now ghost) row; a
+     * custom id's row disappears. Both fall out of re-population. */
+    _populate_channels_list();
+    _refresh_hero_stats();
+    _render_detail_pane();
 }
 
 /* Canonical sweep for ONE channel — used by the activate-on-tap path
@@ -2689,8 +2734,84 @@ static void _render_detail_pane(void) {
         lv_obj_center(empty);
         return;
     }
+    s_remove_armed = false;   /* any re-render disarms the remove confirm */
     channel_t *c = channel_manager_get(s_selected_ch_id);
-    if (!c) return;
+    if (!c) {
+        /* Ghost — a catalogue channel this dash hasn't set up. Preview what
+         * it is and make adding an explicit act (ADR-0032/0034 parity with
+         * the web editor). The pane used to just bail here, which is why
+         * the row tap HAD to activate; now the preview carries the button. */
+        const canonical_channel_def_t *def =
+            canonical_channel_find(s_selected_ch_id);
+        if (!def) return;
+
+        lv_obj_t *lbl = lv_label_create(s_detail_pane);
+        lv_label_set_text(lbl, def->label);
+        lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
+        lv_obj_set_width(lbl, CH_DETAIL_W - 20);
+        lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 0, 0);
+        lv_obj_set_style_text_font(lbl, THEME_FONT_MEDIUM, 0);
+        lv_obj_set_style_text_color(lbl, THEME_COLOR_TEXT_PRIMARY, 0);
+
+        lv_obj_t *sub = lv_label_create(s_detail_pane);
+        lv_label_set_text(sub, "Not set up on this dash");
+        lv_obj_align(sub, LV_ALIGN_TOP_LEFT, 0, 26);
+        lv_obj_set_style_text_font(sub, THEME_FONT_TINY, 0);
+        lv_obj_set_style_text_color(sub, THEME_COLOR_TEXT_MUTED, 0);
+
+        lv_coord_t gy = 52;
+        char line[96];
+        snprintf(line, sizeof(line), "Units: %s",
+                 def->units_display_def[0] ? def->units_display_def : "-");
+        lv_obj_t *l1 = lv_label_create(s_detail_pane);
+        lv_label_set_text(l1, line);
+        lv_obj_align(l1, LV_ALIGN_TOP_LEFT, 0, gy);
+        lv_obj_set_style_text_font(l1, THEME_FONT_SMALL, 0);
+        lv_obj_set_style_text_color(l1, THEME_COLOR_TEXT_PRIMARY, 0);
+        gy += 22;
+        snprintf(line, sizeof(line), "Typical range: %g to %g",
+                 (double)def->min_default, (double)def->max_default);
+        lv_obj_t *l2 = lv_label_create(s_detail_pane);
+        lv_label_set_text(l2, line);
+        lv_obj_align(l2, LV_ALIGN_TOP_LEFT, 0, gy);
+        lv_obj_set_style_text_font(l2, THEME_FONT_SMALL, 0);
+        lv_obj_set_style_text_color(l2, THEME_COLOR_TEXT_PRIMARY, 0);
+        gy += 22;
+        snprintf(line, sizeof(line), "Group: %s",
+                 channel_group_name(def->group));
+        lv_obj_t *l3 = lv_label_create(s_detail_pane);
+        lv_label_set_text(l3, line);
+        lv_obj_align(l3, LV_ALIGN_TOP_LEFT, 0, gy);
+        lv_obj_set_style_text_font(l3, THEME_FONT_SMALL, 0);
+        lv_obj_set_style_text_color(l3, THEME_COLOR_TEXT_PRIMARY, 0);
+        gy += 26;
+
+        if (def->notes) {
+            lv_obj_t *n = lv_label_create(s_detail_pane);
+            lv_label_set_text(n, def->notes);
+            lv_label_set_long_mode(n, LV_LABEL_LONG_WRAP);
+            lv_obj_set_width(n, CH_DETAIL_W - 20);
+            lv_obj_align(n, LV_ALIGN_TOP_LEFT, 0, gy);
+            lv_obj_set_style_text_font(n, THEME_FONT_TINY, 0);
+            lv_obj_set_style_text_color(n, THEME_COLOR_TEXT_MUTED, 0);
+            lv_obj_update_layout(n);
+            gy += lv_obj_get_height(n) + 10;
+        }
+
+        lv_obj_t *add = lv_btn_create(s_detail_pane);
+        lv_obj_set_size(add, CH_DETAIL_W - 20, 36);
+        lv_obj_align(add, LV_ALIGN_TOP_LEFT, 0, gy);
+        lv_obj_set_style_bg_color(add, THEME_COLOR_ACCENT_BLUE, 0);
+        lv_obj_set_style_radius(add, 6, 0);
+        lv_obj_set_style_shadow_width(add, 0, 0);
+        lv_obj_t *al = lv_label_create(add);
+        lv_label_set_text(al, LV_SYMBOL_PLUS "  Add this channel");
+        lv_obj_center(al);
+        lv_obj_set_style_text_font(al, THEME_FONT_SMALL, 0);
+        lv_obj_set_style_text_color(al, THEME_COLOR_TEXT_ON_ACCENT, 0);
+        lv_obj_add_event_cb(add, _ghost_add_cb, LV_EVENT_CLICKED, NULL);
+        return;
+    }
 
     /* ── Hero (label + giant live value) ─────────────────────────────── */
     lv_obj_t *lbl = lv_label_create(s_detail_pane);
@@ -2919,6 +3040,30 @@ static void _render_detail_pane(void) {
         y += 38;
     }
 
+    /* ── Remove ──────────────────────────────────────────────────────────
+     * Any active channel can leave this dash (ADR-0034): custom is gone
+     * for good, canonical returns to the catalogue and can be re-added.
+     * Two taps — the first arms and re-labels, any pane re-render
+     * disarms. Quiet styling: this is a footer action, not a feature. */
+    lv_obj_t *rm = lv_btn_create(s_detail_pane);
+    lv_obj_set_size(rm, CH_DETAIL_W - 20, 30);
+    lv_obj_align(rm, LV_ALIGN_TOP_LEFT, 0, y);
+    lv_obj_set_style_bg_color(rm, THEME_COLOR_BTN_DANGER_BG, 0);
+    lv_obj_set_style_border_color(rm, THEME_COLOR_BTN_DANGER, 0);
+    lv_obj_set_style_border_width(rm, 1, 0);
+    lv_obj_set_style_border_opa(rm, LV_OPA_60, 0);
+    lv_obj_set_style_radius(rm, 4, 0);
+    lv_obj_set_style_shadow_width(rm, 0, 0);
+    lv_obj_t *rml = lv_label_create(rm);
+    lv_label_set_text(rml, c->is_canonical
+        ? "Remove from this dash (returns to list)"
+        : "Remove from this dash");
+    lv_obj_center(rml);
+    lv_obj_set_style_text_font(rml, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(rml, THEME_COLOR_STATUS_ERROR, 0);
+    lv_obj_add_event_cb(rm, _remove_channel_cb, LV_EVENT_CLICKED, NULL);
+    y += 38;
+
     /* Bottom spacer so the scrollable extent passes the last row by a
      * comfortable margin (otherwise the auto-scrollbar shows over the
      * last button and the LVGL scroll snap clips it). */
@@ -2987,12 +3132,16 @@ static void _select_channel_by_id(const char *id) {
     _channels_refresh_cb(NULL);
 }
 
-/* Append one row to s_channels_list_box. `id` must be a stable pointer
- * (canonical_def.id from flash, or channel.id from a live channel — the
- * channel struct's id field stays valid for the channel's lifetime).
- * `label` may be temporary; LVGL copies it. */
+/* Append one row to s_channels_list_box. `id` is COPIED into the
+ * wizard-owned pool — never held as a pointer into a channel record,
+ * whose lifetime now ends at removal (ADR-0034). `label` may be
+ * temporary; LVGL copies it. */
 static void _append_channel_row(const char *id, const char *label) {
     if (s_channels_count >= WIZ_CH_MAX_ROWS) return;
+    strncpy(s_channels_id_pool[s_channels_count], id,
+            sizeof(s_channels_id_pool[0]) - 1);
+    s_channels_id_pool[s_channels_count][sizeof(s_channels_id_pool[0]) - 1] = '\0';
+    id = s_channels_id_pool[s_channels_count];
 
     lv_obj_t *row = lv_obj_create(s_channels_list_box);
     const channel_t *c = channel_manager_get(id);

@@ -424,6 +424,20 @@ bool channel_manager_delete(const char *id) {
 	 * guard used to live only in the HTTP handler, which left any new
 	 * firmware caller able to delete canonical channels. */
 	if (!id || !channel_id_is_custom(id)) return false;
+	return channel_manager_remove(id);
+}
+
+/* Remove ANY active record — the deliberate form (ADR-0034). For a
+ * canonical channel this is well-defined and safe: the DEFINITION is
+ * const data in flash and immortal; removing the record simply returns
+ * the channel to the same "in the catalogue, not set up" state that most
+ * canonical channels live in from the factory. Widgets bound to the id
+ * keep their binding and wait, exactly as they do for a channel that was
+ * never added. channel_manager_delete() above keeps its custom-only
+ * contract so no EXISTING caller's behaviour widens by accident —
+ * reaching removal requires naming this function. */
+bool channel_manager_remove(const char *id) {
+	if (!id || !id[0]) return false;
 	for (size_t i = 0; i < s_count; ++i) {
 		if (strcmp(s_channels[i]->id, id) == 0) {
 			channel_free(s_channels[i]);

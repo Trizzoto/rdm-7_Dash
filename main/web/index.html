@@ -4829,7 +4829,7 @@
                             <button class="ch2-filter-btn active" data-f="all" onclick="_setChFilter('all')">All</button>
                             <button class="ch2-filter-btn" data-f="configured" onclick="_setChFilter('configured')">Configured</button>
                             <button class="ch2-filter-btn" data-f="unconfigured" onclick="_setChFilter('unconfigured')">Available</button>
-                            <button class="ch2-filter-btn" id="chSelectModeBtn" onclick="_chToggleSelectMode()" title="Tick several custom channels and delete them in one go">Select</button>
+                            <button class="ch2-filter-btn" id="chSelectModeBtn" onclick="_chToggleSelectMode()" title="Tick several channels and remove them in one go — built-ins return to the standard list, custom ones are deleted">Select</button>
                         </div>
                     </div>
                     <!-- Column headings, page mount only. They label the cells
@@ -22039,9 +22039,11 @@
                          * Unbound rows still get "— rpm" so the user sees
                          * what kind of channel this is at a glance. */
                         const valHtml = `${_chFmtPlain(c, c.current_value, c.is_stale)}<span class="unit">${unit}</span>`;
-                        /* Bulk-select mode: only custom channels are deletable,
-                         * so only they get a checkbox; canonical rows dim out. */
-                        const deletable = c.is_active && !c.is_canonical;
+                        /* Bulk-select mode: any ACTIVE channel is removable
+                         * (ADR-0034) — canonical returns to the catalogue,
+                         * custom is deleted. Ghost rows have no record to
+                         * remove, so they dim out. */
+                        const deletable = c.is_active;
                         const check = (_chSelectMode && deletable)
                             ? `<input type="checkbox" ${_chSelected.has(c.id) ? 'checked' : ''} style="margin-right:8px; pointer-events:none;">`
                             : '';
@@ -22136,12 +22138,12 @@
         /* Selecting a row NEVER creates anything.
          *
          * This used to activate a canonical channel the instant you clicked
-         * its greyed row — "discovery and config in the same view". The
-         * trouble is that the result is permanent: channel_manager_delete
-         * refuses any non-custom id, so an accidental click consumes one of
-         * 128 slots for good and the only way back is restoring a backup.
-         * With ~100 catalogue rows a click away, a mis-click was a trap. The
-         * row now previews the channel and asks (ADR-0032). */
+         * its greyed row — "discovery and config in the same view" — and at
+         * the time the result was PERMANENT, so a mis-click among ~100
+         * catalogue rows was a trap (ADR-0032). ADR-0034 later made removal
+         * possible (canonical returns to the catalogue), which softens the
+         * stakes but not the rule: browsing must not mutate, so the row
+         * still previews and Add stays a deliberate press. */
         async function _selectChannel(id) {
             if (!(await _chConfirmPendingEdits())) return; /* save failed — stay put */
             _chMathFormOpen = false;
@@ -22203,15 +22205,22 @@
         async function _chBulkDelete() {
             const ids = Array.from(_chSelected);
             if (!ids.length) return;
+            /* Say the two fates apart in one confirm (ADR-0034): canonical
+             * ids return to the standard list, custom ids are gone for good. */
+            const nCanon = ids.filter(id => _chCanonical.some(d => d.id === id)).length;
+            const nCustom = ids.length - nCanon;
+            const parts = [];
+            if (nCanon)  parts.push(`${nCanon} built-in channel${nCanon === 1 ? '' : 's'} return${nCanon === 1 ? 's' : ''} to the standard list (re-addable)`);
+            if (nCustom) parts.push(`${nCustom} custom channel${nCustom === 1 ? '' : 's'} ${nCustom === 1 ? 'is' : 'are'} deleted for good`);
             const ok = await confirmAsync(
-                `Delete ${ids.length} Channel${ids.length === 1 ? '' : 's'}`,
-                'Deletes the selected custom channels (their CAN decode included). Widgets bound to them will show "—". This cannot be undone.',
-                'Delete');
+                `Remove ${ids.length} Channel${ids.length === 1 ? '' : 's'}`,
+                parts.join('; ') + '. Widgets bound to them will wait / show "—".',
+                'Remove');
             if (!ok) return;
             try {
                 const r = await fetch('/api/channels/delete', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ids}),
+                    body: JSON.stringify({ids, allow_canonical: true}),
                 });
                 if (r.ok) {
                     const res = await r.json();
@@ -22245,9 +22254,13 @@
                     let done = 0, failed = 0, lastErr = '';
                     for (const id of ids) {
                         try {
+                            /* allow_canonical rides along; a pre-ADR-0034
+                             * firmware ignores unknown keys and still 403s
+                             * canonical ids, which lands in `failed` with the
+                             * firmware's own words — honest on old builds. */
                             const one = await fetch('/api/channels/delete', {
                                 method: 'POST', headers: {'Content-Type': 'application/json'},
-                                body: JSON.stringify({id}),
+                                body: JSON.stringify({id, allow_canonical: true}),
                             });
                             if (one.ok) done++;
                             else { failed++; lastErr = (await one.text().catch(() => '')) || `HTTP ${one.status}`; }
@@ -22752,7 +22765,7 @@
                     ${match
                         ? `<div class="ch2-add-note ok">A signal called <b>${_textEscape(match)}</b> is already arriving — it will be connected automatically.</div>`
                         : `<div class="ch2-add-note">No matching signal is arriving yet. You can add the channel now and pick its source afterwards.</div>`}
-                    <div class="ch2-add-note warn">Adding is permanent: built-in channels can have their source cleared, but they can't be removed from the dash afterwards.</div>
+                    <div class="ch2-add-note">Adding uses one of the ${_chCapacity} slots. You can remove it again from its editor — removing returns it to this list.</div>
                     <button class="btn btn-primary ch2-add-btn" id="chAddBtn"
                             ${full ? 'disabled' : ''}
                             onclick="_chActivateSelected()">
@@ -22858,7 +22871,7 @@
                 <div class="ch2-detail-footer">
                     <button class="ch2-link-btn" onclick="_chDuplicate('${_escJs(c.id)}')" title="Start a new channel pre-filled from this one">Duplicate</button>
                     ${def && c.is_canonical ? `<button class="ch2-link-btn" onclick="_chResetDefaults('${c.id}')">Reset to defaults</button>` : ''}
-                    ${!c.is_canonical ? `<button class="ch2-link-btn danger" onclick="_chDelete('${c.id}')">Delete</button>` : ''}
+                    <button class="ch2-link-btn danger" onclick="_chDelete('${_escJs(c.id)}')" title="${c.is_canonical ? 'Remove from this dash — returns to the standard list, can be added again' : 'Delete this custom channel for good'}">${c.is_canonical ? 'Remove from this dash…' : 'Delete…'}</button>
                 </div>
             `;
             _patchSigPickerLive();
@@ -24507,7 +24520,19 @@
         }
 
         async function _chDelete(id) {
-            if (!(await confirmAsync('Delete Custom Channel', 'Delete this custom channel? Widgets bound to it will show "—".', 'Delete'))) return;
+            /* One remove for both kinds, with the difference said plainly:
+             * custom is gone for good; canonical returns to the standard
+             * list and can be added again (ADR-0034 — this is what makes
+             * ADR-0032's "adding is permanent" warning obsolete). */
+            const isCanonical = !!_chCanonical.find(d => d.id === id);
+            const label = (_chCache.find(c => c.id === id) || {}).label || id;
+            const ok = await confirmAsync(
+                isCanonical ? 'Remove Channel' : 'Delete Custom Channel',
+                isCanonical
+                    ? `Remove “${label}” from this dash? Its source, thresholds and unit choices are discarded, and it returns to the standard list — you can add it again any time. Widgets bound to it will wait for it.`
+                    : `Delete “${label}”? Custom channels are gone for good. Widgets bound to it will show “—”.`,
+                isCanonical ? 'Remove' : 'Delete');
+            if (!ok) return;
             /* Read the reply. This used to be a bare await with the response
              * dropped, so a 403 (canonical), a 503 (LVGL lock busy) or an
              * offline no-op all ended the same way: the list refetched, the
@@ -24516,7 +24541,7 @@
              * delete that does not exist — which is exactly what it gets
              * reported as. */
             try {
-                const r = await fetch('/api/channels/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id})});
+                const r = await fetch('/api/channels/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(isCanonical ? {id, allow_canonical:true} : {id})});
                 if (!r.ok && typeof updateStatus === 'function') {
                     const msg = (await r.text().catch(() => '')) || `HTTP ${r.status}`;
                     updateStatus(`Could not delete channel · ${msg}`, true);

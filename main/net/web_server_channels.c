@@ -6,7 +6,9 @@
  *   GET  /api/channels/canonical   — read-only canonical registry
  *   POST /api/channels/activate    — activate a canonical channel by id
  *   POST /api/channels/update      — patch one or more channel fields
- *   POST /api/channels/delete      — remove a channel (custom only)
+ *   POST /api/channels/delete      — remove a channel (custom by default;
+ *                                    allow_canonical:true removes any,
+ *                                    returning canonical to the catalogue)
  *
  * All firmware mutation endpoints use POST (no PUT/DELETE registered
  * anywhere else in the project). Bodies are JSON.
@@ -800,6 +802,12 @@ static esp_err_t channels_delete_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
+	/* allow_canonical: the caller has shown the user a real confirm and
+	 * means it (ADR-0034). Without it, canonical ids keep 403/skipping —
+	 * older clients keep their old semantics untouched. */
+	const bool allow_canonical =
+		cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(root, "allow_canonical"));
+
 	cJSON *jids = cJSON_GetObjectItemCaseSensitive(root, "ids");
 	if (cJSON_IsArray(jids)) {
 		int deleted = 0, skipped = 0;
@@ -811,8 +819,11 @@ static esp_err_t channels_delete_handler(httpd_req_t *req) {
 		cJSON *jid = NULL;
 		cJSON_ArrayForEach(jid, jids) {
 			if (!cJSON_IsString(jid) || !jid->valuestring[0]) { skipped++; continue; }
-			/* channel_manager_delete refuses canonical ids itself */
-			if (channel_manager_delete(jid->valuestring)) deleted++;
+			/* delete refuses canonical ids itself; remove takes any. */
+			bool ok = allow_canonical
+				? channel_manager_remove(jid->valuestring)
+				: channel_manager_delete(jid->valuestring);
+			if (ok) deleted++;
 			else skipped++;
 		}
 		channel_manager_end_bulk();
@@ -849,9 +860,10 @@ static esp_err_t channels_delete_handler(httpd_req_t *req) {
 	id_copy[sizeof(id_copy) - 1] = '\0';
 	cJSON_Delete(root);
 
-	if (!channel_id_is_custom(id_copy)) {
+	if (!allow_canonical && !channel_id_is_custom(id_copy)) {
 		httpd_resp_send_err(req, HTTPD_403_FORBIDDEN,
-			"Canonical channels cannot be deleted; clear the signal instead");
+			"Canonical channels cannot be deleted; clear the signal instead "
+			"(or send allow_canonical:true to remove deliberately)");
 		return ESP_FAIL;
 	}
 
@@ -859,7 +871,8 @@ static esp_err_t channels_delete_handler(httpd_req_t *req) {
 	if (!rdm_lvgl_lock(500)) {
 		return web_server_send_busy(req);
 	}
-	ok = channel_manager_delete(id_copy);
+	ok = allow_canonical ? channel_manager_remove(id_copy)
+	                     : channel_manager_delete(id_copy);
 	rdm_lvgl_unlock();
 
 	if (!ok) {
