@@ -367,6 +367,59 @@ static esp_err_t layout_save_handler(httpd_req_t *req) {
 
 	bool is_splash = (strncmp(layout_name, "_splash_", 8) == 0);
 
+	/* ── Don't let a client silently empty someone's dashboard ─────────
+	 *
+	 * This handler used to persist whatever `widgets` array arrived, and a
+	 * client that had never populated its widget list — a page sitting in
+	 * Channels mode where Design was never initialised, an autosave that
+	 * fired before a load finished — would overwrite a 26-widget layout
+	 * with `[]`. The dash then falls back to a bare slot skeleton and the
+	 * user's dashboard is gone, with nothing in the response saying so.
+	 *
+	 * Emptying a layout on purpose is rare and always a deliberate act, so
+	 * it has to say so: `"allow_empty": true`. Everything else — including
+	 * every existing client that never sends the flag — is refused with an
+	 * explanation instead of destroying work. A layout that is already
+	 * empty, or doesn't exist yet, is unaffected: there is nothing to lose.
+	 *
+	 * Splashes are exempt: a one-widget splash being cleared is not the
+	 * same kind of loss, and the splash editor legitimately saves empties. */
+	if (!is_splash && cJSON_GetArraySize(widgets_arr) == 0 &&
+	    !cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(root, "allow_empty"))) {
+		char *prev = malloc(LAYOUT_MAX_FILE_BYTES);
+		int prev_widgets = -1;   /* -1 = no existing layout to protect */
+		if (prev) {
+			size_t plen = 0;
+			if (layout_manager_read_raw(layout_name, prev,
+			                            LAYOUT_MAX_FILE_BYTES, &plen) == ESP_OK) {
+				cJSON *proot = cJSON_Parse(prev);
+				if (proot) {
+					cJSON *pw = cJSON_GetObjectItemCaseSensitive(proot, "widgets");
+					if (cJSON_IsArray(pw)) prev_widgets = cJSON_GetArraySize(pw);
+					cJSON_Delete(proot);
+				}
+			}
+			free(prev);
+		}
+		if (prev_widgets > 0) {
+			ESP_LOGW(TAG, "POST /api/layout/save: refused to replace '%s' "
+			              "(%d widgets) with an empty one — send "
+			              "allow_empty:true if that is really the intent",
+			         layout_name, prev_widgets);
+			cJSON_Delete(root);
+			/* 409, not 400: the request is well-formed, it just conflicts
+			 * with what is already stored. ESP-IDF's httpd_err_code_t has no
+			 * 409, so set the status line directly. */
+			httpd_resp_set_status(req, "409 Conflict");
+			httpd_resp_set_type(req, "application/json");
+			httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+			httpd_resp_sendstr(req,
+				"{\"error\":\"That would delete every widget in this layout. "
+				"If you meant to, send allow_empty:true.\"}");
+			return ESP_FAIL;
+		}
+	}
+
 	/* Factory-default protection lives client-side now (see
 	 * _resolveProtectedName in index.html). The web editor distinguishes
 	 * widget-only vs signal-only changes and prompts the user for an

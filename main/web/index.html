@@ -2080,16 +2080,6 @@
         }
         #chShared.ch2-page .ch2-spill-head { margin: 18px 20px 4px; }
 
-        /* "You are browsing the catalogue" bar — sticky so the way back is
-         * never scrolled off in a hundred-row list. */
-        .ch2-browse-bar {
-            position: sticky; top: 0; z-index: 3;
-            display: flex; align-items: center; gap: 10px;
-            padding: 8px 12px; background: var(--panel-elevated);
-            border-bottom: 1px solid var(--border);
-            font-size: 11px; line-height: 1.45; color: var(--text-muted);
-        }
-        .ch2-browse-bar span { flex: 1; }
 
         /* OBD2 scan results — one tickable reading per row. */
         .ch2-scan-list {
@@ -4887,7 +4877,6 @@
                             <button class="ch2-more-btn" id="chMoreBtn" onclick="_chToggleMoreMenu(event)" title="More">&#8943;</button>
                             <div class="layout-menu" id="chMoreMenu" style="right:0; left:auto;">
                                 <div class="layout-menu-item" id="chSelectModeBtn" onclick="_chCloseMoreMenu(); _chToggleSelectMode()"><svg viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg><span id="chSelectModeLbl">Select several&hellip;</span></div>
-                                <div class="layout-menu-item" onclick="_chCloseMoreMenu(); _chBrowseCatalogue()"><svg viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>Browse the standard list&hellip;</div>
                             </div>
                         </div>
                     </div>
@@ -5994,6 +5983,14 @@
         }
 
         let currentLayout = { name: "default", widgets: [], signals: [] };
+        /* True once a layout has actually been loaded into the editor —
+         * from the device, a draft, an import or a deliberate New. Until
+         * then `currentLayout` is the placeholder above: named "default"
+         * with zero widgets, i.e. exactly the payload that would wipe the
+         * dash's default layout if a save fired early. buildFirmwarePayload
+         * only claims an empty widget list is intentional once this is
+         * true; the firmware refuses the rest (ADR-0038). */
+        let _layoutEverLoaded = false;
         let selectedIndex = -1;
         let selectedIndices = new Set();
         let _dragStartPositions = {};
@@ -7331,6 +7328,7 @@
             _showPromptOverlay('New Layout', '', (safeName) => {
                 pushHistory();
                 currentLayout = { name: safeName, widgets: [], signals: [] };
+                _layoutEverLoaded = true;   /* a deliberate New counts */
                 selectedIndex = -1; selectedIndices = new Set();
                 renderEditor();
                 renderSignals();
@@ -7482,6 +7480,7 @@
                         pushHistory();
                         firmwareToWebFormat(data);
                         currentLayout = data;
+                        _layoutEverLoaded = true;
                         if (!currentLayout.name) currentLayout.name = 'imported';
                         /* Prevent importing over default name */
                         if (currentLayout.name === 'default')
@@ -7535,6 +7534,7 @@
                 pushHistory();
                 firmwareToWebFormat(data);
                 currentLayout = data;
+                _layoutEverLoaded = true;
                 if (!currentLayout.name || currentLayout.name === 'default')
                     currentLayout.name = 'imported';
                 selectedIndex = -1; selectedIndices = new Set();
@@ -11634,6 +11634,14 @@
             /* Tag layout with target screen dimensions */
             payload.screen_w = CANVAS_W;
             payload.screen_h = CANVAS_H;
+            /* Saving zero widgets over a populated layout deletes someone's
+             * dashboard, so the firmware refuses it unless the client says it
+             * means it. We only mean it once a layout has actually been
+             * loaded here — before that an empty list is the placeholder, not
+             * a decision (ADR-0038). */
+            if (_layoutEverLoaded && (payload.widgets || []).length === 0) {
+                payload.allow_empty = true;
+            }
             /* Convert RGB888 → RGB565 BEFORE rules are converted to array format
              * (convertWidgetColors handles object-format rule overrides) */
             convertWidgetColors(payload.widgets, rgb888to565);
@@ -15143,6 +15151,7 @@
                 const draftStr = localStorage.getItem('rdm7_draft');
                 if (draftStr) {
                     currentLayout = JSON.parse(draftStr);
+                    _layoutEverLoaded = true;
                     if (!currentLayout.signals) currentLayout.signals = [];
                     history = [draftStr];
                     historyIndex = 0;
@@ -16111,6 +16120,7 @@
                 } else {
                     currentLayout = await response.json();
                 }
+                _layoutEverLoaded = true;
                 /* Snapshot raw device JSON BEFORE any transforms for accurate poll comparison */
                 const rawDeviceSnap = JSON.stringify(currentLayout);
                 if (!currentLayout.signals) currentLayout.signals = [];
@@ -18019,6 +18029,7 @@
                     pushHistory();
                     firmwareToWebFormat(layoutData);
                     currentLayout = layoutData;
+                    _layoutEverLoaded = true;
                     selectedIndex = -1; selectedIndices = new Set();
                     history = [JSON.stringify(currentLayout)];
                     historyIndex = 0;
@@ -18215,6 +18226,7 @@
                 const response = await fetch(`/api/layout/raw?name=${encodeURIComponent(name)}`);
                 if (!response.ok) throw new Error();
                 currentLayout = await response.json();
+                _layoutEverLoaded = true;
                 if (!currentLayout.signals) currentLayout.signals = [];
                 /* Convert firmware endian (int) to web is_little_endian (bool) */
                 currentLayout.signals.forEach(s => {
@@ -18338,6 +18350,7 @@
                     const prevSelectedId = selectedIndex >= 0 && currentLayout.widgets[selectedIndex]
                         ? currentLayout.widgets[selectedIndex].id : null;
                     currentLayout = deviceLayout;
+                    _layoutEverLoaded = true;
                     if (!currentLayout.signals) currentLayout.signals = [];
                     /* Convert firmware endian (int) to web is_little_endian (bool) */
                     currentLayout.signals.forEach(s => {
@@ -20837,7 +20850,6 @@
         let _chPendingId = null;   /* channel the buffer belongs to (NOT the
                                     * selected row — selection can move while
                                     * edits are still pending) */
-        let _chFilter = 'configured'; /* list view: configured (this car) | unconfigured (standard list) */
         let _chSignalValuesCache = {}; /* signal-name → {value, stale, unit} */
         let _chSelectMode = false; /* bulk-select mode for multi-delete */
         let _chSelected = new Set(); /* ids ticked while in select mode */
@@ -20918,13 +20930,6 @@
 
         async function _chEnterPage() {
             _chMount('page');
-            /* The page leads with the channels this car actually has. The
-             * other ~100 are catalogue entries you could activate, and
-             * interleaving them buries the 30 that matter. Search still
-             * reaches everything — see _refreshChannelsList — and browsing
-             * the standard list is a detour you come back from, so arriving
-             * here always lands on the car. */
-            _chFilter = 'configured';
             await _chLoad();
             _chRefreshContextStrip();
         }
@@ -20948,7 +20953,6 @@
 
         async function openChannelsModal() {
             _chMount('modal');
-            _chFilter = 'configured';
             document.getElementById('channelsModal').style.display = 'flex';
             await _chLoad();
         }
@@ -22051,21 +22055,6 @@
         /* Sidebar: every canonical channel + every custom channel, grouped
          * by purpose. Inactive (not yet in user's channels.json) rows fade
          * to 40% — click activates + auto-binds in one motion. */
-        /* Channel-list view (_chFilter declared with the other channel state
-         * above): 'configured' — this car — or 'unconfigured', the standard
-         * list you browse to add from. It is no longer a row of chips the
-         * user has to interpret; 'configured' is simply what the list is,
-         * and the catalogue is somewhere you go and come back from. */
-        function _setChFilter(f) {
-            _chFilter = f;
-            _refreshChannelsList();
-        }
-
-        function _chBrowseCatalogue() {
-            if (_chSelectMode) _chToggleSelectMode();
-            _setChFilter('unconfigured');
-        }
-
         function _chToggleMoreMenu(ev) {
             if (ev) ev.stopPropagation();
             const menu = document.getElementById('chMoreMenu');
@@ -22154,20 +22143,14 @@
                     || (c.signal || '').toLowerCase().includes(q)
                     || groupName.includes(q);
             };
-            const filtered = merged.filter(c => {
-                if (_chFilter === 'configured' && !c.is_active) return false;
-                if (_chFilter === 'unconfigured' && c.is_active) return false;
-                return matchesQuery(c);
-            });
-
-            /* Search must never hide a channel just because the current view
-             * is "Configured". Searching for something you haven't set up yet
-             * is exactly when you'd search. Those hits are appended under
-             * their own heading instead of being silently absent — the list
-             * leads with your car, but nothing is unreachable. */
-            const spillover = (q && _chFilter === 'configured')
-                ? merged.filter(c => !c.is_active && matchesQuery(c))
-                : [];
+            /* One list, always the whole list. Splitting it into "your car"
+             * and "the standard list" meant the answer to "where is X?"
+             * depended on a mode the user had to know about — and the
+             * catalogue rows are the whole point of a channel list you add
+             * from. Configured rows sort to the top of each group (see the
+             * bound-first sort in _renderGroups), so the car still leads
+             * without anything being hidden behind a view. */
+            const filtered = merged.filter(matchesQuery);
 
             const grouped = {};
             filtered.forEach(c => {
@@ -22190,21 +22173,10 @@
                      + `will be added when it reconnects.</div>`;
             }).join('');
 
-            /* Browsing the standard list is a place you went, so it says so
-             * and offers the way back. Without this the chip-less list would
-             * silently be showing ~100 channels the car doesn't have. */
-            const browseBanner = (_chFilter === 'unconfigured')
-                ? `<div class="ch2-browse-bar"><span>Showing the standard channel list — click one to see what it is, then Add it.</span>`
-                + `<button class="btn" style="padding:3px 10px; font-size:11px;" onclick="_setChFilter('configured')">Back to my car</button></div>`
-                : '';
-
             const order = Object.keys(grouped).map(Number).sort((a, b) => a - b);
-            if (!order.length && !spillover.length) {
-                const msg = (_chFilter === 'configured' && !q)
-                    ? 'No channels set up yet — use “+ Add channels” to bring some in.'
-                    : 'No matches.';
-                list.innerHTML = browseBanner + pendingBanner
-                    + `<div class="ch2-empty"><div class="ch2-empty-msg">${msg}</div></div>`;
+            if (!order.length) {
+                list.innerHTML = pendingBanner
+                    + `<div class="ch2-empty"><div class="ch2-empty-msg">No matches.</div></div>`;
                 return;
             }
             const _renderGroups = (order, grouped) => order.map(g => {
@@ -22266,17 +22238,7 @@
                     }).join('');
             }).join('');
 
-            let html = browseBanner + pendingBanner + _renderGroups(order, grouped);
-            if (spillover.length) {
-                const sg = {};
-                spillover.forEach(c => { (sg[c.group || 0] = sg[c.group || 0] || []).push(c); });
-                const sOrder = Object.keys(sg).map(Number).sort((a, b) => a - b);
-                html += `<div class="ch2-spill-head">Not set up yet — `
-                     +  `${spillover.length} match${spillover.length === 1 ? '' : 'es'} `
-                     +  `in the standard list. Click one to see what it is.</div>`
-                     +  _renderGroups(sOrder, sg);
-            }
-            list.innerHTML = html;
+            list.innerHTML = pendingBanner + _renderGroups(order, grouped);
         }
 
         /* Strip leading/trailing underscores + lowercase so names that
@@ -22550,6 +22512,11 @@
             _chSelectedId = null;
             _refreshChannelsList();
             _renderChannelDetail();
+            /* Same as _selectChannel: on the page the editor is a drawer that
+             * sits off-screen until opened. Without this the form rendered
+             * into a pane the user could not see, so "Custom channel…" looked
+             * like it did nothing at all. No-op in the modal. */
+            _chOpenDrawer('New channel');
         }
 
         function _chCancelNew() {
@@ -22594,6 +22561,7 @@
             _chSelectedId = null;
             _refreshChannelsList();
             _renderChannelDetail();
+            _chOpenDrawer('New channel');   /* see _chOpenNew — off-screen otherwise */
             /* Select the label so the first keystroke renames the copy. */
             const el = document.getElementById('chNewLabel');
             if (el) { el.focus(); el.select(); }
@@ -24942,6 +24910,11 @@
             await _fetchChannelsActive();
             _refreshChannelsList();
             _renderChannelDetail();
+            /* Nothing left to show: the drawer was displaying the channel that
+             * just went away. Leaving it open parked a stale title over "Pick
+             * a channel from the list" and covered the list the user now has
+             * to go back to. */
+            _chCloseDrawer();
         }
 
         /* ── Data Logger modal ──────────────────────────────────────── */
