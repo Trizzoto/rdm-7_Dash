@@ -1775,26 +1775,6 @@
         }
         .ch2-body { display: flex; flex: 1; min-height: 0; }
 
-        /* Where your channel edits are going. Three states, always printed —
-         * a blank here would read as "connected", which is the one wrong
-         * answer (ADR-0030). State in greys; only the "needs sending" case
-         * earns colour, because it is the only one asking for an action. */
-        .ch-sync-pill {
-            font-size: 10px; font-weight: 600; letter-spacing: 0.3px;
-            padding: 3px 9px; border-radius: var(--radius-pill, 999px);
-            border: 1px solid var(--border); color: var(--text-muted);
-            white-space: nowrap; user-select: none;
-        }
-        .ch-sync-pill.live    { cursor: default; }
-        .ch-sync-pill.offline { cursor: default; border-style: dashed; }
-        .ch-sync-pill.pending {
-            cursor: pointer;
-            color: hsl(40, 85%, 62%);
-            border-color: hsl(40, 60%, 42%);
-            background: hsla(40, 85%, 55%, 0.08);
-        }
-        .ch-sync-pill.pending:hover { background: hsla(40, 85%, 55%, 0.18); }
-
         /* ── The two mounts ───────────────────────────────────────────────
          * #chShared holds the whole channels UI and is moved between the
          * modal shell and the Channels page. `.ch2-page` on it selects the
@@ -1825,17 +1805,40 @@
         #chShared.ch2-page .ch2-topbar { padding: 14px 20px; }
 
         /* Column headings for the table layout. Grid template is shared with
-         * .ch2-row below — change both together or the headings lie. */
+         * .ch2-row below — change both together or the headings lie.
+         * Horizontal inset must match the row's too: a row sits inside
+         * margin:20px + a 1px border + padding:12px (33px total), so the
+         * heading's own padding has to be 33px, not the row's outer 20px —
+         * otherwise "Channel" prints 13px left of where names actually
+         * start. */
         .ch2-thead {
             display: grid;
             grid-template-columns: var(--ch2-cols);
             gap: 10px;
-            padding: 8px 20px;
+            padding: 8px 33px;
             margin: 0;
             font-size: 10px; font-weight: 700; letter-spacing: .06em;
             text-transform: uppercase; color: var(--text-muted);
             border-bottom: 1px solid var(--border);
+            /* #chList below scrolls once channels overflow the pane — the
+             * common case past ~14 rows — and its scrollbar narrows its
+             * content width by a few px that this header never loses,
+             * drifting the columns right of the data under them. Reserving
+             * the same gutter here (never actually scrolling — overflow
+             * has nothing to hide) keeps both widths equal whether or not
+             * the list currently needs to scroll. */
+            overflow-y: hidden;
+            scrollbar-gutter: stable;
         }
+        /* .ch2-page-only (below) sets display:flex for the other elements
+         * that share the class, and #chShared.ch2-page .ch2-page-only
+         * outranks the bare .ch2-thead rule above on specificity — so
+         * without this, the heading silently became a flex row and every
+         * "column" just sized to its own text, floating free of the grid
+         * tracks the data rows actually use. This wins the tie back for
+         * the heading specifically, leaving the other .ch2-page-only
+         * elements (context strip, drawer head) on flex as intended. */
+        #chShared.ch2-page .ch2-thead.ch2-page-only { display: grid; }
         #chShared.ch2-page { --ch2-cols: minmax(160px, 2fr) minmax(120px, 1.4fr) 110px 130px 150px; }
 
         /* Editor: right-hand pane in the modal, drawer on the page. */
@@ -1934,7 +1937,7 @@
         }
         .ch2-filter-btn:hover { color: var(--text); }
         .ch2-filter-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
-        .ch2-list { flex: 1; overflow-y: auto; }
+        .ch2-list { flex: 1; overflow-y: auto; scrollbar-gutter: stable; }
 
         /* One row markup, two layouts. In the modal the source sits under the
          * name and the extra cells are dropped; on the page the same five
@@ -4823,10 +4826,6 @@
             <div class="ch2-topbar">
                 <span style="font-weight:600; font-size:14px;">Channels <span id="chCount" style="font-weight:400; font-size:12px; color:var(--text-muted);"></span></span>
                 <div style="display:flex; align-items:center; gap:10px;">
-                    <!-- Live/offline state of the channel set. Reads "Live —
-                         edits go straight to the dash" when connected, and
-                         names the pending-edit count when not (ADR-0030). -->
-                    <span id="chSyncPill" class="ch-sync-pill" onclick="_chSyncPillClick()" title="Where your channel edits are going"></span>
                     <!-- Every way a channel comes into being, in one menu:
                          a pre-defined ECU, a DBC file, or typed by hand —
                          plus the backup file that holds the lot. These were
@@ -20881,8 +20880,9 @@
             const canV = document.getElementById('chCtxCanVal');
             if (!ecuV) return;
             if (!_chOnline) {
-                /* Dashes, not last-known values: the strip is live state, and
-                 * the pill right above it already explains why it's blank. */
+                /* Dashes, not last-known values: the strip is live state and
+                 * a stale ECU/bus reading shown as current would be the one
+                 * wrong answer while the dash is unreachable. */
                 ecuV.textContent = '—';
                 canV.textContent = '—';
                 const s = document.getElementById('chCtxSigVal');
@@ -21660,39 +21660,6 @@
             return true;
         }
 
-        /* The pill in the Channels topbar. It is the only place that says
-         * where an edit is going, so it never renders blank. */
-        function _chRenderSyncPill() {
-            const el = document.getElementById('chSyncPill');
-            if (!el) return;
-            const n = _chQueueCount();
-            const mirror = _chLoadJson(_CH_MIRROR_KEY, null);
-            if (_chOnline && !n) {
-                el.className = 'ch-sync-pill live';
-                el.textContent = 'Live on the dash';
-                el.title = 'The dash is connected — every change is saved to it as you make it.';
-            } else if (_chOnline && n) {
-                el.className = 'ch-sync-pill pending';
-                el.textContent = `${n} change${n === 1 ? '' : 's'} to send`;
-                el.title = 'Click to send your offline changes to the dash.';
-            } else if (n) {
-                el.className = 'ch-sync-pill pending';
-                el.textContent = `Offline · ${n} change${n === 1 ? '' : 's'} waiting`;
-                el.title = 'The dash is not connected. Your changes are saved here and will be offered to the dash when it reconnects.';
-            } else {
-                el.className = 'ch-sync-pill offline';
-                el.textContent = mirror ? 'Offline · your copy' : 'Offline · nothing saved yet';
-                el.title = mirror
-                    ? `Editing the copy saved from your dash on ${new Date(mirror.ts).toLocaleString()}. Changes are sent when it reconnects.`
-                    : 'Connect the dash once so its channel setup can be saved here for offline editing.';
-            }
-        }
-
-        function _chSyncPillClick() {
-            if (_chQueueCount() && _chOnline) _chPromptPendingSync(true);
-            else if (_chQueueCount()) _chPromptPendingSync(false);
-        }
-
         /* Replay the queue through the real endpoints, in order. */
         async function _chSendQueue() {
             const q = _chQueue();
@@ -21732,8 +21699,8 @@
             try {
                 const ok = await confirmAsync('Send your offline changes?',
                     `You changed ${n} thing${n === 1 ? '' : 's'} about this car's channels while the dash was disconnected. ` +
-                    `Send them to the dash now? Choosing Cancel keeps them here — you can send them later from the pill in the corner, ` +
-                    `or discard them by restoring the dash's own setup.`,
+                    `Send them to the dash now? Choosing Cancel keeps them here — you'll be asked again next time the ` +
+                    `dash reconnects, or you can discard them by restoring the dash's own setup.`,
                     'Send to dash');
                 if (!ok) return;
                 const res = await _chSendQueue();
@@ -21750,7 +21717,6 @@
                 _renderChannelDetail();
             } finally {
                 _chSyncPrompting = false;
-                _chRenderSyncPill();
             }
         }
 
@@ -21771,7 +21737,6 @@
                 let body = {};
                 try { body = JSON.parse((init && init.body) || '{}'); } catch (e) {}
                 _chQueuePush({ path, body, ts: Date.now(), label: _chOpLabel(path, body) });
-                _chRenderSyncPill();
                 return Promise.resolve(new Response(
                     JSON.stringify({ status: 'ok', queued: true }),
                     { status: 200, headers: { 'Content-Type': 'application/json' } }));
@@ -21809,7 +21774,6 @@
                 if (typeof data.capacity === 'number' && data.capacity > 0)
                     _chCapacity = data.capacity;
                 _chStoreOfflineSnapshot();
-                _chRenderSyncPill();
                 _chUpdateCountLabel();
                 /* A dash is answering and there is work waiting — this is the
                  * prompt the customer asked for. Offered once per absence, so
@@ -21831,7 +21795,6 @@
                 _chSyncOffered = false;   /* offer again when it comes back */
                 _chLoadFromMirror();
                 _chUpdateCountLabel();
-                _chRenderSyncPill();
             }
         }
 
@@ -21886,10 +21849,9 @@
          * first weeks it only did so if you happened to REOPEN the page,
          * because this function swallowed every failure and never touched
          * _chOnline in either direction. Sitting on the Channels page, a
-         * dash dropping left the pill claiming "Live on the dash" while
-         * edits sailed into a dead socket; a dash returning never fired
-         * the prompt. Both transitions now happen right here, in place
-         * (ADR-0033). */
+         * dash dropping went unnoticed while edits sailed into a dead
+         * socket; a dash returning never fired the prompt. Both
+         * transitions now happen right here, in place (ADR-0033). */
         async function _pollChannelLive() {
             let data = null;
             try {
@@ -21940,15 +21902,14 @@
                 }
             } catch (e) {
                 if (_chOnline) {
-                    /* Lost the dash mid-view. Say so immediately: pill flips,
-                     * values blank (a stale number shown as current is how
-                     * someone trusts a reading the car never sent), and from
-                     * this moment edits queue instead of dying in a dead
-                     * fetch. Cache contents stay — they ARE the last truth. */
+                    /* Lost the dash mid-view. Say so immediately: values blank
+                     * (a stale number shown as current is how someone trusts
+                     * a reading the car never sent), and from this moment
+                     * edits queue instead of dying in a dead fetch. Cache
+                     * contents stay — they ARE the last truth. */
                     _chOnline = false;
                     _chSyncOffered = false;   /* offer again on return */
                     _chCache.forEach(c => { c.is_stale = true; c.current_value = null; });
-                    _chRenderSyncPill();
                     _chSyncAddMenuAvailability();
                     _refreshChannelsList();
                     _renderChannelDetail();
@@ -23848,7 +23809,6 @@
                     showToast(`Saved — ${n} channel${n === 1 ? '' : 's'} from ${_ecuImpSel.make} ${_ecuImpSel.version} will be added when the dash reconnects`, 'success');
                     closeEcuChannelImport();
                     _refreshChannelsList();   /* pending banner */
-                    _chRenderSyncPill();
                     return;
                 }
                 /* 202: the dash runs the apply on its LVGL task and answers
