@@ -57,9 +57,21 @@ stopped being the headline.
   it is genuinely the ECU-preset browser and custom-signal author — that is
   source management, which is the model.
 
+## The device editor, same rule (added 2026-08-14)
+
+The dash's own channel pane had the identical leak: `via COOLANT_TEMP` under
+a channel already labelled "Coolant Temp". It now prints provenance —
+`OBD2`, `RDM-7 internal`, `CAN 0x360` — mirroring the derivation in
+`channel_to_full_json()` rather than inventing a second rule: registry
+source when the signal is registered, decode/OBD2-name fallback when it is
+not, and `NAME (waiting)` when a channel is bound to something whose frames
+have not arrived this boot. Both editors now answer "where does this come
+from" the same way.
+
 ## Verification
 
 Against the live dash through the `--device` proxy: 32 rows — 7×OBD2,
 16×RDM-7, 6×unbound badges, 1 GEAR + 2 raw names for genuinely-unknown
 provenance, **zero blank cells**; hotkey lands on the Channels page with the
-Signal Manager closed; 0 console errors.
+Signal Manager closed; 0 console errors. Device pane checked on the glass
+over remote touch.

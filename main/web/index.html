@@ -16313,7 +16313,81 @@
                 try { localStorage.removeItem('rdm7_draft'); } catch (e) { }
                 if (!isSplash) await fetchLayoutsKeepCurrent();
                 setTimeout(captureScreenshot, 1500);
-            } catch (e) { updateStatus('Apply failed', true); showToast('Apply failed', 'error'); }
+            } catch (e) {
+                /* The dash went away mid-save. Keep the work and say so —
+                 * "Apply failed" alone left an edited layout with nowhere to
+                 * live but the crash-recovery draft (ADR-0036).
+                 *
+                 * LAST-WRITE-WINS per layout name, deliberately NOT the
+                 * channels-style call queue: channel mutations are distinct
+                 * intents that must each replay, whereas layout saves
+                 * SUPERSEDE — the 1 s autosave means replaying forty
+                 * intermediate saves would push thirty-nine stale layouts
+                 * and land on the same result slowly. */
+                _layoutStashPending(resolved, payload, isSplash);
+                const msg = `Dash not reachable — “${resolved}” saved here, and offered to the dash when it reconnects`;
+                updateStatus(msg, true);
+                if (!silent) showToast(msg, 'error');
+            }
+        }
+
+        /* ── Offline layout saves ─────────────────────────────────────────
+         * Channels got the tune-file treatment in ADR-0030; layouts kept
+         * failing outright until ADR-0036. Same promise, simpler store. */
+        const _LAYOUT_PENDING_KEY = 'rdm7_layout_pending';
+        let _layoutSyncOffered = false;   /* offered since the dash last vanished */
+
+        function _layoutPending()      { return _chLoadJson(_LAYOUT_PENDING_KEY, {}); }
+        function _layoutPendingCount() { return Object.keys(_layoutPending()).length; }
+
+        function _layoutStashPending(name, payload, isSplash) {
+            const all = _layoutPending();
+            all[name] = { payload, isSplash: !!isSplash, ts: Date.now() };
+            _chSaveJson(_LAYOUT_PENDING_KEY, all);
+            _layoutSyncOffered = false;   /* something new to offer */
+        }
+
+        /* Called when a real device frame lands — i.e. the dash is answering.
+         * Cheap: one localStorage read, then returns unless work is waiting. */
+        async function _layoutCheckPending() {
+            if (_layoutSyncOffered) return;
+            const all = _layoutPending();
+            const names = Object.keys(all);
+            if (!names.length) return;
+            _layoutSyncOffered = true;
+
+            const ok = await confirmAsync('Send your offline layout changes?',
+                names.length === 1
+                    ? `You saved “${names[0]}” while the dash was disconnected. Send it to the dash now?`
+                    : `You saved ${names.length} layouts while the dash was disconnected (${names.join(', ')}). Send them now?`,
+                'Send to dash');
+            if (!ok) return;   /* keep them; offered again next reconnect */
+
+            let sent = 0;
+            const failed = [];
+            for (const n of names) {
+                try {
+                    const r = await fetch('/api/layout/save', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(all[n].payload),
+                    });
+                    if (r.ok) { sent++; delete all[n]; }
+                    else failed.push(`${n}: ${(await r.text().catch(() => '')).slice(0, 60) || 'HTTP ' + r.status}`);
+                } catch (e) {
+                    /* Lost it again — keep this and everything after. */
+                    _chSaveJson(_LAYOUT_PENDING_KEY, all);
+                    showToast(`Sent ${sent}, then lost the dash — the rest are still saved here`, 'error');
+                    return;
+                }
+            }
+            _chSaveJson(_LAYOUT_PENDING_KEY, all);
+            if (failed.length) {
+                showToast(`Sent ${sent}, ${failed.length} refused by the dash`, 'error');
+                updateStatus(failed.slice(0, 3).join(' · '), true);
+            } else if (sent) {
+                showToast(`Sent ${sent} layout${sent === 1 ? '' : 's'} to the dash`, 'success');
+                if (typeof fetchLayoutsKeepCurrent === 'function') fetchLayoutsKeepCurrent();
+            }
         }
 
         let _canvasEtag = null;   /* last frame's ETag, for conditional GET */
@@ -16340,7 +16414,18 @@
                 const response = await fetch('/api/screenshot?' + params,
                                               { cache: 'no-store', headers });
                 if (response.status === 304) {
-                    if (!_haveLiveFrame) { _haveLiveFrame = true; renderPreview(); }
+                    /* A 304 is still the dash answering, so it is just as much
+                     * a reconnect as a fresh frame — and on a static screen
+                     * (a parked car, the normal case) it is the ONLY kind that
+                     * arrives. Hooking the offer solely to the decoded-frame
+                     * branch below meant Design mode would never offer pending
+                     * layout saves on exactly the dashes that sit still
+                     * (ADR-0036). Found by testing against a real dash. */
+                    if (!_haveLiveFrame) {
+                        _haveLiveFrame = true;
+                        renderPreview();
+                        _layoutCheckPending();
+                    }
                     return;                       /* unchanged — nothing to redraw */
                 }
                 if (!response.ok) throw new Error('HTTP ' + response.status);
@@ -16350,8 +16435,15 @@
                 ctx.drawImage(bmp, 0, 0, CANVAS_W, CANVAS_H);
                 bmp.close();
                 /* A real device frame painted — retire the offline SVG preview
-                 * so the live screenshot owns the canvas. */
-                if (!_haveLiveFrame) { _haveLiveFrame = true; renderPreview(); }
+                 * so the live screenshot owns the canvas. This transition is
+                 * also the honest "the dash is answering again" moment for
+                 * Design mode, so it is where offline layout saves get
+                 * offered (ADR-0036) — no second poll invented for it. */
+                if (!_haveLiveFrame) {
+                    _haveLiveFrame = true;
+                    renderPreview();
+                    _layoutCheckPending();
+                }
             } catch (e) {
                 console.error('Screenshot failed', e);
                 /* No device frame (offline) — fall back to the SVG preview. */
@@ -21631,6 +21723,11 @@
                     _chSyncOffered = true;
                     _chPromptPendingSync(true);
                 }
+                /* The Channels page is the other place that proves the dash
+                 * is answering — offer pending LAYOUT saves here too, or
+                 * someone who never opens Design would never be asked
+                 * (ADR-0036). Cheap: returns on an empty store. */
+                if (typeof _layoutCheckPending === 'function') _layoutCheckPending();
             } catch (e) {
                 /* No dash answered. Fall back to the copy saved from the last
                  * one, with any queued edits replayed over it, so the page is

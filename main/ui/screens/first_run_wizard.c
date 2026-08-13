@@ -2839,8 +2839,29 @@ static void _render_detail_pane(void) {
 
     s_detail_source_lbl = lv_label_create(s_detail_pane);
     if (c->signal_index >= 0 && c->signal_name[0]) {
+        /* Say WHERE it comes from, not which registry slot holds it — the
+         * same rule the web table follows (ADR-0035). "via COOLANT_TEMP"
+         * under a channel already labelled "Coolant Temp" was plumbing
+         * shown to the user. Provenance mirrors the derivation in
+         * channel_to_full_json(): registry source when registered, else a
+         * decode/OBD2-name fallback. CAN adds its frame id, the one fact
+         * that separates two same-named decodes. */
+        signal_t *ssig = signal_get_by_index((uint16_t)c->signal_index);
         char buf[64];
-        snprintf(buf, sizeof(buf), "via %s", c->signal_name);
+        if (ssig && (signal_source_t)ssig->source == SIGNAL_SOURCE_OBD2) {
+            snprintf(buf, sizeof(buf), "OBD2");
+        } else if (ssig && (signal_source_t)ssig->source == SIGNAL_SOURCE_INTERNAL) {
+            snprintf(buf, sizeof(buf), "RDM-7 internal");
+        } else if (ssig) {
+            snprintf(buf, sizeof(buf), "CAN  0x%lX",
+                     (unsigned long)ssig->can_id);
+        } else if (c->can_id != 0) {
+            snprintf(buf, sizeof(buf), "CAN  0x%lX", (unsigned long)c->can_id);
+        } else {
+            /* Bound by name but nothing registered this boot — its frames
+             * haven't arrived. Name it rather than print a bare "—". */
+            snprintf(buf, sizeof(buf), "%s (waiting)", c->signal_name);
+        }
         lv_label_set_text(s_detail_source_lbl, buf);
         lv_obj_set_style_text_color(s_detail_source_lbl,
             THEME_COLOR_TEXT_PRIMARY, 0);

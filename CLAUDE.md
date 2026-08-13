@@ -17,7 +17,12 @@ For deep dives, active plans, and one-off guides, start at [`docs/README.md`](do
 - All `.c` files must be listed in `main/CMakeLists.txt` SRCS
 - `main/web/index.html` embedded via `EMBED_FILES` (gzipped to `index.html.gz` at configure time; served with `Content-Encoding: gzip`)
 - `-Werror=comment` active — no `/*` inside block comments
-- Partition: dual OTA (3.5 MB each) + LittleFS (~8.8 MB) on 16 MB flash
+- Partition: dual OTA (3.5 MB each) + LittleFS (~8.8 MB) on 16 MB flash.
+  Measured 2026-08-14 at firmware 1.3.0: app binary 3.16 MB = **86% of the
+  3.5 MB slot, ~510 KB free**. The embedded web page (gzipped) is 362 KB of
+  that and is the fastest-growing part — `main/web/index.html` carries the
+  ~92 KB baked channel catalogue. `idf.py build` prints the free figure on
+  every build; treat a drop below ~250 KB as the point to act.
 
 ## Source Layout
 

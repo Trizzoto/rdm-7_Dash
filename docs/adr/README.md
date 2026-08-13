@@ -40,7 +40,8 @@ Read the relevant ADR before changing the area it covers. The "we already tried 
 | [0032](0032-adding-a-channel-is-a-decision.md) | Accepted | Adding a channel is a decision, and destroying one leaves a copy behind — clicking a catalogue row previews instead of permanently activating; Restore exports the outgoing setup first | `main/web/index.html` |
 | [0033](0033-the-catalogue-travels-with-the-page.md) | Accepted | The catalogue travels with the page, and the poll is the watchdog — firmware tables host-compiled into index.html for setup-from-zero; queued ECU imports; live↔offline detected in place | `main/web/index.html`, `main/ui/settings/preset_picker_data.c`, `tools/native/gen_channel_catalog.c`, `tools/gen_channel_catalog.py` |
 | [0034](0034-removal-returns-to-the-catalogue.md) | Accepted | Removal returns a channel to the catalogue, on every surface — channel_manager_remove + allow_canonical; device editor gains preview-Add, two-tap Remove, and pool-owned row ids | `main/data/channel_manager.*`, `main/net/web_server_channels.c`, `main/ui/screens/first_run_wizard.c`, `main/web/index.html` |
-| [0035](0035-the-source-column-speaks-provenance.md) | Accepted | The Source column speaks provenance, not plumbing — badge + frame id instead of registry names; Ctrl+Shift+S goes to Channels; signal-speak retired from user-facing copy | `main/web/index.html` |
+| [0035](0035-the-source-column-speaks-provenance.md) | Accepted | The Source column speaks provenance, not plumbing — badge + frame id instead of registry names; Ctrl+Shift+S goes to Channels; signal-speak retired from user-facing copy; device pane follows the same rule | `main/web/index.html`, `main/ui/screens/first_run_wizard.c` |
+| [0036](0036-layouts-get-the-tune-file-treatment-too.md) | Accepted | Layouts get the tune-file treatment too, but last-write-wins — offline saves stash per layout name and are offered on reconnect, reusing the existing screenshot/channels reconnect moments | `main/web/index.html` |
 
 ## When to write a new ADR
 
@@ -87,7 +88,7 @@ Existing ADRs vary slightly from this skeleton — none rigorous. Match the surr
 
 ## Numbering
 
-Strictly sequential. The next ADR is `0036`. Don't reuse numbers, even if a draft is abandoned — leave a stub if needed (`0011-abandoned.md` with one line of explanation).
+Strictly sequential. The next ADR is `0037`. Don't reuse numbers, even if a draft is abandoned — leave a stub if needed (`0011-abandoned.md` with one line of explanation).
 
 `0029` is deliberately unclaimed: a draft of it exists outside this repo (the
 GPS "a recording plays as a session" work). Take `0031`, not `0029`.
