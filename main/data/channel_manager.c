@@ -1033,9 +1033,52 @@ static channel_t *_channelize_signal(const signal_t *sig) {
 }
 
 void channel_manager_migrate_decode_from_registry(void) {
-	if (!s_initialised || !s_decode_migration_pending) return;
+	if (!s_initialised) return;
+
+	/* ── Top-up pass, runs on EVERY layout load ────────────────────────
+	 *
+	 * A channel bound to a registered CAN signal but carrying no decode of
+	 * its own is only as good as whatever layout happens to be loaded — and
+	 * that is not what a channel is supposed to be (ADR 0005). It also makes
+	 * the channel backup a lie: channel_to_json emits a signal NAME with no
+	 * decode behind it, so restoring that file onto a dash whose layout
+	 * doesn't define those names leaves every channel unassigned. Names that
+	 * happen to match an OBD2 PID get silently re-homed onto OBD2; the rest
+	 * report `unknown`.
+	 *
+	 * So adopt the decode wherever it is missing, whatever the file version
+	 * says. Cheap (a few hundred string compares once per layout load),
+	 * idempotent, and it never clobbers decode the channel already owns. */
+	{
+		int topped = 0;
+		for (size_t i = 0; i < s_count; ++i) {
+			channel_t *c = s_channels[i];
+			if (!c || !c->signal_name[0] || c->can_id != 0) continue;
+			int16_t idx = signal_find_by_name(c->signal_name);
+			if (idx < 0) continue;
+			signal_t *sig = signal_get_by_index((uint16_t)idx);
+			if (!sig || sig->source != SIGNAL_SOURCE_CAN || sig->can_id == 0) continue;
+			c->can_id        = sig->can_id;
+			c->bit_start     = sig->bit_start;
+			c->bit_length    = sig->bit_length;
+			c->decode_scale  = sig->scale;
+			c->decode_offset = sig->offset;
+			c->is_signed     = sig->is_signed;
+			c->endian        = sig->endian;
+			safe_strcpy(c->decode_unit, sig->unit, sizeof(c->decode_unit));
+			topped++;
+		}
+		if (topped) {
+			ESP_LOGI(TAG, "adopted decode for %d channel(s) that had none", topped);
+			s_dirty = true;
+			channel_manager_save_to_lfs();
+		}
+	}
+
+	if (!s_decode_migration_pending) return;
 
 	int copied = 0, channelized = 0, skipped = 0;
+	int can_seen = 0;   /* CAN signals the registry actually offered */
 	uint16_t scount = signal_get_count();
 	for (uint16_t s = 0; s < scount; ++s) {
 		signal_t *sig = signal_get_by_index(s);
@@ -1044,6 +1087,7 @@ void channel_manager_migrate_decode_from_registry(void) {
 		 * INTERNAL (synthesized) signals re-register themselves at boot and
 		 * have no can_id/bits to copy. */
 		if (sig->source != SIGNAL_SOURCE_CAN || sig->can_id == 0) continue;
+		can_seen++;
 
 		/* Find an existing channel bound to this signal name. */
 		channel_t *owner = NULL;
@@ -1081,17 +1125,30 @@ void channel_manager_migrate_decode_from_registry(void) {
 	 * at its pre-v3 version: the on-disk layout signals[] decode is still intact
 	 * (migration never rewrites the layout), so nothing is lost and the
 	 * migration retries on a later boot (e.g. after the user prunes channels). */
-	if (skipped == 0) {
+	if (skipped == 0 && can_seen > 0) {
 		s_decode_migration_pending = false;
 		s_disk_schema_version = CHM_SCHEMA_VERSION;
-	} else {
+	} else if (skipped) {
 		ESP_LOGW(TAG, "decode migration: %d signal(s) could not be channelized "
 		         "(channel cap %d) — leaving migration PENDING", skipped, CHM_MAX);
+	} else {
+		/* Nothing to migrate YET — not the same as migrated.
+		 *
+		 * This used to stamp v3 anyway, because it only asked whether
+		 * anything was skipped. Boot with a layout that carries no CAN
+		 * signals (a track-map layout, a fresh dash, a layout whose
+		 * signals[] were stripped) and the pass copied nothing, declared
+		 * success, and marked the file "decode already migrated" for good.
+		 * The channels then kept a bare signal name for the rest of the
+		 * device's life — working only while a layout happened to define
+		 * that name, and exporting backups that could not be restored. */
+		ESP_LOGI(TAG, "decode migration: no CAN signals registered yet — "
+		         "still PENDING, will retry on the next layout load");
 	}
 	s_dirty = true;
 	channel_manager_save_to_lfs();
-	ESP_LOGI(TAG, "decode migration -> v%d: %d copied, %d channelized, %d skipped",
-	         s_disk_schema_version, copied, channelized, skipped);
+	ESP_LOGI(TAG, "decode migration -> v%d: %d copied, %d channelized, %d skipped, %d CAN signals seen",
+	         s_disk_schema_version, copied, channelized, skipped, can_seen);
 }
 
 /* ── JSON I/O ─────────────────────────────────────────────────────── */
