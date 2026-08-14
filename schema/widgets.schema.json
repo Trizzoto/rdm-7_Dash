@@ -205,7 +205,7 @@
           "max": 127,
           "enabled_by": "show_rpm_value",
           "group": "Text",
-          "help": "Nudge the number left or right from where it normally sits."
+          "help": "Nudge the number left or right. 0 is centred on the bar."
         },
         {
           "name": "rpm_value_y_offset",
@@ -217,7 +217,7 @@
           "max": 127,
           "enabled_by": "show_rpm_value",
           "group": "Text",
-          "help": "Nudge the number up or down. 0 is vertically centred on the bar."
+          "help": "Nudge the number up or down. 0 sits it just under the bar."
         },
         {
           "name": "redline",
@@ -2086,15 +2086,15 @@
         },
         {
           "name": "shadow_width_extra",
-          "label": "Shadow Extra Width",
+          "label": "Shadow Softness",
           "type": "stepper",
-          "default": 2,
+          "default": 0,
           "category": "appearance",
           "min": 0,
           "max": 32,
           "enabled_by": "shadow_enabled",
           "group": "Shadow",
-          "help": "Make the shadow wider than the needle for a softer look."
+          "help": "Spread the shadow into a soft penumbra. 0 keeps it the same shape as the needle."
         },
         {
           "name": "shadow_color",

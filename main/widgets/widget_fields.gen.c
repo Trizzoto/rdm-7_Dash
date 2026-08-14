@@ -1759,10 +1759,10 @@ static const widget_field_t meter_fields[] = {
         .night_overridable = false,
     },
     {
-        .name = "shadow_width_extra", .label = "Shadow Extra Width",
+        .name = "shadow_width_extra", .label = "Shadow Softness",
         .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
         .min_int = 0, .max_int = 32, .step_int = 0,
-        .default_int = 2, .default_float = 2.000000f, .default_color = 0x000000,
+        .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
         .enabled_by = "shadow_enabled", .group = "Shadow", .inline_key = NULL,

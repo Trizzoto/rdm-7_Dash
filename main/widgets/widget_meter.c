@@ -815,13 +815,154 @@ static inline lv_point_t _tip_pt(const lv_point_t *p1, int32_t dx, int32_t dy,
 	return p;
 }
 
+/* One shadow silhouette, in the same tip-style geometry the main needle uses.
+ *
+ * `pad` inflates every perpendicular half-width by that many pixels. pad == 0
+ * reproduces the needle's own silhouette exactly, including the ov_* overrides,
+ * so the shadow and the needle are the same shape; the penumbra rings pass a
+ * positive pad to spread outwards under it. */
+static void _meter_shadow_pass(lv_draw_ctx_t *ctx, meter_data_t *md,
+                                const lv_point_t *p1, const lv_point_t *p2,
+                                int32_t dx, int32_t dy, int32_t len,
+                                int32_t width, int32_t pad,
+                                lv_color_t color, lv_opa_t opa,
+                                uint8_t style, uint8_t rear_len) {
+	if (opa <= LV_OPA_MIN) return;
+
+	lv_draw_line_dsc_t sline;
+	lv_draw_line_dsc_init(&sline);
+	sline.color = color;
+	sline.opa   = opa;
+	sline.width = (lv_coord_t)(width + 2 * pad);
+	if (style == 1) {
+		sline.round_start = 1;
+		sline.round_end   = 1;
+	}
+
+	/* Flat / Rounded — single line draw, optionally extending behind pivot
+	 * for rear. Matches the BEGIN-time p1-mutation path on the main needle. */
+	if (style <= 1) {
+		lv_point_t draw_p1 = *p1;
+		if (rear_len > 0 && len > 0) {
+			draw_p1.x = (lv_coord_t)(p1->x - _rdiv(dx * (int32_t)rear_len, len));
+			draw_p1.y = (lv_coord_t)(p1->y - _rdiv(dy * (int32_t)rear_len, len));
+		}
+		lv_draw_line(ctx, &sline, &draw_p1, p2);
+		return;
+	}
+
+	/* Polygon styles 2-5 — duplicate the same geometry the main END block
+	 * builds, in shadow color/opa. */
+	if (len == 0) return;
+	lv_draw_rect_dsc_t rdsc;
+	lv_draw_rect_dsc_init(&rdsc);
+	rdsc.bg_color     = color;
+	rdsc.bg_opa       = opa;
+	rdsc.border_width = 0;
+
+	lv_point_t pts[6];
+	uint16_t   npts = 0;
+	int32_t ov_base  = md->needle_tip_base_w;
+	int32_t ov_point = md->needle_tip_point_w;
+	int32_t ov_taper = md->needle_tip_taper;
+	if (ov_taper > 100) ov_taper = 100;
+
+	switch (style) {
+	case 2: {
+		int32_t half_w  = (ov_base  > 0 ? ov_base  : (width / 2 + 1)) + pad;
+		int32_t shaft   = ov_taper > 0 ? ov_taper : 90;
+		int32_t cap_w   = ov_point > 0 ? ov_point + pad : 0;
+		pts[0] = _tip_pt(p1, dx, dy, len, 0,     100,  half_w);
+		pts[1] = _tip_pt(p1, dx, dy, len, shaft, 100,  half_w);
+		if (cap_w > 0) {
+			pts[2] = _tip_pt(p1, dx, dy, len, 100, 100,  cap_w);
+			pts[3] = _tip_pt(p1, dx, dy, len, 100, 100, -cap_w);
+			pts[4] = _tip_pt(p1, dx, dy, len, shaft, 100, -half_w);
+			pts[5] = _tip_pt(p1, dx, dy, len, 0,     100, -half_w);
+			npts = 6;
+		} else {
+			pts[2] = *p2;
+			pts[3] = _tip_pt(p1, dx, dy, len, shaft, 100, -half_w);
+			pts[4] = _tip_pt(p1, dx, dy, len, 0,     100, -half_w);
+			npts = 5;
+		}
+		break;
+	}
+	case 3: {
+		int32_t half_w = (ov_base > 0 ? ov_base : (width / 2 + 2)) + pad;
+		if (ov_point > 0 || (ov_taper > 0 && ov_taper < 100)) {
+			int32_t cap_pos = ov_taper > 0 ? ov_taper : 97;
+			int32_t cap_w   = (ov_point > 0 ? ov_point : 1) + pad;
+			pts[0] = _tip_pt(p1, dx, dy, len, 0,       100,  half_w);
+			pts[1] = _tip_pt(p1, dx, dy, len, cap_pos, 100,  cap_w);
+			pts[2] = _tip_pt(p1, dx, dy, len, cap_pos, 100, -cap_w);
+			pts[3] = _tip_pt(p1, dx, dy, len, 0,       100, -half_w);
+			npts = 4;
+		} else {
+			pts[0] = _tip_pt(p1, dx, dy, len, 0, 1,  half_w);
+			pts[1] = *p2;
+			pts[2] = _tip_pt(p1, dx, dy, len, 0, 1, -half_w);
+			npts = 3;
+		}
+		break;
+	}
+	case 4: {
+		int32_t half_w  = (ov_base  > 0 ? ov_base  : (width / 2 + 2)) + pad;
+		int32_t cap_pos = ov_taper > 0 ? ov_taper : 97;
+		int32_t cap_w   = (ov_point > 0 ? ov_point : 1) + pad;
+		pts[0] = _tip_pt(p1, dx, dy, len, 0,       100,  half_w);
+		pts[1] = _tip_pt(p1, dx, dy, len, cap_pos, 100,  cap_w);
+		pts[2] = _tip_pt(p1, dx, dy, len, cap_pos, 100, -cap_w);
+		pts[3] = _tip_pt(p1, dx, dy, len, 0,       100, -half_w);
+		npts = 4;
+		break;
+	}
+	case 5: {
+		int32_t half_w  = (ov_base  > 0 ? ov_base  : (width / 2 + 3)) + pad;
+		int32_t mid_pos = ov_taper > 0 ? ov_taper : 50;
+		pts[0] = *p1;
+		pts[1] = _tip_pt(p1, dx, dy, len, mid_pos, 100,  half_w);
+		pts[2] = *p2;
+		pts[3] = _tip_pt(p1, dx, dy, len, mid_pos, 100, -half_w);
+		npts = 4;
+		break;
+	}
+	default: break;
+	}
+	if (npts > 0) lv_draw_polygon(ctx, &rdsc, pts, npts);
+
+	/* Polygon rear — same opa/width as the polygon body. */
+	if (rear_len > 0) {
+		int32_t rx = p1->x - _rdiv(dx * (int32_t)rear_len, len);
+		int32_t ry = p1->y - _rdiv(dy * (int32_t)rear_len, len);
+		lv_point_t rear_start = { (lv_coord_t)rx, (lv_coord_t)ry };
+		lv_draw_line(ctx, &sline, &rear_start, p1);
+	}
+}
+
 /* Drop-shadow renderer. Drawn from inside DRAW_PART_BEGIN of the shadow
  * indicator (before the main needle), so it lands UNDER the main needle in
  * z-order. Mirrors the same tip-style + rear-extension geometry the main
  * needle uses, just shifted by (shadow_offset_x, shadow_offset_y), in
- * shadow_color, with shadow_opa and a width of needle_width +
- * shadow_width_extra. After this returns the caller sets the LVGL line's
- * own opa to TRANSP so the original-position line draw is suppressed. */
+ * shadow_color at shadow_opa. After this returns the caller sets the LVGL
+ * line's own opa to TRANSP so the original-position line draw is suppressed.
+ *
+ * The silhouette is the needle's OWN width. It used to be drawn at
+ * needle_width + shadow_width_extra, which is not what a cast shadow is: the
+ * geometry is pivot-anchored, so at the hub the shadow sat exactly concentric
+ * with the needle and a wider concentric copy can only read as a symmetric
+ * rim -- an outline around the ball, fattest precisely where the offset was
+ * smallest. The same thing swallowed the whole needle at 12 o'clock, where
+ * shadow_dynamic scales the offset to zero and the "shadow" became a halo of
+ * even thickness down both sides. Matching the needle's width means the
+ * shadow is fully hidden under it wherever the offset vanishes, and emerges
+ * along the length as the offset grows -- which is what a shadow hinged at
+ * the hub actually looks like.
+ *
+ * shadow_width_extra now buys a PENUMBRA instead: faint wider passes laid
+ * under the solid core so a diffuse shadow stays available, without the hard
+ * edge a single inflated copy produced. It defaults to 0, so the common path
+ * draws exactly one silhouette -- no more work than before. */
 static void _meter_draw_shadow_needle(lv_draw_ctx_t *ctx, meter_data_t *md,
                                        const lv_point_t *orig_p1,
                                        const lv_point_t *orig_p2,
@@ -866,7 +1007,9 @@ static void _meter_draw_shadow_needle(lv_draw_ctx_t *ctx, meter_data_t *md,
 	lv_point_t p1 = *orig_p1;
 	lv_point_t p2 = { (lv_coord_t)(orig_p2->x + ox), (lv_coord_t)(orig_p2->y + oy) };
 
-	int32_t width  = (int32_t)md->needle_width + (int32_t)md->shadow_width_extra;
+	/* The needle's OWN width — see the header comment. shadow_width_extra is
+	 * applied below as penumbra rings, not baked into the core silhouette. */
+	int32_t width  = (int32_t)md->needle_width;
 	if (width < 1) width = 1;
 	uint8_t style    = md->needle_tip_style;
 	uint8_t rear_len = md->needle_rear_length;
@@ -897,115 +1040,23 @@ static void _meter_draw_shadow_needle(lv_draw_ctx_t *ctx, meter_data_t *md,
 		}
 	}
 
-	lv_draw_line_dsc_t sline;
-	lv_draw_line_dsc_init(&sline);
-	sline.color = color;
-	sline.opa   = opa;
-	sline.width = (lv_coord_t)width;
-	if (style == 1) {
-		sline.round_start = 1;
-		sline.round_end   = 1;
-	}
-
-	/* Flat / Rounded — single line draw, optionally extending behind pivot
-	 * for rear. Matches the BEGIN-time p1-mutation path on the main needle. */
-	if (style <= 1) {
-		lv_point_t draw_p1 = p1;
-		if (rear_len > 0 && len > 0) {
-			draw_p1.x = (lv_coord_t)(p1.x - _rdiv(dx * (int32_t)rear_len, len));
-			draw_p1.y = (lv_coord_t)(p1.y - _rdiv(dy * (int32_t)rear_len, len));
+	/* Penumbra first, so the solid core lands on top of it. Two rings is
+	 * enough to read as a falloff once each edge is anti-aliased, and it
+	 * bounds the cost at three silhouettes on the frames that opt in.
+	 * shadow_width_extra defaults to 0, so the usual path draws one. */
+	int32_t extra = (int32_t)md->shadow_width_extra;
+	if (extra > 0) {
+		const int32_t  ring_pad[2] = { extra, extra / 2 };
+		const lv_opa_t ring_opa[2] = { (lv_opa_t)(opa / 4), (lv_opa_t)(opa / 2) };
+		for (int i = 0; i < 2; i++) {
+			if (ring_pad[i] <= 0) continue;          /* extra == 1 → one ring */
+			_meter_shadow_pass(ctx, md, &p1, &p2, dx, dy, len, width,
+			                    ring_pad[i], color, ring_opa[i], style, rear_len);
 		}
-		lv_draw_line(ctx, &sline, &draw_p1, &p2);
-		return;
 	}
 
-	/* Polygon styles 2-5 — duplicate the same geometry the main END block
-	 * builds, in shadow color/opa. */
-	if (len == 0) return;
-	lv_draw_rect_dsc_t rdsc;
-	lv_draw_rect_dsc_init(&rdsc);
-	rdsc.bg_color     = color;
-	rdsc.bg_opa       = opa;
-	rdsc.border_width = 0;
-
-	lv_point_t pts[6];
-	uint16_t   npts = 0;
-	int32_t ov_base  = md->needle_tip_base_w;
-	int32_t ov_point = md->needle_tip_point_w;
-	int32_t ov_taper = md->needle_tip_taper;
-	if (ov_taper > 100) ov_taper = 100;
-
-	switch (style) {
-	case 2: {
-		int32_t half_w  = ov_base  > 0 ? ov_base  : (width / 2 + 1);
-		int32_t shaft   = ov_taper > 0 ? ov_taper : 90;
-		int32_t cap_w   = ov_point;
-		pts[0] = _tip_pt(&p1, dx, dy, len, 0,     100,  half_w);
-		pts[1] = _tip_pt(&p1, dx, dy, len, shaft, 100,  half_w);
-		if (cap_w > 0) {
-			pts[2] = _tip_pt(&p1, dx, dy, len, 100, 100,  cap_w);
-			pts[3] = _tip_pt(&p1, dx, dy, len, 100, 100, -cap_w);
-			pts[4] = _tip_pt(&p1, dx, dy, len, shaft, 100, -half_w);
-			pts[5] = _tip_pt(&p1, dx, dy, len, 0,     100, -half_w);
-			npts = 6;
-		} else {
-			pts[2] = p2;
-			pts[3] = _tip_pt(&p1, dx, dy, len, shaft, 100, -half_w);
-			pts[4] = _tip_pt(&p1, dx, dy, len, 0,     100, -half_w);
-			npts = 5;
-		}
-		break;
-	}
-	case 3: {
-		int32_t half_w = ov_base > 0 ? ov_base : (width / 2 + 2);
-		if (ov_point > 0 || (ov_taper > 0 && ov_taper < 100)) {
-			int32_t cap_pos = ov_taper > 0 ? ov_taper : 97;
-			int32_t cap_w   = ov_point > 0 ? ov_point : 1;
-			pts[0] = _tip_pt(&p1, dx, dy, len, 0,       100,  half_w);
-			pts[1] = _tip_pt(&p1, dx, dy, len, cap_pos, 100,  cap_w);
-			pts[2] = _tip_pt(&p1, dx, dy, len, cap_pos, 100, -cap_w);
-			pts[3] = _tip_pt(&p1, dx, dy, len, 0,       100, -half_w);
-			npts = 4;
-		} else {
-			pts[0] = _tip_pt(&p1, dx, dy, len, 0, 1,  half_w);
-			pts[1] = p2;
-			pts[2] = _tip_pt(&p1, dx, dy, len, 0, 1, -half_w);
-			npts = 3;
-		}
-		break;
-	}
-	case 4: {
-		int32_t half_w  = ov_base  > 0 ? ov_base  : (width / 2 + 2);
-		int32_t cap_pos = ov_taper > 0 ? ov_taper : 97;
-		int32_t cap_w   = ov_point > 0 ? ov_point : 1;
-		pts[0] = _tip_pt(&p1, dx, dy, len, 0,       100,  half_w);
-		pts[1] = _tip_pt(&p1, dx, dy, len, cap_pos, 100,  cap_w);
-		pts[2] = _tip_pt(&p1, dx, dy, len, cap_pos, 100, -cap_w);
-		pts[3] = _tip_pt(&p1, dx, dy, len, 0,       100, -half_w);
-		npts = 4;
-		break;
-	}
-	case 5: {
-		int32_t half_w  = ov_base  > 0 ? ov_base  : (width / 2 + 3);
-		int32_t mid_pos = ov_taper > 0 ? ov_taper : 50;
-		pts[0] = p1;
-		pts[1] = _tip_pt(&p1, dx, dy, len, mid_pos, 100,  half_w);
-		pts[2] = p2;
-		pts[3] = _tip_pt(&p1, dx, dy, len, mid_pos, 100, -half_w);
-		npts = 4;
-		break;
-	}
-	default: break;
-	}
-	if (npts > 0) lv_draw_polygon(ctx, &rdsc, pts, npts);
-
-	/* Polygon rear — same opa/width as the polygon body. */
-	if (rear_len > 0) {
-		int32_t rx = p1.x - _rdiv(dx * (int32_t)rear_len, len);
-		int32_t ry = p1.y - _rdiv(dy * (int32_t)rear_len, len);
-		lv_point_t rear_start = { (lv_coord_t)rx, (lv_coord_t)ry };
-		lv_draw_line(ctx, &sline, &rear_start, &p1);
-	}
+	_meter_shadow_pass(ctx, md, &p1, &p2, dx, dy, len, width, 0,
+	                    color, opa, style, rear_len);
 }
 
 /* Stamp a tick image rotated to a tick's angle. `cx,cy` = meter centre (for the
@@ -2166,7 +2217,7 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "shadow_offset_y", md->shadow_offset_y);
 	if (md->shadow_opa != 120)
 		cJSON_AddNumberToObject(cfg, "shadow_opa", md->shadow_opa);
-	if (md->shadow_width_extra != 2)
+	if (md->shadow_width_extra != 0)
 		cJSON_AddNumberToObject(cfg, "shadow_width_extra", md->shadow_width_extra);
 	if (md->shadow_color.full != lv_color_black().full)
 		cJSON_AddNumberToObject(cfg, "shadow_color", (int)md->shadow_color.full);
@@ -3233,7 +3284,7 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	md->shadow_offset_x    = 3;
 	md->shadow_offset_y    = 4;
 	md->shadow_opa         = 120;
-	md->shadow_width_extra = 2;
+	md->shadow_width_extra = 0;
 	md->shadow_color       = lv_color_black();
 	/* Tick label defaults */
 	md->tick_label_color = lv_color_white();
