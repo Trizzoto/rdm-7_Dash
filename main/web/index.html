@@ -4580,11 +4580,11 @@
             <div class="layout-menu-wrap" id="layoutMenuWrap">
                 <button class="btn btn-secondary btn-icon" onclick="toggleLayoutMenu()" title="Layout actions" aria-label="Layout actions">&#9662;</button>
                 <div class="layout-menu" id="layoutMenu">
-                    <div class="layout-menu-item" onclick="layoutEditorNew(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New Layout...</div>
-                    <div class="layout-menu-item" onclick="layoutEditorSaveAs(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Save As...</div>
-                    <div class="layout-menu-item" onclick="renameCurrentLayout(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>Rename...</div>
-                    <div class="layout-menu-item" onclick="resetDefaultLayout(); closeLayoutMenu()" style="color:hsl(0,70%,60%)"><svg viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>Reset Default Layout</div>
-                    <div class="layout-menu-item" onclick="deleteCurrentLayout(); closeLayoutMenu()" style="color:hsl(0,70%,60%)"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>Delete Layout</div>
+                    <div class="layout-menu-item" onclick="layoutEditorNew(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New dashboard&hellip;</div>
+                    <div class="layout-menu-item" onclick="layoutEditorSaveAs(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Save as&hellip;</div>
+                    <div class="layout-menu-item" onclick="renameCurrentLayout(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>Rename&hellip;</div>
+                    <div class="layout-menu-item" onclick="resetDefaultLayout(); closeLayoutMenu()" style="color:hsl(0,70%,60%)"><svg viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>Reset default layout</div>
+                    <div class="layout-menu-item" onclick="deleteCurrentLayout(); closeLayoutMenu()" style="color:hsl(0,70%,60%)"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>Delete dashboard</div>
                 </div>
             </div>
             <select id="splashSelect" style="display:none; background:var(--bg); color:var(--text); border:1px solid var(--border); padding:5px 8px; border-radius:var(--radius-sm); font-size:11px; font-family:'JetBrains Mono', monospace;" onchange="switchSplash(this.value)"></select>
@@ -4595,7 +4595,7 @@
                 <button class="btn btn-secondary btn-icon" onclick="toggleSplashMenu()" title="Splash actions">&#9776;</button>
                 <div class="layout-menu" id="splashMenu">
                     <div class="layout-menu-item" onclick="splashNew(); closeSplashMenu()"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New Splash...</div>
-                    <div class="layout-menu-item" onclick="renameSplash(); closeSplashMenu()"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>Rename...</div>
+                    <div class="layout-menu-item" onclick="renameSplash(); closeSplashMenu()"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>Rename&hellip;</div>
                     <div class="layout-menu-sep"></div>
                     <div class="layout-menu-item" onclick="splashDelete(); closeSplashMenu()" style="color:hsl(0,70%,60%)"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>Delete Splash</div>
                 </div>
@@ -26390,8 +26390,6 @@
             upload:   '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',
             download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
             activity: '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
-            database: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>',
-            gauge:    '<path d="M12 14l4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>',
             reset:    '<path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 4 3 10 9 10"/>',
             help:     '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12" y2="17.01"/>',
             trash:    '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
@@ -26400,20 +26398,13 @@
             redo:     '<path d="M21 7v6h-6"/><path d="M20.49 13a9 9 0 1 1-2.13-9.36L21 7"/>',
             shop:     '<path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/>',
             pointer:     '<path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/><path d="M13 13l6 6"/>',
-            brightness:  '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
-            sync:        '<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
             arrowUp:     '<line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>',
             arrowDown:   '<line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/>',
             chevronsUp:  '<polyline points="17 11 12 6 7 11"/><polyline points="17 18 12 13 7 18"/>',
             chevronsDown:'<polyline points="7 13 12 18 17 13"/><polyline points="7 6 12 11 17 6"/>',
             /* OBD2 section icons */
             settings:    '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
-            alert:       '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
-            car:         '<path d="M5 11l1.5-4.5a2 2 0 0 1 1.9-1.5h7.2a2 2 0 0 1 1.9 1.5L19 11"/><path d="M5 11h14v6a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-1H8v1a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-6z"/><circle cx="7.5" cy="14.5" r="0.8" fill="currentColor"/><circle cx="16.5" cy="14.5" r="0.8" fill="currentColor"/>',
-            chip:        '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 7v4M9 13v4M15 7v10"/><circle cx="15" cy="7" r="1.5" fill="currentColor"/>',
-            camera:      '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>',
-            folder:      '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
-            arrowSwap:   '<polyline points="7 17 2 12 7 7"/><line x1="2" y1="12" x2="22" y2="12"/><polyline points="17 7 22 12 17 17"/>'
+            camera:      '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>'
         };
         function _iconSvg(name) {
             const path = _menuIcons[name];
@@ -26434,74 +26425,97 @@
             panel.classList.add('active');
             content.innerHTML = '';
 
-            const sections = [
-                /* Tools & settings all live in the Setup studio panel now \u2014
-                 * one tap jumps there. This menu keeps only the things Setup
-                 * doesn't host: Edit (undo/redo), Arrange (z-order), Stream &
-                 * View, and the layout-file ops. */
-                { heading: 'Configuration', items: [
-                    { type: 'button', label: 'Open Setup (Channels, Logger, OBD2\u2026)', icon: 'settings', onclick: "setStudioMode('setup')" }
-                ]},
-                { heading: 'Layout', items: [
-                    { type: 'select', id: 'layoutSelect' },
-                    { type: 'button', label: 'Save',        icon: 'save',   onclick: 'saveActiveLayout()' },
-                    { type: 'button', label: 'New Layout\u2026', icon: 'plus', onclick: 'layoutEditorNew()' },
-                    { type: 'button', label: 'Save As\u2026',    icon: 'copy', onclick: 'layoutEditorSaveAs()' },
-                    { type: 'button', label: 'Rename\u2026',  icon: 'edit',   onclick: 'renameCurrentLayout()' }
-                ]},
-                { heading: 'Screen', items: [
-                    { type: 'select', id: 'screenModeSelect' }
-                ]},
-                { heading: 'Startup', items: [
-                    { type: 'select', id: 'bootAnimSelect' }
-                ]},
-                { heading: 'File', items: [
-                    { type: 'button', label: 'Import .rdm',         icon: 'upload',   onclick: 'importRdm()' },
-                    { type: 'button', label: 'Load JSON…',     icon: 'upload',   onclick: 'openLoadJsonModal()' },
-                    { type: 'button', label: 'Export .rdm',         icon: 'download', onclick: 'exportRdm()' },
-                    { type: 'button', label: 'Export Screenshot',   icon: 'camera',   onclick: 'downloadScreenshot()' },
-                    { type: 'button', label: 'File Manager…',  icon: 'folder',   onclick: 'openStorageManager()' }
-                ]},
-                { heading: 'Edit', items: [
-                    { type: 'button', label: 'Undo',  icon: 'undo', onclick: 'undo()' },
-                    { type: 'button', label: 'Redo',  icon: 'redo', onclick: 'redo()' }
-                ]},
-                /* Arrange — z-order controls. Buttons no-op silently when
-                 * nothing is selected, which is fine on touch where the
-                 * user opens the panel WITH a widget already selected. */
-                { heading: 'Arrange', items: [
-                    { type: 'button', label: 'Bring to Front',   icon: 'chevronsUp',   onclick: "bumpZOrder('front')" },
-                    { type: 'button', label: 'Bring Forward',    icon: 'arrowUp',      onclick: 'bumpZOrder(1)' },
-                    { type: 'button', label: 'Send Backward',    icon: 'arrowDown',    onclick: 'bumpZOrder(-1)' },
-                    { type: 'button', label: 'Send to Back',     icon: 'chevronsDown', onclick: "bumpZOrder('back')" }
-                ]},
-                /* Tools (Signal Dashboard, Channels, Data Logger, Fuel, Dimmer,
-                 * Gear, Switcher, DBC, Create Preset, Device Info, Marketplace)
-                 * and OBD2 (Setup, Trouble Codes, Vehicle Info, Custom PIDs)
-                 * sections were removed from this menu \u2014 they all now live
-                 * as cards in the Setup studio panel, reached via "Open Setup"
-                 * above. The OBD2 sub-items (Trouble Codes / Vehicle Info /
-                 * Custom PIDs) stay reachable from inside the OBD2 Setup modal. */
-                /* Live & View — replicates the header pills that disappear at
-                 * narrow widths so phone/tablet users still reach simulation,
-                 * the live preview, and remote control. */
-                { heading: 'Live & View', items: [
-                    { type: 'toggle', label: 'SIM',     icon: 'activity', getState: () => {
-                            const p = document.getElementById('pillSimulate');
-                            return !!(p && p.classList.contains('active'));
-                        }, onclick: 'toggleSimulation()' },
-                    { type: 'toggle', label: 'LIVE', icon: 'monitor', getState: () => (typeof _livePreviewOn !== 'undefined' ? _livePreviewOn : true),
-                        onclick: 'toggleLivePreview()' },
-                    { type: 'toggle', label: 'CONTROL', icon: 'pointer', getState: () => (typeof _liveControlOn !== 'undefined' && _liveControlOn),
-                        onclick: 'toggleLiveControl()' },
-                    { type: 'button', label: 'Reset View',   icon: 'reset', onclick: 'resetView()' },
-                    { type: 'button', label: 'Keyboard Shortcuts', icon: 'help',  onclick: "document.getElementById('helpModal').style.display='flex'" }
-                ]},
-                { heading: 'Danger zone', items: [
-                    { type: 'button', label: 'Reset Default Layout', icon: 'reset', onclick: 'resetDefaultLayout()', danger: true },
-                    { type: 'button', label: 'Delete Layout', icon: 'trash', onclick: 'deleteCurrentLayout()', danger: true }
-                ]}
-            ];
+            /* ── What belongs in here ────────────────────────────────────
+             * This panel is the app menu for the DOCUMENT — the dashboard you
+             * are editing: which one, saving it, getting it in and out, undo,
+             * z-order, how the canvas is shown. Setup owns the CAR and the
+             * DASH (ECU, OBD2, gear, fuel, screen, WiFi, device); Channels
+             * owns the bindings. Neither is re-listed here — the Go to
+             * section is the whole handoff.
+             *
+             * It is also mode-aware now. It used to offer Undo, Bring to
+             * Front and Delete Layout while you sat in Channels, acting on a
+             * canvas that wasn't on screen. Outside Design only Go to and
+             * View are built.
+             *
+             * Names match the Setup cards exactly where both reach the same
+             * thing — this said "Import .rdm" where Setup says "Open
+             * dashboard bundle", two names for one action. File manager and
+             * Load layout JSON are gone from here: the first browses DEVICE
+             * storage and the second is an expert path, so both stay
+             * Setup-only (ADR-0039). */
+            const _mode = document.body.classList.contains('studio-setup')    ? 'setup'
+                        : document.body.classList.contains('studio-channels') ? 'channels'
+                        : 'design';
+            const _inDesign = (_mode === 'design');
+
+            const sections = [];
+
+            /* Only the places you are NOT. The header switcher shows all
+             * three, but it is among the first things squeezed out at narrow
+             * widths, and on a phone this panel is the only route. */
+            sections.push({ heading: 'Go to', items: [
+                _mode !== 'design'   && { type: 'button', label: 'Design',   icon: 'edit',     onclick: "setStudioMode('design')" },
+                _mode !== 'channels' && { type: 'button', label: 'Channels', icon: 'activity', onclick: "setStudioMode('channels')" },
+                _mode !== 'setup'    && { type: 'button', label: 'Setup',    icon: 'settings', onclick: "setStudioMode('setup')" }
+            ].filter(Boolean) });
+
+            if (_inDesign) {
+                sections.push({ heading: 'Dashboard', items: [
+                    { type: 'select', id: 'layoutSelect', label: 'Editing' },
+                    { type: 'button', label: 'Save',              icon: 'save', onclick: 'saveActiveLayout()' },
+                    { type: 'button', label: 'New dashboard…', icon: 'plus', onclick: 'layoutEditorNew()' },
+                    { type: 'button', label: 'Save as…',       icon: 'copy', onclick: 'layoutEditorSaveAs()' },
+                    { type: 'button', label: 'Rename…',        icon: 'edit', onclick: 'renameCurrentLayout()' }
+                ]});
+                sections.push({ heading: 'File', items: [
+                    { type: 'button', label: 'Open dashboard bundle', icon: 'upload',   onclick: 'importRdm()' },
+                    { type: 'button', label: 'Save dashboard bundle', icon: 'download', onclick: 'exportRdm()' },
+                    { type: 'button', label: 'Export screenshot',     icon: 'camera',   onclick: 'downloadScreenshot()' },
+                    { type: 'button', label: 'Marketplace',           icon: 'shop',     onclick: 'openMarketplace()' }
+                ]});
+                sections.push({ heading: 'Edit', items: [
+                    { type: 'button', label: 'Undo', hint: 'Ctrl+Z', icon: 'undo', onclick: 'undo()' },
+                    { type: 'button', label: 'Redo', hint: 'Ctrl+Y', icon: 'redo', onclick: 'redo()' }
+                ]});
+                /* Arrange — z-order. These no-op silently with nothing
+                 * selected, which is fine on touch where you open the panel
+                 * WITH a widget already selected. */
+                sections.push({ heading: 'Arrange', items: [
+                    { type: 'button', label: 'Bring to front', hint: 'Ctrl+Shift+]', icon: 'chevronsUp',   onclick: "bumpZOrder('front')" },
+                    { type: 'button', label: 'Bring forward',  hint: 'Ctrl+]',       icon: 'arrowUp',      onclick: 'bumpZOrder(1)' },
+                    { type: 'button', label: 'Send backward',  hint: 'Ctrl+[',       icon: 'arrowDown',    onclick: 'bumpZOrder(-1)' },
+                    { type: 'button', label: 'Send to back',   hint: 'Ctrl+Shift+[', icon: 'chevronsDown', onclick: "bumpZOrder('back')" }
+                ]});
+                /* Screen and Startup were two headings holding one select each. */
+                sections.push({ heading: 'Screen', items: [
+                    { type: 'select', id: 'screenModeSelect', label: 'Showing' },
+                    { type: 'select', id: 'bootAnimSelect',  label: 'On boot' }
+                ]});
+            }
+
+            /* View — replicates the header pills that vanish at narrow
+             * widths. SIM and CONTROL are about the DASH, so they stay
+             * reachable from every mode; Reset view is canvas-only. */
+            sections.push({ heading: 'View', items: [
+                { type: 'toggle', label: 'SIM', icon: 'activity', getState: () => {
+                        const p = document.getElementById('pillSimulate');
+                        return !!(p && p.classList.contains('active'));
+                    }, onclick: 'toggleSimulation()' },
+                { type: 'toggle', label: 'LIVE', icon: 'monitor', getState: () => (typeof _livePreviewOn !== 'undefined' ? _livePreviewOn : true),
+                    onclick: 'toggleLivePreview()' },
+                { type: 'toggle', label: 'CONTROL', icon: 'pointer', getState: () => (typeof _liveControlOn !== 'undefined' && _liveControlOn),
+                    onclick: 'toggleLiveControl()' },
+                _inDesign && { type: 'button', label: 'Reset view', icon: 'reset', onclick: 'resetView()' },
+                { type: 'button', label: 'Keyboard shortcuts', icon: 'help', onclick: "document.getElementById('helpModal').style.display='flex'" }
+            ].filter(Boolean) });
+
+            if (_inDesign) {
+                sections.push({ heading: 'Danger zone', items: [
+                    { type: 'button', label: 'Reset default layout', icon: 'reset', onclick: 'resetDefaultLayout()', danger: true },
+                    { type: 'button', label: 'Delete dashboard',     icon: 'trash', onclick: 'deleteCurrentLayout()', danger: true }
+                ]});
+            }
 
             sections.forEach(section => {
                 const h = document.createElement('div');
@@ -26526,10 +26540,26 @@
                             orig.value = this.value;
                             orig.dispatchEvent(new Event('change'));
                         };
+                        /* Optional caption. Two bare selects under one heading
+                         * is a guessing game — Screen holds both "what the dash
+                         * is showing" and "how it boots". */
+                        if (mi.label) {
+                            const lbl = document.createElement('div');
+                            lbl.textContent = mi.label;
+                            lbl.style.cssText = 'font-size:11px;color:var(--text-muted);margin:6px 0 -1px;';
+                            content.appendChild(lbl);
+                        }
                         content.appendChild(clone);
                     } else if (mi.type === 'button') {
                         const btn = document.createElement('button');
-                        btn.innerHTML = (mi.icon ? _iconSvg(mi.icon) : '') + '<span>' + mi.label + '</span>';
+                        /* A keyboard hint, right-aligned and muted. The menu is
+                         * the only place these shortcuts are discoverable
+                         * outside the help modal, and a panel you reach for
+                         * twice is a good place to learn you needn't. */
+                        const hint = mi.hint
+                            ? '<span style="margin-left:auto;padding-left:12px;font-size:11px;color:var(--text-muted);white-space:nowrap;">' + mi.hint + '</span>'
+                            : '';
+                        btn.innerHTML = (mi.icon ? _iconSvg(mi.icon) : '') + '<span>' + mi.label + '</span>' + hint;
                         const color  = mi.danger ? 'hsl(0,70%,62%)' : 'var(--text)';
                         const border = mi.danger ? '1px solid hsla(0,70%,50%,0.35)' : '1px solid var(--border)';
                         btn.style.cssText = 'display:flex;align-items:center;width:100%;margin:4px 0;font-size:14px;padding:0 14px;min-height:44px;background:var(--panel);border:' + border + ';color:' + color + ';border-radius:8px;cursor:pointer;text-align:left;';
