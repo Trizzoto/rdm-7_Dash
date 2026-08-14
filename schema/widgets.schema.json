@@ -5205,11 +5205,11 @@
         {
           "name": "track_asset",
           "label": "Track",
-          "type": "text",
+          "type": "track_picker",
           "default": "",
           "category": "data",
           "group": "Track",
-          "help": "Which track shape to draw. Push one from RDM Studio (GPS workspace -> Tracks -> Shape) and type its name here. The circuit's own name is stored inside the file, so this is just the filename."
+          "help": "Which circuit to draw. Lists the tracks installed on this dash. Push one from RDM Studio (GPS workspace -> Tracks -> Shape), or upload a .rdmtrk here — sending the same track again replaces it."
         },
         {
           "name": "line_color",

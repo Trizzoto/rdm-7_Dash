@@ -9037,7 +9037,7 @@
                     "track_map": {
                         displayName: "Track Map", defW: 320, defH: 240,
                         fields: [
-                            { name: "track_asset", label: "Track", type: "text", def: "", cat: "data", group: "Track", help: "Which track shape to draw. Push one from RDM Studio (GPS workspace -> Tracks -> Shape) and type its name here. The circuit's own name is stored inside the file, so this is just the filename." },
+                            { name: "track_asset", label: "Track", type: "track_picker", def: "", cat: "data", group: "Track", help: "Which circuit to draw. Lists the tracks installed on this dash. Push one from RDM Studio (GPS workspace -> Tracks -> Shape), or upload a .rdmtrk here — sending the same track again replaces it." },
                             { name: "line_color", label: "Track Color", type: "color", def: 0x5A6472, cat: "appearance", group: "Track", help: "Colour of the circuit outline.", nightOverridable: true },
                             { name: "line_width", label: "Track Width", type: "stepper", def: 3, cat: "appearance", group: "Track", help: "How thick the outline is drawn.", min: 1, max: 20 },
                             { name: "show_start_finish", label: "Show Start/Finish", type: "checkbox", def: true, cat: "appearance", group: "Track", help: "Draw a tick across the track where the lap starts." },
@@ -12133,7 +12133,7 @@
                                 if (fDef) {
                                     if (fDef.type === 'color') vtype = 'color';
                                     else if (fDef.type === 'checkbox') vtype = 'bool';
-                                    else if (fDef.type === 'text' || fDef.type === 'image_picker' || fDef.type === 'font') vtype = 'string';
+                                    else if (fDef.type === 'text' || fDef.type === 'image_picker' || fDef.type === 'track_picker' || fDef.type === 'font') vtype = 'string';
                                     /* select options can be numeric (Number()'d on change) or
                                      * string-valued; tag by the actual stored value so a
                                      * string-option select isn't emitted as type:'number'
@@ -12814,6 +12814,21 @@
                     ${_afSummary}
                     <input type="file" id="animUploadInput" accept="image/gif,video/mp4,video/webm,image/png,image/jpeg" multiple style="display:none" onchange="openAnimUploadDialog(this)">
                 </div>`;
+            } else if (f.type === 'track_picker') {
+                /* Installed circuits, not a typed name. Studio pushes a track
+                 * to /lfs/tracks and then told you to go and type that slug in
+                 * here by hand; the dash already knows what it holds, so it
+                 * lists them. Upload takes a .rdmtrk straight in, and the bin
+                 * removes the selected circuit from the device. */
+                html += `<div class="image-picker-wrap">
+                    <select id="trksel_${f.name}" onchange="updateWidgetConfigField('${f.name}', this.value, false)" ${disabledAttr}>
+                        <option value="">(none)</option>
+                    </select>
+                    <button type="button" onclick="document.getElementById('trkUploadInput_${f.name}').click()" ${disabledAttr} title="Upload a .rdmtrk track (same name replaces it)" style="padding:4px 8px; cursor:pointer;">&#x2B06;</button>
+                    <input type="file" id="trkUploadInput_${f.name}" accept=".rdmtrk" style="display:none" onchange="uploadTrackFile(this, '${f.name}')">
+                    <button type="button" onclick="deleteSelectedTrack('trksel_${f.name}', '${f.name}')" ${disabledAttr} title="Delete this track from the device" style="padding:4px 8px; cursor:pointer; color:hsl(0,70%,60%);">&#x1F5D1;</button>
+                </div>`;
+                setTimeout(() => _populateTrackSelect('trksel_' + f.name, val), 0);
             } else if (f.type === 'image_picker') {
                 html += `<div class="image-picker-wrap">
                     <select id="imgsel_${f.name}" onchange="updateWidgetConfigField('${f.name}', this.value, false)" ${disabledAttr}>
@@ -14992,6 +15007,96 @@
                     sel.appendChild(opt);
                 });
             } catch (e) { /* device offline */ }
+        }
+
+        /* -- Track assets (.rdmtrk on /lfs/tracks) ---------------------
+         * The device is the source of truth for what is installed; the widget
+         * only references a name. Studio's outline push writes through this
+         * same /api/track/upload, so a circuit sent from the GPS page turns up
+         * in this list without anyone copying a slug across. */
+        async function _populateTrackSelect(selectId, currentVal) {
+            const sel = document.getElementById(selectId);
+            if (!sel) return;
+            try {
+                const resp = await fetch('/api/track/list');
+                if (!resp.ok) return;
+                const tracks = await resp.json();
+                tracks.forEach(tr => {
+                    const opt = document.createElement('option');
+                    opt.value = tr.name;
+                    /* Show the circuit's own name when it differs from the
+                     * filename: the filename is a slug, the inner name is what
+                     * a human recognises. */
+                    const human = (tr.track && tr.track !== tr.name) ? (' \u2014 ' + tr.track) : '';
+                    opt.textContent = tr.name + human + ' (' + tr.points + ' pts)';
+                    if (tr.name === currentVal) opt.selected = true;
+                    sel.appendChild(opt);
+                });
+                /* A track the layout references but the device no longer holds
+                 * would otherwise fall back to (none) and read as the widget
+                 * having lost its setting. */
+                if (currentVal && !tracks.some(tr => tr.name === currentVal)) {
+                    const miss = document.createElement('option');
+                    miss.value = currentVal;
+                    miss.textContent = currentVal + ' \u2014 not on this dash';
+                    miss.selected = true;
+                    sel.appendChild(miss);
+                }
+            } catch (e) { /* device offline */ }
+        }
+
+        async function uploadTrackFile(input, fieldName) {
+            const file = input.files && input.files[0];
+            input.value = '';
+            if (!file) return;
+            /* The device keys a track by name and /api/track/upload stages a
+             * .tmp then renames over the old one, so re-sending the same
+             * circuit replaces it in place instead of piling up duplicates.
+             * No prompt: replacing is the expected result of uploading the
+             * same track again. */
+            const name = file.name.replace(/\.rdmtrk$/i, '').slice(0, 31);
+            try {
+                const buf = await file.arrayBuffer();
+                const resp = await fetch('/api/track/upload?name=' + encodeURIComponent(name), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/octet-stream' },
+                    body: buf
+                });
+                if (!resp.ok) throw new Error(await resp.text());
+                const info = await resp.json();
+                const sel = document.getElementById('trksel_' + fieldName);
+                if (sel) {
+                    sel.innerHTML = '<option value="">(none)</option>';
+                    await _populateTrackSelect('trksel_' + fieldName, name);
+                }
+                updateWidgetConfigField(fieldName, name, false);
+                refreshStorageInfo();
+                showToast('Uploaded "' + name + '" (' + info.points + ' points)', 'success');
+            } catch (e) {
+                showToast('Track upload failed: ' + e.message, 'error');
+            }
+        }
+
+        async function deleteSelectedTrack(selectId, fieldName) {
+            const sel = document.getElementById(selectId);
+            if (!sel) return;
+            const name = sel.value;
+            if (!name) {
+                showToast('No track selected to delete', 'error');
+                return;
+            }
+            if (!(await confirmAsync('Delete Track', 'Delete track "' + name + '" from the dash?', 'Delete'))) return;
+            try {
+                const resp = await fetch('/api/track/delete?name=' + encodeURIComponent(name), { method: 'POST' });
+                if (!resp.ok) throw new Error(await resp.text());
+                updateWidgetConfigField(fieldName, '', false);
+                sel.innerHTML = '<option value="">(none)</option>';
+                await _populateTrackSelect(selectId, '');
+                refreshStorageInfo();
+                showToast('Deleted "' + name + '"', 'success');
+            } catch (e) {
+                showToast('Delete failed: ' + e.message, 'error');
+            }
         }
 
         async function deleteSelectedImage(selectId, fieldName) {
