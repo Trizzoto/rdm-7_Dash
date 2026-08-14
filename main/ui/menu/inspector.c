@@ -34,6 +34,7 @@
 #include "ui/theme.h"
 #include "ui/ui.h"                 /* ui_Screen3 extern */
 #include "widgets/widget_fields.h" /* schema-driven STYLE tab */
+#include "widgets/widget_fields_limits.gen.h" /* row-pool bounds, from the schema */
 #include "widgets/signal.h"        /* signal binding picker */
 #include "ui/settings/preset_picker.h" /* preconfig_items: rich CAN signal library */
 #include "storage/user_signals.h"  /* signal library: user's saved signals */
@@ -239,10 +240,17 @@ static void _ensure_presets(void) {
 
 /* Per-row registry. Schema name -> preview swatch / value label. Refreshed
  * when the picker / wheel writes a new value so the row stays in sync with
- * the live widget. Capped well above the largest widget's appearance-field
- * count - resize if Meter's STYLE tab ever balloons. */
+ * the live widget.
+ *
+ * Sized from the schema, not by hand. The old cap of 24 said it was "well
+ * above the largest widget's appearance-field count"; the meter's STYLE tab
+ * actually needs 51 and the arc's 49, so both had been quietly dropping about
+ * half their rows — a full pool makes _make_*_row_schema return before it
+ * creates anything, with no log and nothing on screen. Bounds now come from
+ * widget_fields_limits.gen.h, which the codegen derives from the schema, so
+ * adding fields can never silently outgrow the pool again. */
 #define INSPECTOR_FIELD_NAME_LEN 32
-#define INSPECTOR_MAX_ROWS       24
+#define INSPECTOR_MAX_ROWS       WIDGET_FIELDS_MAX_TAB_ROWS
 
 typedef struct {
     char       name[INSPECTOR_FIELD_NAME_LEN];
@@ -660,7 +668,7 @@ typedef struct {
 
 /* One ctx per colour row, kept alive for the row's lifetime. We store
  * them in s_color_row_ctxs and clear on tab teardown. */
-#define INSPECTOR_MAX_COLOR_ROWS 16
+#define INSPECTOR_MAX_COLOR_ROWS WIDGET_FIELDS_MAX_TAB_COLOR
 static color_row_event_ctx_t s_color_row_ctxs[INSPECTOR_MAX_COLOR_ROWS];
 static int                   s_color_row_ctx_count = 0;
 
@@ -675,7 +683,11 @@ static void _make_color_row_schema(lv_obj_t *parent, const widget_field_t *f) {
     if (!f || !s_widget) return;
 
     /* Stash field name + label for the click callback. */
-    if (s_color_row_ctx_count >= INSPECTOR_MAX_COLOR_ROWS) return;
+    if (s_color_row_ctx_count >= INSPECTOR_MAX_COLOR_ROWS) {
+        ESP_LOGE(TAG, "colour row pool full (%d) - dropping '%s'; raise "
+                      "WIDGET_FIELDS_MAX_TAB_COLOR", INSPECTOR_MAX_COLOR_ROWS, f->name);
+        return;
+    }
     color_row_event_ctx_t *ctx = &s_color_row_ctxs[s_color_row_ctx_count++];
     strncpy(ctx->field_name,  f->name,  sizeof(ctx->field_name)  - 1);
     ctx->field_name[sizeof(ctx->field_name) - 1] = '\0';
@@ -729,7 +741,7 @@ typedef struct {
     char field_name[INSPECTOR_FIELD_NAME_LEN];
 } int_row_event_ctx_t;
 
-#define INSPECTOR_MAX_INT_ROWS 24
+#define INSPECTOR_MAX_INT_ROWS WIDGET_FIELDS_MAX_TAB_INT
 static int_row_event_ctx_t s_int_row_ctxs[INSPECTOR_MAX_INT_ROWS];
 static int                 s_int_row_ctx_count = 0;
 
@@ -742,7 +754,11 @@ static void _int_slider_cb(lv_event_t *e) {
 
 static void _make_stepper_row_schema(lv_obj_t *parent, const widget_field_t *f) {
     if (!f || !s_widget) return;
-    if (s_int_row_ctx_count >= INSPECTOR_MAX_INT_ROWS) return;
+    if (s_int_row_ctx_count >= INSPECTOR_MAX_INT_ROWS) {
+        ESP_LOGE(TAG, "stepper row pool full (%d) - dropping '%s'; raise "
+                      "WIDGET_FIELDS_MAX_TAB_INT", INSPECTOR_MAX_INT_ROWS, f->name);
+        return;
+    }
 
     int_row_event_ctx_t *ctx = &s_int_row_ctxs[s_int_row_ctx_count++];
     strncpy(ctx->field_name, f->name, sizeof(ctx->field_name) - 1);
@@ -796,7 +812,7 @@ typedef struct {
     char field_name[INSPECTOR_FIELD_NAME_LEN];
 } bool_row_event_ctx_t;
 
-#define INSPECTOR_MAX_BOOL_ROWS 16
+#define INSPECTOR_MAX_BOOL_ROWS WIDGET_FIELDS_MAX_TAB_BOOL
 static bool_row_event_ctx_t s_bool_row_ctxs[INSPECTOR_MAX_BOOL_ROWS];
 static int                  s_bool_row_ctx_count = 0;
 
@@ -856,7 +872,7 @@ typedef struct {
     uint8_t  option_count;
 } select_row_event_ctx_t;
 
-#define INSPECTOR_MAX_SELECT_ROWS 8
+#define INSPECTOR_MAX_SELECT_ROWS WIDGET_FIELDS_MAX_TAB_SELECT
 static select_row_event_ctx_t s_select_row_ctxs[INSPECTOR_MAX_SELECT_ROWS];
 static int                    s_select_row_ctx_count = 0;
 
@@ -965,7 +981,7 @@ typedef struct {
     bool numeric;
 } text_row_event_ctx_t;
 
-#define INSPECTOR_MAX_TEXT_ROWS 12
+#define INSPECTOR_MAX_TEXT_ROWS WIDGET_FIELDS_MAX_TAB_TEXT
 static text_row_event_ctx_t s_text_row_ctxs[INSPECTOR_MAX_TEXT_ROWS];
 static int                  s_text_row_ctx_count = 0;
 
