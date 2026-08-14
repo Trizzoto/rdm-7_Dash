@@ -3949,12 +3949,36 @@
         .inspector-accordion[open] summary::before { transform:rotate(90deg); }
         .accordion-body { padding:12px 14px; display:flex; flex-direction:column; gap:8px; }
         /* sub-section divider within an accordion (Fill / Ticks / Needle / ...) */
-        .inspector-subhead {
+
+        /* ── Foldable group sections inside an inspector tab ──────────────── */
+        .insp-fold { border-top:1px solid var(--border); margin-top:8px; }
+        .insp-fold:first-child { border-top:none; margin-top:0; }
+        .insp-fold > summary {
+            list-style:none; cursor:pointer; user-select:none;
+            display:flex; align-items:center; gap:6px;
             font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:0.08em;
-            color:var(--accent); opacity:0.85; margin:8px 0 1px; padding-top:7px;
-            border-top:1px solid var(--border);
+            color:var(--accent); opacity:0.85; padding:7px 0 3px;
         }
-        .accordion-body > .inspector-subhead:first-child { margin-top:0; padding-top:0; border-top:none; }
+        .insp-fold > summary::-webkit-details-marker { display:none; }
+        /* Disclosure caret, drawn rather than relying on the UA marker so it
+           sits on the correct side and rotates predictably. */
+        .insp-fold > summary::before {
+            content:''; flex:0 0 auto; width:0; height:0;
+            border-left:4px solid currentColor;
+            border-top:3.5px solid transparent; border-bottom:3.5px solid transparent;
+            transform-origin:2px 50%; transition:transform 0.12s ease;
+        }
+        .insp-fold[open] > summary::before { transform:rotate(90deg); }
+        .insp-fold > summary:hover { opacity:1; }
+        .insp-fold > summary:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+        .insp-fold-n {
+            margin-left:auto; font-size:9px; font-weight:600; letter-spacing:0;
+            color:var(--text-muted); opacity:0.8;
+        }
+        .insp-fold-body { padding-bottom:4px; }
+        @media (prefers-reduced-motion: reduce) {
+            .insp-fold > summary::before { transition:none; }
+        }
 
         /* ── Sweep helper (meter + arc Face group) ────────────────────────── */
         .sweep-helper {
@@ -12391,6 +12415,47 @@
             document.addEventListener('scroll', hide, true);
         })();
 
+        /* ── Foldable group sections ──────────────────────────────────────
+         * Groups used to render as a flat subheading, so the Appearance tab
+         * was one column of 65 fields on the arc (34 of them Ticks) and 56 on
+         * the meter (24 of them Needle). Each group is a <details> now.
+         *
+         * Default state is by size — a group you can take in at a glance
+         * stays open, a wall folds — and the user's own toggle wins from then
+         * on, remembered per widget type + tab + group. The count in the
+         * summary is of fields that will actually render, so a group whose
+         * gate is off reads "0" rather than promising twenty hidden rows. */
+        const FOLD_AUTO_OPEN_MAX = 8;
+        function _foldKey(wtype, cat, group) { return `rdm7_fold.${wtype}.${cat}.${group}`; }
+        function _foldIsOpen(wtype, cat, group, n) {
+            try {
+                const s = localStorage.getItem(_foldKey(wtype, cat, group));
+                if (s !== null) return s === '1';
+            } catch (e) { }
+            return n <= FOLD_AUTO_OPEN_MAX;
+        }
+        function _foldRemember(wtype, cat, group, el) {
+            try { localStorage.setItem(_foldKey(wtype, cat, group), el.open ? '1' : '0'); } catch (e) { }
+        }
+        /* Count only the fields that survive the enabledBy filter — the same
+         * predicate the render loop uses, passed in so the two cannot drift. */
+        function _foldCounts(fields, isVisible) {
+            const m = new Map();
+            fields.forEach(f => {
+                if (!isVisible(f)) return;
+                const g = f.group || '';
+                m.set(g, (m.get(g) || 0) + 1);
+            });
+            return m;
+        }
+        function _foldOpenTag(wtype, cat, group, n) {
+            const open = _foldIsOpen(wtype, cat, group, n) ? ' open' : '';
+            const esc  = String(group).replace(/'/g, "\\'");
+            return `<details class="insp-fold"${open} ontoggle="_foldRemember('${wtype}','${cat}','${esc}',this)">`
+                 + `<summary>${group}<span class="insp-fold-n">${n}</span></summary>`
+                 + `<div class="insp-fold-body">`;
+        }
+
         /* ── Sweep helper (meter + arc) ───────────────────────────────────
          * Start + sweep is how the firmware stores a dial, but it is not how
          * anyone thinks about one: you set where it BEGINS and how far it
@@ -13105,11 +13170,15 @@
 
                 const _dataMulti = new Set(dataFields.map(f => f.group || '')).size > 1;
                 let _dataG = null;
+                const _dataVisible = f => !_enabledByHidden(f.enabledBy, k => w.config[k] !== undefined ? w.config[k] : _fieldDefault(w.type, k));
+                const _dataCounts = _foldCounts(dataFields, _dataVisible);
                 dataFields.forEach(f => {
                     const val = w.config[f.name] !== undefined ? w.config[f.name] : f.def;
-                    if (_enabledByHidden(f.enabledBy, k => w.config[k] !== undefined ? w.config[k] : _fieldDefault(w.type, k))) return;
+                    if (!_dataVisible(f)) return;
                     if (_dataMulti && f.group && f.group !== _dataG) {
-                        html += `<div class="inspector-subhead">${f.group}</div>`; _dataG = f.group;
+                        if (_dataG !== null) html += `</div></details>`;
+                        html += _foldOpenTag(w.type, 'data', f.group, _dataCounts.get(f.group) || 0);
+                        _dataG = f.group;
                     }
                     if (currentEditorMode === 'night' && f.nightOverridable) {
                         html += renderFieldHTMLNight(f, w, disabledAttr);
@@ -13122,6 +13191,7 @@
                         html += _sweepHelperHTML(w);
                     }
                 });
+                if (_dataMulti && _dataG !== null) html += `</div></details>`;
 
                 /* ── Fuel Sender Calibration (inline in Data tab) ── */
                 if (w.signal === 'FUEL_SENDER_V') {
@@ -13178,11 +13248,15 @@
                 html += `<details class="inspector-accordion" open><summary>Appearance${badgeHtml}</summary><div class="accordion-body">`;
                 const _appMulti = new Set(appearStatic.map(f => f.group || '')).size > 1;
                 let _appG = null;
+                const _appVisible = f => !_enabledByHidden(f.enabledBy, k => w.config[k] !== undefined ? w.config[k] : _fieldDefault(w.type, k));
+                const _appCounts = _foldCounts(appearStatic, _appVisible);
                 appearStatic.forEach(f => {
                     const val = w.config[f.name] !== undefined ? w.config[f.name] : f.def;
-                    if (_enabledByHidden(f.enabledBy, k => w.config[k] !== undefined ? w.config[k] : _fieldDefault(w.type, k))) return;
+                    if (!_appVisible(f)) return;
                     if (_appMulti && f.group && f.group !== _appG) {
-                        html += `<div class="inspector-subhead">${f.group}</div>`; _appG = f.group;
+                        if (_appG !== null) html += `</div></details>`;
+                        html += _foldOpenTag(w.type, 'style', f.group, _appCounts.get(f.group) || 0);
+                        _appG = f.group;
                     }
                     if (currentEditorMode === 'night' && f.nightOverridable) {
                         html += renderFieldHTMLNight(f, w, disabledAttr);
@@ -13190,6 +13264,7 @@
                         html += renderFieldHTML(f, val, disabledAttr);
                     }
                 });
+                if (_appMulti && _appG !== null) html += `</div></details>`;
                 html += `</div></details>`;
             }
 
