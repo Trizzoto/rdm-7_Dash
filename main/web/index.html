@@ -252,8 +252,11 @@
         .sidebar-file-btn svg { width: 13px; height: 13px; flex: 0 0 auto; }
         .sidebar-file-btn:hover { color: var(--text); border-color: var(--text-muted); }
         .sidebar-file-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-        /* Collapsed rail: the toggle is the only thing that stays. */
+        /* Collapsed rail: the toggle is the only thing that stays. Scoped to
+           the workspace so the copy inside the mobile sheet is untouched. */
         .workspace.left-collapsed .sidebar-file-actions { display: none; }
+        #mobilePaletteSheet .sidebar-file-actions { display: flex; border-top-color: var(--border); }
+        #mobilePaletteSheet .sidebar-file-btn { min-height: 44px; font-size: 12px; }
 
         /* ── Widget selection toolbar (mobile/touch only, visible when a widget
          * is selected). Nudge arrows, W/H steppers, copy/paste/lock/delete,
@@ -6233,6 +6236,19 @@
             <button onclick="closeMobilePalette()" style="background:none;border:none;color:var(--text);font-size:28px;line-height:1;cursor:pointer;padding:4px 8px;margin-left:auto;margin-right:-4px;" aria-label="Close widget palette">&times;</button>
         </div>
         <div id="mobilePaletteList"></div>
+        <!-- Same two actions as the desktop sidebar. That sidebar is
+             display:none below 1024px AND on any touch device, so on a
+             phone, tablet or touchscreen laptop it does not exist at all —
+             this sheet stands in for it, and the file actions have to be
+             here too or they live only in the app menu. -->
+        <div class="sidebar-file-actions" style="margin:8px 16px 0;">
+            <button class="sidebar-file-btn" onclick="closeMobilePalette(); importRdm()" title="Open a .rdm file — a layout, or a full dashboard">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Open
+            </button>
+            <button class="sidebar-file-btn" onclick="closeMobilePalette(); exportRdm('layout')" title="Save the widgets, images and fonts. Nothing about your car — safe to share.">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Save layout
+            </button>
+        </div>
     </div>
 
     <footer>
