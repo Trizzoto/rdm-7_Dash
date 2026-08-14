@@ -2160,7 +2160,7 @@
         .ch2-empty-cta:hover { filter: brightness(1.08); }
 
         /* Right pane — detail */
-        .ch2-detail-pane { flex: 1; overflow-y: auto; }
+        .ch2-detail-pane { flex: 1; overflow-y: auto; overflow-x: hidden; }
         .ch2-detail-empty {
             height: 100%;
             display: flex; align-items: center; justify-content: center;
@@ -2198,18 +2198,37 @@
             border-bottom: 1px solid var(--border);
         }
         .ch2-section h3 {
+            display: flex;
+            align-items: center;
+            gap: 8px;
             font-size: 12px;
             font-weight: 500;
             color: var(--text-muted);
             margin: 0 0 12px;
         }
+        /* Pills, not bare floated text. The two used to float right and butt
+         * straight up against one another, reading as one word. margin-left
+         * auto on the FIRST action pushes the group right; the rest ride the
+         * flex gap. */
         .ch2-section h3 .action {
-            float: right;
+            margin-left: auto;
+            padding: 3px 10px;
+            border: 1px solid var(--border);
+            border-radius: 999px;
             color: var(--accent);
             cursor: pointer;
-            font-weight: 400;
+            font-weight: 500;
+            font-size: 11px;
+            line-height: 1.5;
+            white-space: nowrap;
+            transition: background 0.12s, border-color 0.12s;
         }
-        .ch2-section h3 .action:hover { text-decoration: underline; }
+        .ch2-section h3 .action ~ .action { margin-left: 0; }
+        .ch2-section h3 .action:hover {
+            text-decoration: none;
+            border-color: var(--accent);
+            background: rgba(255, 255, 255, 0.05);
+        }
 
         /* Signal picker */
         .ch2-sig-list {
@@ -2285,7 +2304,7 @@
 
         .ch2-num-row {
             display: grid;
-            grid-template-columns: 1fr 1fr;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
             gap: 14px;
             margin-bottom: 10px;
         }
@@ -2293,8 +2312,23 @@
             display: flex; flex-direction: column; gap: 4px;
             font-size: 12px;
             color: var(--text-muted);
+            min-width: 0;          /* let the column shrink below input width */
+        }
+        .ch2-num select {
+            padding: 6px 10px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text);
+            border-radius: 4px;
+            font-size: 13px;
+            width: 100%;
+            box-sizing: border-box;
+            min-width: 0;
         }
         .ch2-num input {
+            width: 100%;
+            box-sizing: border-box;
+            min-width: 0;
             padding: 6px 10px;
             background: var(--bg);
             border: 1px solid var(--border);
@@ -2453,6 +2487,11 @@
         }
         .ch2-section h3 .action.danger {
             color: hsl(0, 70%, 62%);
+            border-color: hsl(0, 70%, 62%, 0.45);
+        }
+        .ch2-section h3 .action.danger:hover {
+            border-color: hsl(0, 70%, 62%);
+            background: hsl(0, 70%, 62%, 0.10);
         }
 
         /* Signal picker overlay (lives above channels modal) */
@@ -4418,15 +4457,15 @@
                 </div>
                 <div style="padding:16px 20px; display:flex; flex-direction:column; gap:12px;">
                     <div class="field"><label>Signal Name</label><input type="text" id="customSigName" placeholder="e.g. OIL_PRESSURE" spellcheck="false"></div>
-                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                    <div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:8px;">
                         <div class="field"><label>CAN ID (hex)</label><input type="text" id="customSigCanId" value="0x000" spellcheck="false" style="font-family:monospace;"></div>
                         <div class="field"><label>Bit Start</label><input type="number" id="customSigBitStart" value="0" min="0" max="63"></div>
                     </div>
-                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                    <div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:8px;">
                         <div class="field"><label>Bit Length</label><input type="number" id="customSigBitLen" value="16" min="1" max="64"></div>
                         <div class="field"><label>Scale</label><input type="number" id="customSigScale" value="1" step="0.001"></div>
                     </div>
-                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                    <div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:8px;">
                         <div class="field"><label>Offset</label><input type="number" id="customSigOffset" value="0" step="0.1"></div>
                         <div class="field"><label>Endian</label><select id="customSigEndian"><option value="le">Little-Endian</option><option value="be">Big-Endian</option></select></div>
                     </div>
@@ -5579,7 +5618,7 @@
             </div>
 
             <!-- Quick-jump tiles into the other OBD2 modals. -->
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+            <div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:8px;">
                 <button class="btn btn-secondary" style="padding:10px 12px; text-align:left; display:flex; flex-direction:column; align-items:flex-start; gap:3px;" onclick="closeObd2Setup(); setStudioMode('channels'); openObdScan();">
                     <span style="font-size:12px; font-weight:600; color:var(--text);">Add channels from OBD2</span>
                     <span style="font-size:10px; color:var(--text-muted);">Scan the car, pick what goes on the dash</span>
@@ -5954,7 +5993,7 @@
                         <label style="font-size:11px; color:var(--text-muted); display:flex; align-items:center; gap:6px;">
                             <input id="fuelFwdEnabled" type="checkbox" style="width:14px; height:14px;"> Enabled
                         </label>
-                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                        <div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:8px;">
                             <label style="font-size:11px; color:var(--text-muted);">CAN ID (hex)
                                 <input id="fuelFwdCanId" type="text" placeholder="6F0" style="width:100%; margin-top:2px; padding:5px; background:var(--panel-elevated); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px; font-family:monospace;">
                             </label>
@@ -8282,8 +8321,8 @@
                             { name: "show_rpm_value", label: "Show RPM Number", type: "checkbox", def: false, cat: "appearance", group: "Text", help: "Show the RPM as a number on the bar." },
                             { name: "rpm_value_font", label: "RPM Number Font", type: "font", def: "", cat: "appearance", group: "Text", help: "Text style and size of the RPM number.", enabledBy: "show_rpm_value" },
                             { name: "rpm_value_color", label: "RPM Number Color", type: "color", def: 0xE8E8E8, cat: "appearance", group: "Text", help: "Colour of the RPM number.", enabledBy: "show_rpm_value", nightOverridable: true },
-                            { name: "rpm_value_x_offset", label: "Value X Offset", type: "stepper", def: 0, cat: "appearance", group: "Text", help: "Nudge the number left or right from where it normally sits.", min: -127, max: 127, enabledBy: "show_rpm_value" },
-                            { name: "rpm_value_y_offset", label: "Value Y Offset", type: "stepper", def: 0, cat: "appearance", group: "Text", help: "Nudge the number up or down. 0 is vertically centred on the bar.", min: -127, max: 127, enabledBy: "show_rpm_value" },
+                            { name: "rpm_value_x_offset", label: "Value X Offset", type: "stepper", def: 0, cat: "appearance", group: "Text", help: "Nudge the number left or right. 0 is centred on the bar.", min: -127, max: 127, enabledBy: "show_rpm_value" },
+                            { name: "rpm_value_y_offset", label: "Value Y Offset", type: "stepper", def: 0, cat: "appearance", group: "Text", help: "Nudge the number up or down. 0 sits it just under the bar.", min: -127, max: 127, enabledBy: "show_rpm_value" },
                             { name: "redline", label: "Redline RPM", type: "number", def: 6000, cat: "data", group: "Redline", help: "The RPM where the red warning zone starts - the bar changes colour past this point." },
                             { name: "limiter_value", label: "Limiter RPM", type: "number", def: 7000, cat: "data", group: "Redline", help: "The RPM where your rev limiter kicks in - the bar reacts here." },
                             { name: "limiter_color", label: "Limiter Color", type: "color", def: 0xFF0000, cat: "data", group: "Redline", help: "Colour shown when you hit the limiter.", nightOverridable: true },
@@ -8572,7 +8611,7 @@
                             { name: "shadow_offset_x", label: "Shadow Offset X", type: "stepper", def: 3, cat: "appearance", group: "Shadow", help: "How far the shadow sits to the side of the needle.", min: -32, max: 32, enabledBy: "shadow_enabled" },
                             { name: "shadow_offset_y", label: "Shadow Offset Y", type: "stepper", def: 4, cat: "appearance", group: "Shadow", help: "How far the shadow sits below the needle.", min: -32, max: 32, enabledBy: "shadow_enabled" },
                             { name: "shadow_opa", label: "Shadow Opacity", type: "stepper", def: 120, cat: "appearance", group: "Shadow", help: "How dark the shadow is (255 = solid).", min: 0, max: 255, enabledBy: "shadow_enabled" },
-                            { name: "shadow_width_extra", label: "Shadow Extra Width", type: "stepper", def: 2, cat: "appearance", group: "Shadow", help: "Make the shadow wider than the needle for a softer look.", min: 0, max: 32, enabledBy: "shadow_enabled" },
+                            { name: "shadow_width_extra", label: "Shadow Softness", type: "stepper", def: 0, cat: "appearance", group: "Shadow", help: "Spread the shadow into a soft penumbra. 0 keeps it the same shape as the needle.", min: 0, max: 32, enabledBy: "shadow_enabled" },
                             { name: "shadow_color", label: "Shadow Color", type: "color", def: 0x000000, cat: "appearance", group: "Shadow", help: "Colour of the needle's shadow.", enabledBy: "shadow_enabled" },
                             { name: "show_ticks", label: "Show Ticks", type: "checkbox", def: true, cat: "appearance", group: "Ticks", help: "Show the marks around the dial, like the lines on a speedometer." },
                             { name: "major_tick_step", label: "Major Tick Value Spacing", type: "number", def: 50, cat: "appearance", group: "Ticks", help: "How far apart the biggest marks are, in reading value. On a 0-8000 rev counter, 1000 puts a big mark every 1000 RPM." },
@@ -9057,6 +9096,10 @@
 
         // Zoom & Pan
         let zoomLevel = 1;
+        /* Set once the user picks a zoom by hand. The auto-fit observer below
+         * backs off after that, so collapsing a sidebar can't yank the canvas
+         * back to fit under them. Cleared by resetView() / the Fit button. */
+        let _userZoomed = false;
         let panX = 0;
         let panY = 0;
         let isPanning = false;
@@ -11331,6 +11374,7 @@
                 const zoomStep = 0.1;
                 if (e.deltaY > 0) zoomLevel = Math.max(0.2, zoomLevel - zoomStep);
                 else zoomLevel = Math.min(3.0, zoomLevel + zoomStep);
+                _userZoomed = true;
                 updateCanvasTransform();
             } else {
                 e.preventDefault();
@@ -11405,6 +11449,7 @@
                     if (lastPinchDist > 0) {
                         const scale = dist / lastPinchDist;
                         zoomLevel = Math.max(0.2, Math.min(3.0, tState.startZoom * scale));
+                        _userZoomed = true;
                     }
                     const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
                     const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
@@ -11434,6 +11479,7 @@
         });
 
         function resetView() {
+            _userZoomed = false;   /* explicit Fit hands control back */
             zoomToFit();
         }
 
@@ -11472,6 +11518,7 @@
             const parsed = parseInt(el.value.replace('%', ''), 10);
             if (!isNaN(parsed) && parsed >= 20 && parsed <= 300) {
                 zoomLevel = parsed / 100;
+                _userZoomed = true;
                 updateCanvasTransform();
             } else {
                 el.value = Math.round(zoomLevel * 100) + '%';
@@ -11480,6 +11527,7 @@
 
         function zoomBy(delta) {
             zoomLevel = Math.max(0.2, Math.min(3.0, zoomLevel + delta));
+            _userZoomed = true;
             updateCanvasTransform();
         }
 
@@ -13050,11 +13098,11 @@
             html += `<details class="inspector-accordion" open><summary>Layout</summary><div class="accordion-body">`;
             html += `<div class="field"><label>Type</label><input type="text" value="${w.type}" disabled></div>`;
             html += `<div class="field"><label>ID</label><input type="text" value="${_escAttr(w.id)}" onchange="updateWidgetField('id', this.value)" ${uniqAttr}></div>`;
-            html += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+            html += `<div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:8px;">
                 <div class="field"><label>X</label><input type="number" value="${w.x}" oninput="updateWidgetField('x', parseInt(this.value), true)" ${uniqAttr}></div>
                 <div class="field"><label>Y</label><input type="number" value="${w.y}" oninput="updateWidgetField('y', parseInt(this.value), true)" ${uniqAttr}></div>
             </div>`;
-            html += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+            html += `<div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:8px;">
                 <div class="field"><label>W</label><input type="number" value="${w.w}" onchange="updateWidgetField('w', parseInt(this.value), true)" oninput="updateWidgetFieldDeferred('w', parseInt(this.value))" ${disabledAttr}></div>
                 <div class="field"><label>H</label><input type="number" value="${w.h}" onchange="updateWidgetField('h', parseInt(this.value), true)" oninput="updateWidgetFieldDeferred('h', parseInt(this.value))" ${disabledAttr}></div>
             </div>`;
@@ -14320,7 +14368,16 @@
             /* Skip device preview for layout-only changes — canvas already shows it */
         }
 
-        function updateWidgetField(field, val, preview = false) {
+        /* preview defaults to TRUE: an edit should reach the device as you make
+         * it, not wait for Save. It used to default to false, and every caller
+         * that forgot the third argument silently became save-only -- which is
+         * exactly what happened to the X/Y/W/H and ID inputs in the inspector,
+         * so typing a position did nothing until you hit Save. Defaulting the
+         * other way means a new call site can't reintroduce that. The push is
+         * still gated on _previewLive(), so turning Live off stops it, and
+         * triggerPreview() is debounced, so extra calls are cheap. Callers that
+         * genuinely want canvas-only updates use updateWidgetFieldDeferred(). */
+        function updateWidgetField(field, val, preview = true) {
             if (selectedIndex === -1) return;
             let finalVal = val;
             if (field !== 'id') {
@@ -19594,9 +19651,37 @@
         refreshStorageInfo();
         _pollSimState();
         captureScreenshot();
-        /* Auto zoom-to-fit on load + window resize */
+        /* Auto zoom-to-fit on load + window resize.
+         *
+         * A single rAF measured #workspaceViewport before the surrounding
+         * panels, fonts and the sidebar had settled, so the viewport was still
+         * a fraction of its final size and the canvas opened at ~29% on a
+         * fresh load. Observing the viewport instead means the fit happens
+         * against its REAL size, and re-runs if that size changes (sidebar
+         * collapse, panel open, device rotation) — matching what the existing
+         * window-resize handler below already does. */
         requestAnimationFrame(() => zoomToFit());
         window.addEventListener('resize', () => zoomToFit());
+        (function _autoFitViewport() {
+            const vp = document.getElementById('workspaceViewport');
+            if (!vp || typeof ResizeObserver === 'undefined') {
+                /* No ResizeObserver — settle with a couple of late passes. */
+                setTimeout(zoomToFit, 150);
+                setTimeout(zoomToFit, 600);
+                return;
+            }
+            let lastW = 0, lastH = 0;
+            const ro = new ResizeObserver(() => {
+                const r = vp.getBoundingClientRect();
+                const w = Math.round(r.width), h = Math.round(r.height);
+                if (w === lastW && h === lastH) return;   /* no real change */
+                lastW = w; lastH = h;
+                if (w < 40 || h < 40) return;             /* still laying out */
+                if (_userZoomed) return;                  /* they chose a zoom */
+                zoomToFit();
+            });
+            ro.observe(vp);
+        })();
 
         /* ── Auto firmware update check ──────────────────────────────────────
          * Fires once per page load, throttled to one real network check per
@@ -23944,7 +24029,7 @@
                 <div class="ch2-detail-footer">
                     <button class="ch2-link-btn" onclick="_chDuplicate('${_escJs(c.id)}')" title="Start a new channel pre-filled from this one">Duplicate</button>
                     ${def && c.is_canonical ? `<button class="ch2-link-btn" onclick="_chResetDefaults('${c.id}')">Reset to defaults</button>` : ''}
-                    <button class="ch2-link-btn danger" onclick="_chDelete('${_escJs(c.id)}')" title="${c.is_canonical ? 'Remove from this dash — returns to the standard list, can be added again' : 'Delete this custom channel for good'}">${c.is_canonical ? 'Remove from this dash…' : 'Delete…'}</button>
+                    <button class="ch2-link-btn danger" onclick="_chDelete('${_escJs(c.id)}')" title="${c.is_canonical ? 'Remove from this dash — returns to the standard list, can be added again' : 'Delete this custom channel for good'}">Delete Channel</button>
                 </div>
             `;
             _patchSigPickerLive();
@@ -25200,7 +25285,7 @@
                             CAN decode — ${c.signal}
                             <span style="font-size:10px; color:var(--text-ghost); margin-left:6px;">(applies when you Save)</span>
                         </div>
-                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                        <div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:8px;">
                             <div class="ch2-num">
                                 <span class="ch2-num-label">CAN ID</span>
                                 <input type="text" value="${hexCanId}" placeholder="0x000" onchange="_chEditSignalCanId('${c.id}','${c.signal}', this)" spellcheck="false" style="font-family:monospace;">
