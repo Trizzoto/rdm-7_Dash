@@ -9799,12 +9799,23 @@
             return c;
         }
 
+        /* Signals the SIM sweep must leave alone. These are the device
+         * reporting on ITSELF and are already real: FPS is measured from the
+         * render loop, ODOMETER is a genuine accumulated total. Sweeping them
+         * min-to-max would replace a true reading with a fake one. Mirrors
+         * _sim_is_self_reported() in signal_sim.c so the preview and the dash
+         * agree about what demo mode is allowed to invent. */
+        function _pvSelfReported(w, c){
+            const n = String((w && (w.signal || w.channel)) || (c && c.label) || '').toUpperCase();
+            return n === 'FPS' || n === 'ODOMETER';
+        }
+
         /* Representative scene value for a gauge, mapped into [mn,mx]. Keyed
          * off the bound signal / channel / label so a tach reads ~4500, a
          * speedo ~55 etc — matching the look of a running dash. */
         function _pvScene(w, c, mn, mx){
             const k = ((w.signal || '') + ' ' + (w.channel || '') + ' ' + (c.label || '')).toLowerCase();
-            if (_pvSimOn) return mn + (mx - mn) * _pvSimFrac(w.signal || w.channel || c.label || w.id || '');
+            if (_pvSimOn && !_pvSelfReported(w, c)) return mn + (mx - mn) * _pvSimFrac(w.signal || w.channel || c.label || w.id || '');
             const f = t => mn + (mx - mn) * t;
             if (/rpm|tach/.test(k))                  return _pvClamp(4500, mn, mx);
             if (/mph|speed|kmh|km\/h|veh/.test(k))   return _pvClamp(55, mn, mx);
@@ -9820,7 +9831,7 @@
         function _pvReadout(w, c){
             const k = ((w.signal || '') + ' ' + (w.channel || '') + ' ' + (c.label || '')).toLowerCase();
             let v;
-            if (_pvSimOn){
+            if (_pvSimOn && !_pvSelfReported(w, c)){
                 const fr = _pvSimFrac(w.signal || w.channel || c.label || w.id || '');
                 if (/gear/.test(k)) return String(1 + Math.floor(fr * 5.999));   /* 1..6 */
                 let lo = 0, hi = 100;
