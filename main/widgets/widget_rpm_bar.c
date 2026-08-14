@@ -674,7 +674,20 @@ static void _rpm_paint_indicator(lv_obj_t *bar, lv_color_t fill,
 		}
 	}
 	if (!ok) {
-		if (rd) rd->grad_lv_dsc.dir = LV_GRAD_DIR_NONE;
+		/* Stand down the descriptor THIS bar's style actually points at, not
+		 * a hardcoded one. lv_obj_init_draw_rect_dsc prefers the stored
+		 * bg_grad POINTER over bg_grad_dir whenever that descriptor's own
+		 * dir is not NONE (lv_obj_draw.c), so clearing bg_grad_dir alone
+		 * does not stop the gradient. Only ever clearing grad_lv_dsc left
+		 * every RIGHT-TO-LEFT filling bar painting its gradient right
+		 * through the limiter, so that bar never flashed: the whole R->L
+		 * bar (mode 1), the left half of Centre->Out (2), and the right
+		 * half of Edges->In (3). */
+		if (rd) {
+			lv_grad_dsc_t *mine = _rpm_bar_fills_rtl(bar) ? &rd->grad_lv_dsc_rev
+			                                              : &rd->grad_lv_dsc;
+			mine->dir = LV_GRAD_DIR_NONE;
+		}
 		lv_obj_set_style_bg_grad_color(bar, fill,
 		                               LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		lv_obj_set_style_bg_grad_dir(bar, LV_GRAD_DIR_NONE,
@@ -1009,7 +1022,12 @@ static void _rpm_bar_sync_value_label(rpm_bar_data_t *rd) {
 	if (!ui_RPM_Value || !lv_obj_is_valid(ui_RPM_Value)) {
 		ui_RPM_Value = lv_label_create(s_rpm_container);
 		lv_label_set_text(ui_RPM_Value, "--");
-		lv_obj_set_align(ui_RPM_Value, LV_ALIGN_CENTER);
+		/* Home = bottom-centre of the bar, so the readout starts sitting just
+		 * under the fill and horizontally centred, and the X/Y offsets nudge
+		 * from there. It used to be dead centre with a +20*sx nudge inherited
+		 * from the Panel9-era geometry, which left the number off to one side
+		 * and on top of the fill. */
+		lv_obj_set_align(ui_RPM_Value, LV_ALIGN_BOTTOM_MID);
 		lv_obj_clear_flag(ui_RPM_Value, LV_OBJ_FLAG_CLICKABLE);
 		rd->rpm_value_obj = ui_RPM_Value;
 	}
@@ -1023,9 +1041,8 @@ static void _rpm_bar_sync_value_label(rpm_bar_data_t *rd) {
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(ui_RPM_Value, LV_OPA_COVER,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_pos(ui_RPM_Value,
-	               (lv_coord_t)(20.0f * sx + 0.5f) + rd->rpm_value_x_offset,
-	               rd->rpm_value_y_offset);
+	/* Offsets are pure nudges off the bottom-centre home set at create. */
+	lv_obj_set_pos(ui_RPM_Value, rd->rpm_value_x_offset, rd->rpm_value_y_offset);
 }
 
 /* ── On-device appearance config callbacks ─────────────────────────────────
@@ -1583,12 +1600,12 @@ static void _rpm_bar_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 		lv_obj_set_y(rpm_redline_zone, (lv_coord_t)(22.0f * sy + 0.5f));
 	}
 
-	/* Numeric RPM readout — keep it centred over the bar (same +20*sx nudge
-	 * as the bar gauge alignment so it tracks the fill region's centre). */
+	/* Numeric RPM readout — home is LV_ALIGN_BOTTOM_MID (set at create), so
+	 * resizing only needs to re-apply the user's nudge. */
 	if (ui_RPM_Value && lv_obj_is_valid(ui_RPM_Value)) {
 		rpm_bar_data_t *rd_v = _lookup_rpm_bar_data();
 		lv_obj_set_pos(ui_RPM_Value,
-		               (lv_coord_t)(20.0f * sx + 0.5f) + (rd_v ? rd_v->rpm_value_x_offset : 0),
+		               rd_v ? rd_v->rpm_value_x_offset : 0,
 		               rd_v ? rd_v->rpm_value_y_offset : 0);
 	}
 
