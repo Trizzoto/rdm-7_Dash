@@ -8360,9 +8360,9 @@
                             { name: "label_x_offset", label: "Label X Offset", type: "stepper", def: 0, cat: "appearance", group: "Text", help: "Nudge the title left or right. 0 keeps it centred in the panel.", min: -127, max: 127 },
                             { name: "value_y_offset", label: "Value Y Offset", type: "stepper", def: 9, cat: "appearance", group: "Text", help: "Nudge the number up or down.", min: -100, max: 100 },
                             { name: "value_x_offset", label: "Value X Offset", type: "stepper", def: 0, cat: "appearance", group: "Text", help: "Nudge the reading left or right. 0 keeps it centred in the panel.", min: -127, max: 127 },
-                            { name: "custom_text", label: "Unit Text", type: "text", def: "", cat: "appearance", group: "Text", help: "Replace the unit with your own text." },
-                            { name: "custom_text_x_offset", label: "Unit Text X", type: "stepper", def: 41, cat: "appearance", group: "Text", help: "Nudge that text left or right.", min: -100, max: 100 },
-                            { name: "custom_text_y_offset", label: "Unit Text Y", type: "stepper", def: 32, cat: "appearance", group: "Text", help: "Nudge that text up or down.", min: -100, max: 100 },
+                            { name: "custom_text", label: "Custom Text", type: "text", def: "", cat: "appearance", group: "Text", help: "Your own text next to the reading, instead of the unit. Leave empty to use Show Unit Suffix." },
+                            { name: "custom_text_x_offset", label: "Custom Text X", type: "stepper", def: 41, cat: "appearance", group: "Text", help: "Nudge your custom text left or right.", min: -100, max: 100, enabledBy: "custom_text" },
+                            { name: "custom_text_y_offset", label: "Custom Text Y", type: "stepper", def: 32, cat: "appearance", group: "Text", help: "Nudge your custom text up or down.", min: -100, max: 100, enabledBy: "custom_text" },
                             { name: "show_unit", label: "Show Unit Suffix", type: "checkbox", def: false, cat: "appearance", group: "Unit", help: "Add the unit after the number, like °C or PSI." },
                             { name: "unit_size", label: "Unit Size", type: "select", def: 2, cat: "appearance", group: "Unit", help: "How big the unit is next to the number.", enabledBy: "show_unit",
                               options: [

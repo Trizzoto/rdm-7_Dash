@@ -1434,6 +1434,29 @@ static bool _panel_inspector_set(widget_t *w, const char *name,
 			lv_obj_set_style_bg_opa(w->root, pd->bg_opa, 0);
 		return true;
 	}
+	/* Fonts restyle in place like the colours do. Without these the editor's
+	 * single-field push came back unhandled and fell through to a full layout
+	 * rebuild, so picking a font juddered instead of updating as you scrolled
+	 * — the smooth behaviour every other text field here already had. The
+	 * unit rides value_font (its size is derived from it), so it follows. */
+	if (strcmp(name, "label_font") == 0 && in->str) {
+		safe_strncpy(pd->label_font, in->str, sizeof(pd->label_font));
+		const lv_font_t *f = widget_resolve_font(pd->label_font);
+		if (f && lbl && lv_obj_is_valid(lbl))
+			lv_obj_set_style_text_font(lbl, f, 0);
+		return true;
+	}
+	if (strcmp(name, "value_font") == 0 && in->str) {
+		safe_strncpy(pd->value_font, in->str, sizeof(pd->value_font));
+		const lv_font_t *f = widget_resolve_font(pd->value_font);
+		if (f && val && lv_obj_is_valid(val))
+			lv_obj_set_style_text_font(val, f, 0);
+		if (pd->unit_label && lv_obj_is_valid(pd->unit_label)) {
+			const lv_font_t *uf = _panel_unit_font(pd->value_font, pd->unit_size);
+			if (uf) lv_obj_set_style_text_font(pd->unit_label, uf, 0);
+		}
+		return true;
+	}
 	if (strcmp(name, "label_color") == 0) {
 		pd->label_color = lv_color_hex(in->color);
 		if (lbl && lv_obj_is_valid(lbl))

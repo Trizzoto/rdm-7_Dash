@@ -1017,8 +1017,6 @@ static void _rpm_bar_sync_value_label(rpm_bar_data_t *rd) {
 	}
 	if (!s_rpm_container || !lv_obj_is_valid(s_rpm_container)) return;
 
-	float sx = (float)s_container_w / 800.0f;
-
 	if (!ui_RPM_Value || !lv_obj_is_valid(ui_RPM_Value)) {
 		ui_RPM_Value = lv_label_create(s_rpm_container);
 		lv_label_set_text(ui_RPM_Value, "--");
@@ -1408,6 +1406,13 @@ lv_obj_t *widget_rpm_bar_create(lv_obj_t *parent) {
 	lv_obj_set_pos(container, 0, -(int16_t)SCREEN_ORIGIN_Y + 55 / 2);
 	lv_obj_clear_flag(container, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_add_flag(container, LV_OBJ_FLAG_CLICKABLE);
+	/* Let children draw past the container. The numeric readout's home is the
+	 * bar's bottom edge, so any downward Y nudge used to run it straight into
+	 * the container boundary and the digits were simply cut off -- the number
+	 * appeared to vanish rather than move. LVGL clips children to the parent
+	 * unless this flag is set (lv_refr.c honours it when building the clip
+	 * area), so with it the readout can sit fully below or beside the bar. */
+	lv_obj_add_flag(container, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
 	lv_obj_set_style_bg_opa(container, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(container, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_pad_all(container, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -1575,7 +1580,6 @@ static void _rpm_bar_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 	if (s_rpm_container && lv_obj_is_valid(s_rpm_container))
 		lv_obj_set_size(s_rpm_container, nw, nh);
 
-	float sx = (float)nw / 800.0f;
 	float sy = (float)nh / 55.0f;
 
 	rpm_bar_data_t *rd_rs = _lookup_rpm_bar_data();

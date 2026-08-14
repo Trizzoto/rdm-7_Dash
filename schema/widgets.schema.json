@@ -491,34 +491,36 @@
         },
         {
           "name": "custom_text",
-          "label": "Unit Text",
+          "label": "Custom Text",
           "type": "text",
           "default": "",
           "category": "appearance",
           "group": "Text",
-          "help": "Replace the unit with your own text."
+          "help": "Your own text next to the reading, instead of the unit. Leave empty to use Show Unit Suffix."
         },
         {
           "name": "custom_text_x_offset",
-          "label": "Unit Text X",
+          "label": "Custom Text X",
           "type": "stepper",
           "default": 41,
           "category": "appearance",
           "min": -100,
           "max": 100,
+          "enabled_by": "custom_text",
           "group": "Text",
-          "help": "Nudge that text left or right."
+          "help": "Nudge your custom text left or right."
         },
         {
           "name": "custom_text_y_offset",
-          "label": "Unit Text Y",
+          "label": "Custom Text Y",
           "type": "stepper",
           "default": 32,
           "category": "appearance",
           "min": -100,
           "max": 100,
+          "enabled_by": "custom_text",
           "group": "Text",
-          "help": "Nudge that text up or down."
+          "help": "Nudge your custom text up or down."
         },
         {
           "name": "show_unit",
