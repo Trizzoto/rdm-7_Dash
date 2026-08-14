@@ -689,7 +689,7 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 	lv_obj_set_style_text_align(hdr, ta, 0);
 	lv_obj_set_width(hdr, w->w - 10);
 	lv_label_set_long_mode(hdr, LV_LABEL_LONG_CLIP);
-	lv_obj_set_x(hdr, 0);
+	lv_obj_set_x(hdr, pd->label_x_offset);
 	lv_obj_set_y(hdr, pd->label_y_offset);
 	lv_obj_set_align(hdr, LV_ALIGN_CENTER);
 
@@ -706,7 +706,7 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 	lv_obj_set_style_text_align(val, ta, 0);
 	lv_obj_set_width(val, w->w - 15);
 	lv_label_set_long_mode(val, LV_LABEL_LONG_CLIP);
-	lv_obj_set_x(val, 0);
+	lv_obj_set_x(val, pd->value_x_offset);
 	lv_obj_set_y(val, pd->value_y_offset);
 	lv_obj_set_align(val, LV_ALIGN_CENTER);
 
@@ -925,6 +925,10 @@ static void _panel_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "label_color", (int)pd->label_color.full);
 	if (pd->value_color.full != THEME_COLOR_TEXT_PRIMARY.full)
 		cJSON_AddNumberToObject(cfg, "value_color", (int)pd->value_color.full);
+	if (pd->label_x_offset != 0)
+		cJSON_AddNumberToObject(cfg, "label_x_offset", pd->label_x_offset);
+	if (pd->value_x_offset != 0)
+		cJSON_AddNumberToObject(cfg, "value_x_offset", pd->value_x_offset);
 	if (pd->label_y_offset != -28)
 		cJSON_AddNumberToObject(cfg, "label_y_offset", pd->label_y_offset);
 	if (pd->value_y_offset != 9)
@@ -1050,6 +1054,10 @@ static void _panel_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(item)) pd->label_color.full = (uint32_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "value_color");
 	if (cJSON_IsNumber(item)) pd->value_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "label_x_offset");
+	if (cJSON_IsNumber(item)) pd->label_x_offset = (int8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "value_x_offset");
+	if (cJSON_IsNumber(item)) pd->value_x_offset = (int8_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "label_y_offset");
 	if (cJSON_IsNumber(item)) pd->label_y_offset = (int8_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "value_y_offset");
@@ -1336,6 +1344,8 @@ static bool _panel_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "bg_opa") == 0)               { out->i = pd->bg_opa;         return true; }
 	if (strcmp(name, "label_color") == 0)          { out->color = lv_color_to32(pd->label_color)  & 0xFFFFFF; return true; }
 	if (strcmp(name, "value_color") == 0)          { out->color = lv_color_to32(pd->value_color)  & 0xFFFFFF; return true; }
+	if (strcmp(name, "label_x_offset") == 0)       { out->i = pd->label_x_offset; return true; }
+	if (strcmp(name, "value_x_offset") == 0)       { out->i = pd->value_x_offset; return true; }
 	if (strcmp(name, "label_y_offset") == 0)       { out->i = pd->label_y_offset; return true; }
 	if (strcmp(name, "value_y_offset") == 0)       { out->i = pd->value_y_offset; return true; }
 	if (strcmp(name, "text_align") == 0)           { out->i = pd->text_align;     return true; }
@@ -1436,6 +1446,23 @@ static bool _panel_inspector_set(widget_t *w, const char *name,
 			lv_obj_set_style_text_color(val, pd->value_color, 0);
 		if (pd->unit_label && lv_obj_is_valid(pd->unit_label))
 			lv_obj_set_style_text_color(pd->unit_label, pd->value_color, 0);
+		return true;
+	}
+	if (strcmp(name, "label_x_offset") == 0) {
+		pd->label_x_offset = (int8_t)in->i;
+		if (lbl && lv_obj_is_valid(lbl))
+			lv_obj_set_x(lbl, pd->label_x_offset);
+		return true;
+	}
+	if (strcmp(name, "value_x_offset") == 0) {
+		pd->value_x_offset = (int8_t)in->i;
+		/* Same row-vs-label choice the Y setter makes: with a small/medium
+		 * unit the value sits inside a flex row, and the row is the object
+		 * actually positioned. */
+		lv_obj_t *xpos = (pd->value_row && lv_obj_is_valid(pd->value_row))
+		                 ? pd->value_row : val;
+		if (xpos && lv_obj_is_valid(xpos))
+			lv_obj_set_x(xpos, pd->value_x_offset);
 		return true;
 	}
 	if (strcmp(name, "label_y_offset") == 0) {

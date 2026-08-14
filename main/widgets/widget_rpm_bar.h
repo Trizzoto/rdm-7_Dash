@@ -36,6 +36,12 @@ typedef struct {
 	 * at load time. */
 	gradient_stops_t grad_stops;
 	lv_grad_dsc_t    grad_lv_dsc;
+	/* Mirrored copy for a bar that fills right-to-left. LV_GRAD_DIR_HOR
+	 * always lays stop[0] at an object's LEFT edge, so a right-filling bar
+	 * needs the stops reversed or the gradient runs against the fill. The
+	 * two halves of a mirror layout are on screen at once and LVGL stores
+	 * the descriptor POINTER, so they cannot share one buffer. */
+	lv_grad_dsc_t    grad_lv_dsc_rev;
 	/* Limiter effect: applied when RPM >= limiter_value.
 	 *   0 = None       — no visual change at the limiter threshold
 	 *   1 = Bar Flash  — bar background toggles between bar_color and limiter_color
@@ -74,6 +80,11 @@ typedef struct {
 	bool       show_rpm_value;      /* default false — no number historically */
 	char       rpm_value_font[32];  /* "Family:size" or legacy; empty → THEME font */
 	lv_color_t rpm_value_color;     /* default THEME_COLOR_TEXT_PRIMARY (0xE8E8E8) */
+	/* Nudge on top of the label's computed home, which is 20 px from the
+	 * container's left edge scaled by width. 0/0 keeps every existing
+	 * layout exactly where it was. */
+	int8_t     rpm_value_x_offset;  /* default: 0 */
+	int8_t     rpm_value_y_offset;  /* default: 0 */
 	lv_obj_t  *rpm_value_obj;        /* runtime label (child of container) */
 	/* ── v14 channel binding ─────────────────────────────────────
 	 * RPM bar maps gauge_max → channel.max, redline → channel.high_warn,

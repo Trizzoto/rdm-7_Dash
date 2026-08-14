@@ -56,6 +56,7 @@ typedef struct {
 	uint8_t    bg_opa;               /* default: 255 */
 	lv_color_t label_color;          /* default: THEME_COLOR_TEXT_PRIMARY */
 	lv_color_t value_color;          /* default: THEME_COLOR_TEXT_PRIMARY */
+	int8_t     label_x_offset;       /* default: 0 */
 	int8_t     label_y_offset;       /* default: -28 */
 	int8_t     value_y_offset;       /* default: 9 */
 	uint8_t    text_align;           /* 0=left, 1=center (default), 2=right —
@@ -76,6 +77,7 @@ typedef struct {
 	 * peak_font empty → THEME_FONT_TINY. The peak follows text_align like the
 	 * header/value, so these offsets fine-tune on top of left/centre/right. */
 	char       peak_font[32];        /* default: "" (tiny theme font) */
+	int8_t     value_x_offset;       /* default: 0 */
 	int8_t     peak_x_offset;        /* default: 0 */
 	int8_t     peak_y_offset;        /* default: 31 (== legacy value_y_offset 9 + 22) */
 	char       signal_name[32];

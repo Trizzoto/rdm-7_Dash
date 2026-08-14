@@ -8229,6 +8229,8 @@
                             { name: "show_rpm_value", label: "Show RPM Number", type: "checkbox", def: false, cat: "appearance", group: "Text", help: "Show the RPM as a number on the bar." },
                             { name: "rpm_value_font", label: "RPM Number Font", type: "font", def: "", cat: "appearance", group: "Text", help: "Text style and size of the RPM number.", enabledBy: "show_rpm_value" },
                             { name: "rpm_value_color", label: "RPM Number Color", type: "color", def: 0xE8E8E8, cat: "appearance", group: "Text", help: "Colour of the RPM number.", enabledBy: "show_rpm_value", nightOverridable: true },
+                            { name: "rpm_value_x_offset", label: "Value X Offset", type: "stepper", def: 0, cat: "appearance", group: "Text", help: "Nudge the number left or right from where it normally sits.", min: -127, max: 127, enabledBy: "show_rpm_value" },
+                            { name: "rpm_value_y_offset", label: "Value Y Offset", type: "stepper", def: 0, cat: "appearance", group: "Text", help: "Nudge the number up or down. 0 is vertically centred on the bar.", min: -127, max: 127, enabledBy: "show_rpm_value" },
                             { name: "redline", label: "Redline RPM", type: "number", def: 6000, cat: "data", group: "Redline", help: "The RPM where the red warning zone starts - the bar changes colour past this point." },
                             { name: "limiter_value", label: "Limiter RPM", type: "number", def: 7000, cat: "data", group: "Redline", help: "The RPM where your rev limiter kicks in - the bar reacts here." },
                             { name: "limiter_color", label: "Limiter Color", type: "color", def: 0xFF0000, cat: "data", group: "Redline", help: "Colour shown when you hit the limiter.", nightOverridable: true },
@@ -8263,7 +8265,9 @@
                                   { v: 2, l: "Right" }
                               ] },
                             { name: "label_y_offset", label: "Label Y Offset", type: "stepper", def: -28, cat: "appearance", group: "Text", help: "Nudge the title up or down.", min: -100, max: 100 },
+                            { name: "label_x_offset", label: "Label X Offset", type: "stepper", def: 0, cat: "appearance", group: "Text", help: "Nudge the title left or right. 0 keeps it centred in the panel.", min: -127, max: 127 },
                             { name: "value_y_offset", label: "Value Y Offset", type: "stepper", def: 9, cat: "appearance", group: "Text", help: "Nudge the number up or down.", min: -100, max: 100 },
+                            { name: "value_x_offset", label: "Value X Offset", type: "stepper", def: 0, cat: "appearance", group: "Text", help: "Nudge the reading left or right. 0 keeps it centred in the panel.", min: -127, max: 127 },
                             { name: "custom_text", label: "Unit Text", type: "text", def: "", cat: "appearance", group: "Text", help: "Replace the unit with your own text." },
                             { name: "custom_text_x_offset", label: "Unit Text X", type: "stepper", def: 41, cat: "appearance", group: "Text", help: "Nudge that text left or right.", min: -100, max: 100 },
                             { name: "custom_text_y_offset", label: "Unit Text Y", type: "stepper", def: 32, cat: "appearance", group: "Text", help: "Nudge that text up or down.", min: -100, max: 100 },
@@ -10178,8 +10182,13 @@
                     s += `<rect x="${rlx.toFixed(1)}" y="${(top + w.h * 0.62).toFixed(1)}" width="${(right - rlx).toFixed(1)}" height="${(w.h * 0.3).toFixed(1)}" fill="#FF0000" fill-opacity="0.5"/>`;
             }
 
-            /* Tick marks + thousands labels (update_rpm_lines). Always drawn
-             * left→right at RPM positions, independent of fill direction. */
+            /* Tick marks + thousands labels — mirrors update_rpm_lines, which
+             * lays the scale along the FILL:
+             *   0 L→R        0 .......... max
+             *   1 R→L      max .......... 0
+             *   2 Center Out max ... 0 ... max
+             *   3 Edges In     0 ... max ... 0
+             * The mirror modes place every value twice, once per half. */
             if (c.show_ticks !== false){
                 const tickCol = _pvColor(c.tick_color, '#000000');
                 const side = _pvNum(c.tick_side, 2);        /* 0 Top, 1 Bottom, 2 Both */
@@ -10190,9 +10199,21 @@
                 const fpx = Math.max(8, Math.round(17 * sy));
                 const drawTop = side !== 1, drawBottom = side !== 0;
                 const nLines = Math.min(64, Math.floor(mx / 500) + 1);
-                for (let i = 0; i < nLines; i++){
+                const halves  = (dir === 2 || dir === 3) ? 2 : 1;
+                const halfSpan = span / 2;
+                for (let i = 0; i < nLines; i++)
+                for (let h = 0; h < halves; h++){
                     const rpmv = i * 500;
-                    const x = left + barX + (rpmv * span) / mx;
+                    const fFull = (rpmv * span) / mx;
+                    const fHalf = (rpmv * halfSpan) / mx;
+                    let x;
+                    if (dir === 1)      x = left + barX + span - fFull;
+                    else if (dir === 2) x = left + barX + halfSpan + (h ? fHalf : -fHalf);
+                    else if (dir === 3) x = h ? left + barX + span - fHalf : left + barX + fHalf;
+                    else                x = left + barX + fFull;
+                    /* The halves meet in the middle — draw that value once. */
+                    if (h === 1 && ((dir === 2 && rpmv === 0) ||
+                                    (dir === 3 && fHalf * 2 >= span))) continue;
                     const isMain = (rpmv % 1000) === 0;
                     const lw = Math.max(1, isMain ? twid * sy : twid * (2 / 3) * sy);
                     const lh = Math.max(1, isMain ? mainH : tlen * (8 / 12) * sy);

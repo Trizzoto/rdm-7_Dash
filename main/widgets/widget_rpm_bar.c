@@ -627,16 +627,53 @@ static void _invalidate_paint_cache(void) { s_paint_cache.valid = false; }
  * grad_active). Factored out so the mirror modes (fill_dir 2/3) can paint both
  * halves identically. See the long note in _apply_limiter_effect for why
  * dsc.dir must be cleared on the solid path. */
+/* Mirror a stop array end-for-end: order reversed, pos p becomes 100-p. */
+static void _grad_stops_reverse(const gradient_stops_t *src, gradient_stops_t *out) {
+	out->count = src->count;
+	for (uint8_t i = 0; i < src->count; i++) {
+		const gradient_stop_t *s = &src->stops[src->count - 1 - i];
+		out->stops[i].pos   = (uint8_t)(100 - s->pos);
+		out->stops[i].color = s->color;
+	}
+}
+
+/* Does this bar fill from its RIGHT edge? LV_GRAD_DIR_HOR always lays stop[0]
+ * at an object's LEFT edge, so any right-filling bar needs the stops mirrored
+ * or the gradient runs backwards against the fill.
+ *
+ * That is three of the four modes' worth of bug in one place: R→L put the
+ * first stop at the end of the fill, and each mirror mode got it right on one
+ * half and backwards on the other — which is why Center Out looked like the
+ * colours were "a bit mixed up" rather than plainly wrong. Reading it off
+ * base_dir keeps the rule in one place instead of a fill_dir/half matrix. */
+static bool _rpm_bar_fills_rtl(lv_obj_t *bar) {
+	if (!bar || !lv_obj_is_valid(bar)) return false;
+	return lv_obj_get_style_base_dir(bar, LV_PART_MAIN) == LV_BASE_DIR_RTL;
+}
+
 static void _rpm_paint_indicator(lv_obj_t *bar, lv_color_t fill,
                                  bool grad_active, rpm_bar_data_t *rd) {
 	if (!bar || !lv_obj_is_valid(bar)) return;
 	lv_obj_set_style_bg_color(bar, fill, LV_PART_INDICATOR | LV_STATE_DEFAULT);
-	if (grad_active && rd &&
-	    gradient_stops_to_lv_grad_dsc(&rd->grad_stops, &rd->grad_lv_dsc,
-	                                  LV_GRAD_DIR_HOR)) {
-		lv_obj_set_style_bg_grad(bar, &rd->grad_lv_dsc,
-		                         LV_PART_INDICATOR | LV_STATE_DEFAULT);
-	} else {
+	/* Two descriptors, not one: LVGL stores the POINTER, so the two halves of
+	 * a mirror layout cannot share a buffer holding opposite stop orders. */
+	bool ok = false;
+	if (grad_active && rd) {
+		const bool rev = _rpm_bar_fills_rtl(bar);
+		lv_grad_dsc_t *dsc = rev ? &rd->grad_lv_dsc_rev : &rd->grad_lv_dsc;
+		gradient_stops_t mirrored;
+		const gradient_stops_t *stops = &rd->grad_stops;
+		if (rev) {
+			_grad_stops_reverse(&rd->grad_stops, &mirrored);
+			stops = &mirrored;
+		}
+		if (gradient_stops_to_lv_grad_dsc(stops, dsc, LV_GRAD_DIR_HOR)) {
+			lv_obj_set_style_bg_grad(bar, dsc,
+			                         LV_PART_INDICATOR | LV_STATE_DEFAULT);
+			ok = true;
+		}
+	}
+	if (!ok) {
 		if (rd) rd->grad_lv_dsc.dir = LV_GRAD_DIR_NONE;
 		lv_obj_set_style_bg_grad_color(bar, fill,
 		                               LV_PART_INDICATOR | LV_STATE_DEFAULT);
@@ -986,7 +1023,9 @@ static void _rpm_bar_sync_value_label(rpm_bar_data_t *rd) {
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(ui_RPM_Value, LV_OPA_COVER,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_pos(ui_RPM_Value, (lv_coord_t)(20.0f * sx + 0.5f), 0);
+	lv_obj_set_pos(ui_RPM_Value,
+	               (lv_coord_t)(20.0f * sx + 0.5f) + rd->rpm_value_x_offset,
+	               rd->rpm_value_y_offset);
 }
 
 /* ── On-device appearance config callbacks ─────────────────────────────────
@@ -1160,13 +1199,50 @@ void update_rpm_lines(lv_obj_t *parent) {
 	const lv_font_t *tick_font = _pick_tick_font((int)(17.0f * sy + 0.5f));
 	lv_coord_t label_off       = (lv_coord_t)(7.0f * sy + 0.5f);
 
-	// For each tick, calculate its position for both sets
+	/* Numbers follow the fill. The scale used to run 0-at-the-left in every
+	 * mode while the fill went somewhere else entirely — Center Out grew
+	 * outward from the middle under a scale that still counted up from the
+	 * far left, and R→L filled backwards under the same scale.
+	 *
+	 *   0 (L→R)        0 .......... max
+	 *   1 (R→L)      max .......... 0
+	 *   2 (Center Out) max ... 0 ... max   each half counts out from the middle
+	 *   3 (Edges In)     0 ... max ... 0   each half counts in from its edge
+	 *
+	 * The two mirror modes place every value TWICE, so they run the body
+	 * once per half. 200-slot pool against 17 values at 8000 rpm — doubling
+	 * is nowhere near it. */
+	rpm_bar_data_t *rd_dir  = _lookup_rpm_bar_data();
+	uint8_t         fdir    = rd_dir ? rd_dir->fill_dir : 0;
+	bool            mirrored = (fdir == 2 || fdir == 3);
+	int             halves   = mirrored ? 2 : 1;
+	lv_coord_t      half_px  = span_px / 2;
+
 	for (int i = 0; i < num_lines; i++) {
+	  for (int h = 0; h < halves; h++) {
 		// Current RPM value for the tick
 		int rpm_value = i * increments;
 
 		// Calculate the x position based on rpm_value (scaled span)
-		lv_coord_t x_pos = bar_x + (lv_coord_t)(((int64_t)rpm_value * span_px) / rpm_gauge_max);
+		lv_coord_t frac_full = (lv_coord_t)(((int64_t)rpm_value * span_px) / rpm_gauge_max);
+		lv_coord_t frac_half = (lv_coord_t)(((int64_t)rpm_value * half_px) / rpm_gauge_max);
+		lv_coord_t x_pos;
+		if (fdir == 1) {
+			x_pos = bar_x + span_px - frac_full;              /* max at the left  */
+		} else if (fdir == 2) {                               /* 0 in the middle  */
+			x_pos = (h == 0) ? bar_x + half_px - frac_half
+			                 : bar_x + half_px + frac_half;
+		} else if (fdir == 3) {                               /* 0 at both edges  */
+			x_pos = (h == 0) ? bar_x + frac_half
+			                 : bar_x + span_px - frac_half;
+		} else {
+			x_pos = bar_x + frac_full;
+		}
+		/* The halves meet in the middle: mode 2's zero and mode 3's max land
+		 * on the same pixel from both sides. Draw that one once, or it gets a
+		 * double-thick tick and two labels stacked on each other. */
+		if (h == 1 && ((fdir == 2 && rpm_value == 0) ||
+		               (fdir == 3 && frac_half * 2 >= span_px))) continue;
 
 		// Decide which size line/tick to draw
 		//    - Every 1000 RPM: main tick (3x12 nominal)
@@ -1296,6 +1372,9 @@ void update_rpm_lines(lv_obj_t *parent) {
 		if (num_rpm_lines >= MAX_RPM_LINES * 2) {
 			break;
 		}
+	  }
+	  /* The inner break only leaves the half loop — stop the value loop too. */
+	  if (num_rpm_lines >= MAX_RPM_LINES * 2) break;
 	}
 }
 
@@ -1503,7 +1582,10 @@ static void _rpm_bar_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 	/* Numeric RPM readout — keep it centred over the bar (same +20*sx nudge
 	 * as the bar gauge alignment so it tracks the fill region's centre). */
 	if (ui_RPM_Value && lv_obj_is_valid(ui_RPM_Value)) {
-		lv_obj_set_pos(ui_RPM_Value, (lv_coord_t)(20.0f * sx + 0.5f), 0);
+		rpm_bar_data_t *rd_v = _lookup_rpm_bar_data();
+		lv_obj_set_pos(ui_RPM_Value,
+		               (lv_coord_t)(20.0f * sx + 0.5f) + (rd_v ? rd_v->rpm_value_x_offset : 0),
+		               rd_v ? rd_v->rpm_value_y_offset : 0);
 	}
 
 	/* Rebuild tick marks + labels at the new scale. */
@@ -1563,6 +1645,10 @@ static void _rpm_bar_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddStringToObject(cfg, "rpm_value_font", rd->rpm_value_font);
 	if (rd->rpm_value_color.full != THEME_COLOR_TEXT_PRIMARY.full)
 		cJSON_AddNumberToObject(cfg, "rpm_value_color", (int)rd->rpm_value_color.full);
+	if (rd->rpm_value_x_offset != 0)
+		cJSON_AddNumberToObject(cfg, "rpm_value_x_offset", rd->rpm_value_x_offset);
+	if (rd->rpm_value_y_offset != 0)
+		cJSON_AddNumberToObject(cfg, "rpm_value_y_offset", rd->rpm_value_y_offset);
 
 	if (rd->signal_name[0] != '\0')
 		cJSON_AddStringToObject(cfg, "signal_name", rd->signal_name);
@@ -1665,6 +1751,10 @@ static void _rpm_bar_from_json(widget_t *w, cJSON *in) {
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "rpm_value_font");
 	if (cJSON_IsString(item) && item->valuestring)
 		safe_strncpy(rd->rpm_value_font, item->valuestring, sizeof(rd->rpm_value_font));
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "rpm_value_x_offset");
+	if (cJSON_IsNumber(item)) rd->rpm_value_x_offset = (int8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "rpm_value_y_offset");
+	if (cJSON_IsNumber(item)) rd->rpm_value_y_offset = (int8_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "rpm_value_color");
 	if (cJSON_IsNumber(item)) rd->rpm_value_color.full = (uint32_t)item->valueint;
 	/* Clamp to the current 3-value enum. Older firmware versions had a
@@ -1876,6 +1966,8 @@ static bool _rpm_bar_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "tick_color") == 0)     { out->color = lv_color_to32(rd->tick_color)      & 0xFFFFFF; return true; }
 	if (strcmp(name, "bar_bg_color") == 0)   { out->color = lv_color_to32(rd->bar_bg_color)    & 0xFFFFFF; return true; }
 	if (strcmp(name, "show_rpm_value") == 0) { out->b = rd->show_rpm_value;   return true; }
+	if (strcmp(name, "rpm_value_x_offset") == 0) { out->i = rd->rpm_value_x_offset; return true; }
+	if (strcmp(name, "rpm_value_y_offset") == 0) { out->i = rd->rpm_value_y_offset; return true; }
 	if (strcmp(name, "rpm_value_font") == 0) { out->str = rd->rpm_value_font; return true; }
 	if (strcmp(name, "rpm_value_color") == 0){ out->color = lv_color_to32(rd->rpm_value_color) & 0xFFFFFF; return true; }
 	return false;
@@ -2014,6 +2106,16 @@ static bool _rpm_bar_inspector_set(widget_t *w, const char *name,
 	/* Numeric readout — create-or-show/hide + restyle. */
 	if (strcmp(name, "show_rpm_value") == 0) {
 		rd->show_rpm_value = in->b;
+		_rpm_bar_sync_value_label(rd);
+		return true;
+	}
+	if (strcmp(name, "rpm_value_x_offset") == 0) {
+		rd->rpm_value_x_offset = (int8_t)in->i;
+		_rpm_bar_sync_value_label(rd);   /* one place computes the position */
+		return true;
+	}
+	if (strcmp(name, "rpm_value_y_offset") == 0) {
+		rd->rpm_value_y_offset = (int8_t)in->i;
 		_rpm_bar_sync_value_label(rd);
 		return true;
 	}
