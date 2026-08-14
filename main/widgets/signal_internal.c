@@ -8,6 +8,7 @@
  */
 
 #include "signal_internal.h"
+#include "signal_sim.h"
 #include "signal.h"
 #include "data/channel_manager.h"
 #include "storage/config_store.h"
@@ -284,7 +285,13 @@ static void _internal_timer_cb(lv_timer_t *timer)
                                : "VEHICLE_SPEED";
         int16_t   sidx = signal_find_by_name(speed_name);
         signal_t *sig  = (sidx >= 0) ? signal_get_by_index((uint16_t)sidx) : NULL;
-        if (sig && !sig->is_stale) {
+        /* Never integrate simulated speed. The simulator sweeps VEHICLE_SPEED
+         * across its full range for demos, and this block both accumulates
+         * that into the lifetime total AND persists it to NVS -- so every
+         * minute spent with SIM ON was banking kilometres the car never
+         * travelled, permanently. The odometer keeps publishing its real
+         * value below; it just stops counting while the data is fake. */
+        if (sig && !sig->is_stale && !signal_sim_is_active()) {
             s_odo_speed_warned = false;
             float speed = sig->current_value;
             /* Sanity cap: anything ≥ 400 km/h is treated as a sentinel /

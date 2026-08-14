@@ -56,6 +56,28 @@ static uint16_t     s_cached_count = 0;
 static uint16_t     s_sim_cursor   = 0;   /* round-robin position */
 static uint64_t     s_last_tick_us = 0;   /* wall-clock time of previous tick */
 
+/* Signals the simulator must never drive.
+ *
+ * These are not readings ABOUT the car, they are the device reporting on
+ * itself, and they are already correct without help: FPS is measured from the
+ * flush callback, ODOMETER is a real accumulated total that also persists to
+ * NVS. Sweeping them min-to-max replaces a true reading with a fake one and,
+ * in the odometer's case, would show a distance the car never travelled.
+ * Leaving them alone means demo mode still shows the genuine value.
+ *
+ * Deliberately a name list rather than a filter on SIGNAL_SOURCE_INTERNAL:
+ * that provenance also covers CALCULATED_GEAR and the wire inputs, which SHOULD
+ * animate on the bench. */
+static bool _sim_is_self_reported(const char *name)
+{
+    if (!name || !name[0]) return false;
+    static const char *const kNever[] = { "FPS", "ODOMETER" };
+    for (size_t i = 0; i < sizeof(kNever) / sizeof(kNever[0]); i++) {
+        if (strcmp(name, kNever[i]) == 0) return true;
+    }
+    return false;
+}
+
 static void _rebuild_signal_state(uint16_t count)
 {
     /* All signals start with default bounds 0-100; the widget scan below
@@ -156,6 +178,7 @@ static void _rebuild_signal_state(uint16_t count)
         }
 
         if (!sig_name || sig_name[0] == '\0') continue;
+        if (_sim_is_self_reported(sig_name)) continue;
 
         int16_t idx = signal_find_by_name(sig_name);
         if (idx < 0 || idx >= SIM_MAX_SIGNALS) continue;
@@ -180,6 +203,7 @@ static void _rebuild_signal_state(uint16_t count)
         default: continue;
         }
         if (!sig_name || sig_name[0] == '\0') continue;
+        if (_sim_is_self_reported(sig_name)) continue;
 
         int16_t idx = signal_find_by_name(sig_name);
         if (idx < 0 || idx >= SIM_MAX_SIGNALS) continue;
