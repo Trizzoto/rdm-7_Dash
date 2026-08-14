@@ -3938,41 +3938,51 @@
 
         /* Accordion Inspector */
         .inspector-accordion { border:none; margin:0; }
-        .inspector-accordion summary {
+        /* Direct-child selectors on purpose: the group folds (.insp-fold) are
+         * <details> NESTED inside the accordion body, and the old descendant
+         * selectors bled into their summaries — worst of all
+         * `[open] summary::before { rotate }`, which rotated every nested
+         * fold's caret down while the accordion was open, so a closed group
+         * was indistinguishable from an open one and its fields looked like
+         * they'd vanished. The bar background + border leaked the same way. */
+        .inspector-accordion > summary {
             padding:7px 14px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em;
             color:var(--text-muted); cursor:pointer; border-bottom:1px solid var(--border);
             background:rgba(20,20,20,0.4); list-style:none; display:flex; align-items:center; gap:8px;
             user-select:none; transition: color 0.12s;
         }
-        .inspector-accordion summary:hover { color: var(--text); }
-        .inspector-accordion summary::before { content:'\25B6'; font-size:7px; transition:transform 0.12s; }
-        .inspector-accordion[open] summary::before { transform:rotate(90deg); }
+        .inspector-accordion > summary:hover { color: var(--text); }
+        .inspector-accordion > summary::before { content:'\25B6'; font-size:7px; transition:transform 0.12s; }
+        .inspector-accordion[open] > summary::before { transform:rotate(90deg); }
         .accordion-body { padding:12px 14px; display:flex; flex-direction:column; gap:8px; }
         /* sub-section divider within an accordion (Fill / Ticks / Needle / ...) */
 
         /* ── Foldable group sections inside an inspector tab ──────────────── */
-        .insp-fold { border-top:1px solid var(--border); margin-top:8px; }
+        .insp-fold { border-top:1px solid var(--border); margin-top:8px; background:none; }
         .insp-fold:first-child { border-top:none; margin-top:0; }
         .insp-fold > summary {
             list-style:none; cursor:pointer; user-select:none;
             display:flex; align-items:center; gap:6px;
             font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:0.08em;
             color:var(--accent); opacity:0.85; padding:7px 0 3px;
+            background:none; border-bottom:none;
         }
         .insp-fold > summary::-webkit-details-marker { display:none; }
-        /* Disclosure caret, drawn rather than relying on the UA marker so it
-           sits on the correct side and rotates predictably. */
+        /* Same caret glyph + rotation as the accordion one level up, so the
+           whole panel speaks one disclosure language: ▶ closed, rotated 90°
+           when open. */
         .insp-fold > summary::before {
-            content:''; flex:0 0 auto; width:0; height:0;
-            border-left:4px solid currentColor;
-            border-top:3.5px solid transparent; border-bottom:3.5px solid transparent;
-            transform-origin:2px 50%; transition:transform 0.12s ease;
+            content:'\25B6'; flex:0 0 auto; font-size:7px;
+            transition:transform 0.12s ease; transform:none;
         }
         .insp-fold[open] > summary::before { transform:rotate(90deg); }
         .insp-fold > summary:hover { opacity:1; }
         .insp-fold > summary:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+        /* Count of settings inside, next to the label — NOT flushed right,
+           where it lined up with the value column and read as a value
+           ("FRAME   5" looked like a field set to 5). */
         .insp-fold-n {
-            margin-left:auto; font-size:9px; font-weight:600; letter-spacing:0;
+            font-size:9px; font-weight:600; letter-spacing:0;
             color:var(--text-muted); opacity:0.8;
         }
         .insp-fold-body { padding-bottom:4px; }
@@ -12425,7 +12435,11 @@
          * on, remembered per widget type + tab + group. The count in the
          * summary is of fields that will actually render, so a group whose
          * gate is off reads "0" rather than promising twenty hidden rows. */
-        const FOLD_AUTO_OPEN_MAX = 8;
+        /* 12, not 8: panel's Text group is 10 fields and has always been on
+         * screen — folding it away by default read as "my text settings are
+         * gone". Only the true walls (arc Fill 22, meter Needle 14 / Ticks 20)
+         * should start closed. */
+        const FOLD_AUTO_OPEN_MAX = 12;
         function _foldKey(wtype, cat, group) { return `rdm7_fold.${wtype}.${cat}.${group}`; }
         function _foldIsOpen(wtype, cat, group, n) {
             try {
@@ -12434,8 +12448,15 @@
             } catch (e) { }
             return n <= FOLD_AUTO_OPEN_MAX;
         }
-        function _foldRemember(wtype, cat, group, el) {
-            try { localStorage.setItem(_foldKey(wtype, cat, group), el.open ? '1' : '0'); } catch (e) { }
+        /* Called from CLICK on the summary, not ontoggle: the browser queues a
+         * toggle event for every <details open> it parses, so ontoggle fired on
+         * each re-render and cemented the size-based defaults into storage as
+         * if the user had chosen them. A click is the only genuine choice.
+         * The default action (the actual toggle) runs after the click handler,
+         * so the state the user chose is the OPPOSITE of el.open right now. */
+        function _foldRemember(wtype, cat, group, summaryEl) {
+            const willOpen = !summaryEl.parentElement.open;
+            try { localStorage.setItem(_foldKey(wtype, cat, group), willOpen ? '1' : '0'); } catch (e) { }
         }
         /* Count only the fields that survive the enabledBy filter — the same
          * predicate the render loop uses, passed in so the two cannot drift. */
@@ -12451,8 +12472,9 @@
         function _foldOpenTag(wtype, cat, group, n) {
             const open = _foldIsOpen(wtype, cat, group, n) ? ' open' : '';
             const esc  = String(group).replace(/'/g, "\\'");
-            return `<details class="insp-fold"${open} ontoggle="_foldRemember('${wtype}','${cat}','${esc}',this)">`
-                 + `<summary>${group}<span class="insp-fold-n">${n}</span></summary>`
+            return `<details class="insp-fold"${open}>`
+                 + `<summary onclick="_foldRemember('${wtype}','${cat}','${esc}',this)">`
+                 + `${group}<span class="insp-fold-n">(${n})</span></summary>`
                  + `<div class="insp-fold-body">`;
         }
 
