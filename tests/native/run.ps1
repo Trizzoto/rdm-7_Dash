@@ -43,6 +43,7 @@ function Get-ExtraSources($name) {
 		"test_meter_display_units" { return @("../../main/data/unit_convert.c") }
 		"test_arc_display_units" { return @("../../main/data/unit_convert.c") }
 		"test_track_map_geo"     { return @("../../main/widgets/track_map_geo.c") }
+		"test_rdm_bus_proto"     { return @("../../main/can/rdm_bus_proto.c") }
 		default                  { return @() }
 	}
 }
@@ -54,6 +55,7 @@ function Get-ExtraIncludes($name) {
 		"test_meter_display_units" { return @("-I../../main/data") }
 		"test_arc_display_units" { return @("-I../../main/data") }
 		"test_track_map_geo"     { return @("-I../../main") }
+		"test_rdm_bus_proto"     { return @("-I../../main") }
 		default                  { return @() }
 	}
 }

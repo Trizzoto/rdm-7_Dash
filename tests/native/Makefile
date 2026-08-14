@@ -18,7 +18,7 @@ LDFLAGS ?= -lm
 # the two drifted apart — test_obd2_pid_table and test_widget_warning_precedence
 # existed for a while but only ever ran on Windows. If you add a test, add it
 # here as well as writing the file.
-TESTS = test_can_decode test_widget_rules test_layout_migration test_widget_arc_precedence test_obd2_freeze_frame test_obd2_one_shot_decode test_obd2_pid_table test_ota_skip_version test_calculated_gear test_web_path_safety test_ecu_preset_match test_widget_fields test_widget_warning_precedence test_hardening_fixes test_meter_display_units test_arc_display_units test_widget_decimals_follow_channel test_track_map_geo test_meter_sweep_angles
+TESTS = test_can_decode test_widget_rules test_layout_migration test_widget_arc_precedence test_obd2_freeze_frame test_obd2_one_shot_decode test_obd2_pid_table test_ota_skip_version test_calculated_gear test_web_path_safety test_ecu_preset_match test_widget_fields test_widget_warning_precedence test_hardening_fixes test_meter_display_units test_arc_display_units test_widget_decimals_follow_channel test_track_map_geo test_meter_sweep_angles test_rdm_bus_proto
 
 BIN_DIR := build
 BINS    := $(addprefix $(BIN_DIR)/, $(TESTS))
@@ -85,6 +85,9 @@ $(BIN_DIR)/test_arc_display_units: test_arc_display_units.c unity.c ../../main/d
 # Studio's OWN encoder, so a byte-layout drift between the two repos fails here.
 # Regenerate the fixtures first if they are missing:
 #   node gen_track_fixtures.js <path-to-rdm7-desktop>
+$(BIN_DIR)/test_rdm_bus_proto: test_rdm_bus_proto.c ../../main/can/rdm_bus_proto.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -I../../main 	    test_rdm_bus_proto.c ../../main/can/rdm_bus_proto.c 	    -o $@ $(LDFLAGS)
+
 $(BIN_DIR)/test_track_map_geo: test_track_map_geo.c unity.c ../../main/widgets/track_map_geo.c | $(BIN_DIR)
 	$(CC) $(CFLAGS) -I../../main \
 	    test_track_map_geo.c unity.c ../../main/widgets/track_map_geo.c \
