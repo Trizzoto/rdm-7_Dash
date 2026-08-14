@@ -1162,8 +1162,10 @@ void update_rpm_lines(lv_obj_t *parent) {
 	if (rd_ticks)
 		tick_color = NIGHT_PICK_COLOR(night_mode_is_active(), rd_ticks->night,
 		                              tick_color, rd_ticks->tick_color);
+	uint8_t    lbl_every   = rd_ticks ? rd_ticks->label_every : 1;
 	if (tick_len_n < 1) tick_len_n = 1;
 	if (tick_wid_n < 1) tick_wid_n = 1;
+	if (lbl_every  < 1) lbl_every  = 1;
 
 	/* Ticks hidden: bookkeeping already cleared above (old objects deleted),
 	 * so just leave the parent free of tick marks. */
@@ -1255,7 +1257,9 @@ void update_rpm_lines(lv_obj_t *parent) {
 			// Main tick — full user width/length
 			line_width  = (lv_coord_t)((float)tick_wid_n * sy + 0.5f);
 			line_height = main_h;
-			add_label = true;
+			/* Thin the NUMBERS only — the tick stays, so the scale keeps its
+			 * rhythm while the text stops colliding. */
+			add_label = ((rpm_value / 1000) % lbl_every) == 0;
 		} else {
 			// Medium tick (500 RPM) — keep the original 2:3 width / 8:12 length
 			// proportion relative to the main tick so user sizing scales both.
@@ -1639,6 +1643,8 @@ static void _rpm_bar_to_json(widget_t *w, cJSON *out) {
 	 * night override of rpm_value_color was already serialized; the base
 	 * values were not — so enabling the readout or restyling it was lost on
 	 * reload. Defaults-only emit keeps untouched widgets empty. */
+	if (rd->label_every != 1)
+		cJSON_AddNumberToObject(cfg, "label_every", rd->label_every);
 	if (rd->show_rpm_value)         /* default false */
 		cJSON_AddBoolToObject(cfg, "show_rpm_value", true);
 	if (rd->rpm_value_font[0] != '\0')
@@ -1720,6 +1726,11 @@ static void _rpm_bar_from_json(widget_t *w, cJSON *in) {
 
 	/* ── Appearance — all default to the historical hardcoded look, so an
 	 * older layout that omits these reproduces the previous render. ────── */
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "label_every");
+	if (cJSON_IsNumber(item)) {
+		int v = item->valueint; if (v < 1) v = 1; if (v > 10) v = 10;
+		rd->label_every = (uint8_t)v;
+	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "show_ticks");
 	if (cJSON_IsBool(item)) rd->show_ticks = cJSON_IsTrue(item);
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_side");
@@ -1966,6 +1977,7 @@ static bool _rpm_bar_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "tick_color") == 0)     { out->color = lv_color_to32(rd->tick_color)      & 0xFFFFFF; return true; }
 	if (strcmp(name, "bar_bg_color") == 0)   { out->color = lv_color_to32(rd->bar_bg_color)    & 0xFFFFFF; return true; }
 	if (strcmp(name, "show_rpm_value") == 0) { out->b = rd->show_rpm_value;   return true; }
+	if (strcmp(name, "label_every") == 0) { out->i = rd->label_every; return true; }
 	if (strcmp(name, "rpm_value_x_offset") == 0) { out->i = rd->rpm_value_x_offset; return true; }
 	if (strcmp(name, "rpm_value_y_offset") == 0) { out->i = rd->rpm_value_y_offset; return true; }
 	if (strcmp(name, "rpm_value_font") == 0) { out->str = rd->rpm_value_font; return true; }
@@ -2109,6 +2121,12 @@ static bool _rpm_bar_inspector_set(widget_t *w, const char *name,
 		_rpm_bar_sync_value_label(rd);
 		return true;
 	}
+	if (strcmp(name, "label_every") == 0) {
+		int v = in->i; if (v < 1) v = 1; if (v > 10) v = 10;
+		rd->label_every = (uint8_t)v;
+		update_rpm_lines(s_rpm_container);   /* rebuild the scale */
+		return true;
+	}
 	if (strcmp(name, "rpm_value_x_offset") == 0) {
 		rd->rpm_value_x_offset = (int8_t)in->i;
 		_rpm_bar_sync_value_label(rd);   /* one place computes the position */
@@ -2170,6 +2188,7 @@ widget_t *widget_rpm_bar_create_instance(void) {
 	 * look exactly, keeping to_json empty for untouched widgets. */
 	rd->show_ticks   = true;            /* ticks were always drawn before */
 	rd->tick_side    = 2;               /* Both rows (top + bottom) */
+	rd->label_every  = 1;               /* every thousand, the historical look */
 	rd->tick_length  = 12;              /* matches the old 12px main-tick height */
 	rd->tick_width   = 3;               /* matches the old 3px main-tick width */
 	rd->tick_color   = THEME_COLOR_BG;  /* old hardcoded tick/label colour */

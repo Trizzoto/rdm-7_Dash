@@ -239,6 +239,7 @@ void widget_bar_sync_range(bar_data_t *bd) {
 /* Indicator styling/paint helpers (defined near _bar_create) — forward-declared
  * here so _bar_on_signal (above their definitions) can paint both mirror halves. */
 static void _bar_style_indicator(lv_obj_t *bar, bar_data_t *bd, bool has_track);
+static void _bar_layout_mirror_halves(widget_t *w, bar_data_t *bd);
 static void _bar_paint_indicator(lv_obj_t *bar, bar_data_t *bd,
                                  lv_color_t color, bool grad_on);
 
@@ -789,16 +790,46 @@ static void _bar_style_indicator(lv_obj_t *bar, bar_data_t *bd, bool has_track) 
  * grad_on (and ≥2 stops). Factored out so the mirror modes paint both halves.
  * Mutates bd->grad_lv_dsc.dir on the solid path (see the long note in
  * _bar_on_signal about LVGL's draw_dsc grad->dir fallback). */
+/* Mirror a stop array end-for-end: order reversed, pos p becomes 100-p. */
+static void _bar_grad_stops_reverse(const gradient_stops_t *src,
+                                    gradient_stops_t *out) {
+	out->count = src->count;
+	for (uint8_t i = 0; i < src->count; i++) {
+		const gradient_stop_t *s = &src->stops[src->count - 1 - i];
+		out->stops[i].pos   = (uint8_t)(100 - s->pos);
+		out->stops[i].color = s->color;
+	}
+}
+
+/* Does this bar fill from its RIGHT edge? LV_GRAD_DIR_HOR always lays
+                                     stop[0] at an object's LEFT edge, so a
+ * right-filling bar needs the stops mirrored or the gradient runs against
+ * the fill. Same bug and same one-line rule as widget_rpm_bar: R→L put the
+ * first stop at the end of the fill, and each mirror mode was correct on one
+ * half and reversed on the other. */
+static bool _bar_fills_rtl(lv_obj_t *bar) {
+	if (!bar || !lv_obj_is_valid(bar)) return false;
+	return lv_obj_get_style_base_dir(bar, LV_PART_MAIN) == LV_BASE_DIR_RTL;
+}
+
 static void _bar_paint_indicator(lv_obj_t *bar, bar_data_t *bd,
                                  lv_color_t color, bool grad_on) {
 	if (!bar || !lv_obj_is_valid(bar)) return;
 	lv_obj_set_style_bg_color(bar, color, LV_PART_INDICATOR | LV_STATE_DEFAULT);
-	if (grad_on && bd->grad_stops.count >= 2 &&
-	    gradient_stops_to_lv_grad_dsc(&bd->grad_stops, &bd->grad_lv_dsc,
-	                                  LV_GRAD_DIR_HOR)) {
-		lv_obj_set_style_bg_grad(bar, &bd->grad_lv_dsc,
-		                         LV_PART_INDICATOR | LV_STATE_DEFAULT);
-	} else {
+	bool applied = false;
+	if (grad_on && bd->grad_stops.count >= 2) {
+		const bool rev = _bar_fills_rtl(bar);
+		lv_grad_dsc_t *dsc = rev ? &bd->grad_lv_dsc_rev : &bd->grad_lv_dsc;
+		gradient_stops_t mirrored;
+		const gradient_stops_t *stops = &bd->grad_stops;
+		if (rev) { _bar_grad_stops_reverse(&bd->grad_stops, &mirrored); stops = &mirrored; }
+		if (gradient_stops_to_lv_grad_dsc(stops, dsc, LV_GRAD_DIR_HOR)) {
+			lv_obj_set_style_bg_grad(bar, dsc,
+			                         LV_PART_INDICATOR | LV_STATE_DEFAULT);
+			applied = true;
+		}
+	}
+	if (!applied) {
 		bd->grad_lv_dsc.dir = LV_GRAD_DIR_NONE;
 		lv_obj_set_style_bg_grad_dir(bar, LV_GRAD_DIR_NONE,
 		                             LV_PART_INDICATOR | LV_STATE_DEFAULT);
@@ -953,17 +984,29 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 			}
 			if (!w->root) w->root = bar;
 		} else {
-			/* Two mirrored half-bars. Geometry is in center-origin coords:
-			 * the whole bar spans [x-w/2, x+w/2]; split at the centre. */
-			lv_coord_t leftW  = w->w / 2;
-			lv_coord_t rightW = w->w - leftW;
-			lv_coord_t leftX  = w->x - (w->w / 2) + (leftW / 2);
-			lv_coord_t rightX = w->x + (w->w / 2) - (rightW / 2);
+			/* Two mirrored half-bars inside a transparent container.
+			 *
+			 * The container is what makes this correct. The halves used to be
+			 * siblings positioned by centre-origin offsets, and with no track
+			 * object the LEFT half became w->root — which the layout engine then
+			 * re-centred on the widget, wiping its offset. The right half kept
+			 * its place, so the bar rendered three-quarters width, hanging off to
+			 * the right, with the left half overlapping the right instead of
+			 * meeting it at the centre line. Anchoring each half to an edge of a
+			 * container that owns the widget's box removes the offset maths
+			 * entirely — the same shape _rpm_layout_bars uses. */
+			lv_obj_t *cont = lv_obj_create(parent);
+			lv_obj_set_size(cont, w->w, w->h);
+			lv_obj_set_align(cont, LV_ALIGN_CENTER);
+			lv_obj_set_pos(cont, w->x, w->y);
+			lv_obj_set_style_bg_opa(cont, LV_OPA_TRANSP, LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_border_width(cont, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_pad_all(cont, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+			bd->mirror_cont = cont;
 
-			lv_obj_t *barL = lv_bar_create(parent);
-			lv_obj_set_size(barL, leftW, w->h);
-			lv_obj_set_align(barL, LV_ALIGN_CENTER);
-			lv_obj_set_pos(barL, leftX, w->y);
+			lv_obj_t *barL = lv_bar_create(cont);
+			lv_obj_set_align(barL, LV_ALIGN_LEFT_MID);
 			_bar_style_indicator(barL, bd, has_track);
 			/* Center→Out: left grows from the centre (right edge) → RTL.
 			 * Edges→In:   left grows from the left edge → LTR. */
@@ -971,10 +1014,8 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 				fdir == 2 ? LV_BASE_DIR_RTL : LV_BASE_DIR_LTR,
 				LV_PART_MAIN | LV_STATE_DEFAULT);
 
-			lv_obj_t *barR = lv_bar_create(parent);
-			lv_obj_set_size(barR, rightW, w->h);
-			lv_obj_set_align(barR, LV_ALIGN_CENTER);
-			lv_obj_set_pos(barR, rightX, w->y);
+			lv_obj_t *barR = lv_bar_create(cont);
+			lv_obj_set_align(barR, LV_ALIGN_RIGHT_MID);
 			_bar_style_indicator(barR, bd, has_track);
 			/* Center→Out: right grows from the centre (left edge) → LTR.
 			 * Edges→In:   right grows from the right edge → RTL. */
@@ -984,10 +1025,13 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 
 			bd->bar_obj  = barL;
 			bd->bar_obj2 = barR;
+			/* Re-run the split through the shared helper so create and resize
+			 * agree even if w->w changed between construction and here. */
+			_bar_layout_mirror_halves(w, bd);
 			_bar_set_lv_range(bd);   /* applies to both halves */
 			lv_bar_set_value(barL, b_min, LV_ANIM_OFF);
 			lv_bar_set_value(barR, b_min, LV_ANIM_OFF);
-			if (!w->root) w->root = barL;
+			if (!w->root) w->root = cont;
 		}
 	}
 
@@ -1093,6 +1137,38 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 		if (sig) _bar_on_signal(sig->current_value, sig->is_stale, w);
 	}
 }
+/* Size + place the two mirror halves from the widget's CURRENT w/h.
+ *
+ * Create and resize used to each compute this themselves, and they drifted:
+ * a bar created at the 350 px default and then resized to 700 ended up with
+ * a 175 px left half beside a 350 px right one, the whole thing hanging off
+ * to the right of centre. Both callers go through here now, so the two
+ * halves cannot disagree about how wide half of something is.
+ *
+ * Left gets the odd pixel when w is odd; right takes the remainder, which is
+ * how the fill stays symmetric about the centre line. */
+static void _bar_layout_mirror_halves(widget_t *w, bar_data_t *bd) {
+	if (!w || !bd) return;
+	lv_coord_t leftW  = w->w / 2;
+	lv_coord_t rightW = w->w - leftW;   /* odd widths: the extra pixel goes right */
+	if (bd->mirror_cont && lv_obj_is_valid(bd->mirror_cont)) {
+		lv_obj_set_size(bd->mirror_cont, w->w, w->h);
+		lv_obj_set_pos(bd->mirror_cont, w->x, w->y);
+	}
+	/* Each half is anchored to its own edge of the container, so only the
+	 * sizes need updating and no offset can be clobbered. */
+	if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj))
+		lv_obj_set_size(bd->bar_obj, leftW, w->h);
+	if (bd->bar_obj2 && lv_obj_is_valid(bd->bar_obj2))
+		lv_obj_set_size(bd->bar_obj2, rightW, w->h);
+	/* The image-mode track is a separate object and the mirror branch never
+	 * resized it, so it kept the create-time width too. */
+	if (bd->img_bg_obj && lv_obj_is_valid(bd->img_bg_obj)) {
+		lv_obj_set_size(bd->img_bg_obj, w->w, w->h);
+		lv_obj_set_pos(bd->img_bg_obj, w->x, w->y);
+	}
+}
+
 static void _bar_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 	w->w = nw;
 	w->h = nh;
@@ -1100,18 +1176,7 @@ static void _bar_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 	/* Mirror modes: re-split the new width into two centred halves. Otherwise
 	 * the single root bar (or image stack) just takes the full size. */
 	if (bd && (bd->fill_dir == 2 || bd->fill_dir == 3) && bd->bar_obj2) {
-		lv_coord_t leftW  = nw / 2;
-		lv_coord_t rightW = nw - leftW;
-		lv_coord_t leftX  = w->x - (nw / 2) + (leftW / 2);
-		lv_coord_t rightX = w->x + (nw / 2) - (rightW / 2);
-		if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj)) {
-			lv_obj_set_size(bd->bar_obj, leftW, nh);
-			lv_obj_set_pos(bd->bar_obj, leftX, w->y);
-		}
-		if (lv_obj_is_valid(bd->bar_obj2)) {
-			lv_obj_set_size(bd->bar_obj2, rightW, nh);
-			lv_obj_set_pos(bd->bar_obj2, rightX, w->y);
-		}
+		_bar_layout_mirror_halves(w, bd);
 	} else if (w->root && lv_obj_is_valid(w->root)) {
 		lv_obj_set_size(w->root, nw, nh);
 	}
@@ -1546,6 +1611,7 @@ static void _bar_destroy(widget_t *w) {
 		bd->value_obj = NULL;
 		bd->bar_obj = NULL;
 		bd->bar_obj2 = NULL;
+		bd->mirror_cont = NULL;   /* deleted with w->root, which it was */
 		rdm_image_free(bd->bar_img_dsc);
 		rdm_image_free(bd->bar_img_full_dsc);
 	}

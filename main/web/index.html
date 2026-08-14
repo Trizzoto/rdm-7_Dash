@@ -8217,6 +8217,7 @@
                               ] },
                             { name: "bar_bg_color", label: "Background", type: "color", def: 0xF0F0F0, cat: "appearance", group: "Frame", help: "Colour of the empty background.", nightOverridable: true },
                             { name: "show_ticks", label: "Show Ticks", type: "checkbox", def: true, cat: "appearance", group: "Ticks", help: "Show marks along the bar." },
+                            { name: "label_every", label: "Number Every", type: "stepper", def: 1, cat: "appearance", group: "Ticks", help: "How often to print a number. 1 labels every thousand; 2 gives 0 2 4 6 8. The tick marks are unaffected — only the numbers thin out. Useful for the Center Out and Edges In fills, which lay the scale twice in the same width.", min: 1, max: 10, enabledBy: "show_ticks" },
                             { name: "tick_side", label: "Tick Side", type: "select", def: 2, cat: "appearance", group: "Ticks", help: "Which side of the bar the marks sit on.", enabledBy: "show_ticks",
                               options: [
                                   { v: 0, l: "Top" },
@@ -10199,6 +10200,7 @@
                 const fpx = Math.max(8, Math.round(17 * sy));
                 const drawTop = side !== 1, drawBottom = side !== 0;
                 const nLines = Math.min(64, Math.floor(mx / 500) + 1);
+                const lblEvery = Math.max(1, _pvNum(c.label_every, 1));
                 const halves  = (dir === 2 || dir === 3) ? 2 : 1;
                 const halfSpan = span / 2;
                 for (let i = 0; i < nLines; i++)
@@ -10215,6 +10217,8 @@
                     if (h === 1 && ((dir === 2 && rpmv === 0) ||
                                     (dir === 3 && fHalf * 2 >= span))) continue;
                     const isMain = (rpmv % 1000) === 0;
+                    /* label_every thins the NUMBERS only — ticks stay. */
+                    const showNum = isMain && ((rpmv / 1000) % lblEvery) === 0;
                     const lw = Math.max(1, isMain ? twid * sy : twid * (2 / 3) * sy);
                     const lh = Math.max(1, isMain ? mainH : tlen * (8 / 12) * sy);
                     const ax = x - lw / 2;
@@ -10222,7 +10226,7 @@
                         s += `<rect x="${ax.toFixed(1)}" y="${top.toFixed(1)}" width="${lw.toFixed(1)}" height="${lh.toFixed(1)}" fill="${tickCol}"/>`;
                     if (drawBottom)
                         s += `<rect x="${ax.toFixed(1)}" y="${(top + w.h - lh).toFixed(1)}" width="${lw.toFixed(1)}" height="${lh.toFixed(1)}" fill="${tickCol}"/>`;
-                    if (isMain){
+                    if (showNum){
                         const ly = drawTop ? top + mainH + fpx * 0.75 : top + w.h - lh - fpx * 0.75;
                         s += `<text x="${x.toFixed(1)}" y="${ly.toFixed(1)}" fill="${tickCol}" font-family="'Fugaz One','Segoe UI',sans-serif" font-size="${fpx}" text-anchor="middle" dominant-baseline="central">${rpmv / 1000}</text>`;
                     }

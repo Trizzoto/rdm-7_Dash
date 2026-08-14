@@ -50,6 +50,13 @@ typedef struct {
 	 * visuals stay unambiguous. */
 	gradient_stops_t grad_stops;
 	lv_grad_dsc_t    grad_lv_dsc;
+	/* Mirrored stop order for a bar that fills right-to-left — see the note
+	 * on _bar_fills_rtl. Separate buffer because LVGL stores the descriptor
+	 * POINTER and both halves of a mirror layout are on screen at once. */
+	lv_grad_dsc_t    grad_lv_dsc_rev;
+	/* Transparent box holding the two halves in the mirror fill modes; it,
+	 * not a half-bar, is w->root there. See _bar_layout_mirror_halves. */
+	lv_obj_t        *mirror_cont;
 	bool     show_bar_value;
 	bool     show_bar_label;        /* default: true — hide the text label above the bar */
 	bool     invert_bar_value;

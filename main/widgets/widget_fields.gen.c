@@ -79,6 +79,16 @@ static const widget_field_t rpm_bar_fields[] = {
         .night_overridable = false,
     },
     {
+        .name = "label_every", .label = "Number Every",
+        .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
+        .min_int = 1, .max_int = 10, .step_int = 0,
+        .default_int = 1, .default_float = 1.000000f, .default_color = 0x000000,
+        .default_str = NULL,
+        .options = NULL, .option_count = 0,
+        .enabled_by = "show_ticks", .group = "Ticks", .inline_key = NULL,
+        .night_overridable = false,
+    },
+    {
         .name = "tick_side", .label = "Tick Side",
         .type = WF_TYPE_SELECT, .category = WF_CAT_APPEARANCE,
         .min_int = 0, .max_int = 0, .step_int = 0,

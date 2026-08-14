@@ -95,6 +95,18 @@
           "help": "Show marks along the bar."
         },
         {
+          "name": "label_every",
+          "label": "Number Every",
+          "type": "stepper",
+          "default": 1,
+          "category": "appearance",
+          "min": 1,
+          "max": 10,
+          "enabled_by": "show_ticks",
+          "group": "Ticks",
+          "help": "How often to print a number. 1 labels every thousand; 2 gives 0 2 4 6 8. The tick marks are unaffected — only the numbers thin out. Useful for the Center Out and Edges In fills, which lay the scale twice in the same width."
+        },
+        {
           "name": "tick_side",
           "label": "Tick Side",
           "type": "select",

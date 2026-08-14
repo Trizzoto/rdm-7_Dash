@@ -71,6 +71,11 @@ typedef struct {
 	/* Tick marks (the 500/1000-RPM rectangles + thousands labels). */
 	bool       show_ticks;     /* default true — current behaviour is always-on */
 	uint8_t    tick_side;      /* 0=Top, 1=Bottom, 2=Both (default 2) */
+	/* Label every Nth thousand. 1 = every one (the historical look). The
+	 * mirror fill modes place the whole scale twice, so a 8000-rpm bar goes
+	 * from 9 numbers to 17 in the same width — 2 thins that to 0 2 4 6 8.
+	 * Ticks are unaffected; only the numbers are dropped. */
+	uint8_t    label_every;    /* default 1, range 1..10 */
 	uint8_t    tick_length;    /* nominal main-tick length px (default 12) */
 	uint8_t    tick_width;     /* nominal main-tick width px (default 3) */
 	lv_color_t tick_color;     /* default THEME_COLOR_BG (0x000000) */
