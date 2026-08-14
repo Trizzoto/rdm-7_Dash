@@ -1872,12 +1872,9 @@ static void _build_schema_tab(widget_t *w, widget_field_category_t cat) {
     if (!def) return;
 
     _ensure_presets();
-    s_row_count = 0;
-    s_color_row_ctx_count = 0;
-    s_int_row_ctx_count = 0;
-    s_bool_row_ctx_count = 0;
-    s_select_row_ctx_count = 0;
-    s_text_row_ctx_count = 0;
+    /* Row/context counters are reset by _show_tab, NOT here — the DATA tab
+     * builds two categories in a row (DATA then ALERTS) and a reset between
+     * them would orphan the first pass's rows from their callback contexts. */
 
     if (cat == WF_CAT_DATA && _widget_supports_signal_binding()) {
         lv_obj_t *sig_card = _make_card(s_content, "SIGNAL");
@@ -1901,6 +1898,28 @@ static void _build_schema_tab(widget_t *w, widget_field_category_t cat) {
     for (uint16_t i = 0; i < def->field_count; i++) {
         const widget_field_t *f = &def->fields[i];
         if (f->category != cat) continue;
+
+        /* Skip anything this widget cannot actually read.
+         *
+         * inspector_get and inspector_set are one strcmp chain each, keyed by
+         * the same schema names, so a field missing from the getter is missing
+         * from the setter too. Rendering it anyway produces a control that
+         * LIES twice over: the row falls back to the schema default rather
+         * than the widget's real value (_get_field_int et al), and the apply
+         * paths ignore inspector_set's return value and update the row
+         * regardless — so the user flips a switch, watches it stay flipped,
+         * and nothing happened.
+         *
+         * 28 rows across arc, panel, bar and warning were in that state. It
+         * went unnoticed because check_widget_field_coverage.py only checks
+         * hooks -> schema; nothing checked schema -> hooks. Probing here fixes
+         * every one of them at the point of use, and keeps a widget honest as
+         * new schema fields land ahead of their hooks.
+         *
+         * Widgets with no hooks at all (pathbar, track_map) never reach this
+         * loop — the early return above hands them the placeholder tab. */
+        widget_field_value_t probe = {0};
+        if (!w->inspector_get(w, f->name, &probe)) continue;
 
         const char *g = (f->group && f->group[0]) ? f->group : fallback_title;
         if (!cur_group || strcmp(g, cur_group) != 0) {
@@ -1993,13 +2012,30 @@ static void _show_tab(int idx) {
     }
 
     lv_obj_clean(s_content);
+    /* Reset the row + per-control context pools for the whole tab, so a tab
+     * that builds more than one category (DATA does) keeps one numbering. */
+    s_row_count = 0;
+    s_color_row_ctx_count = 0;
+    s_int_row_ctx_count = 0;
+    s_bool_row_ctx_count = 0;
+    s_select_row_ctx_count = 0;
+    s_text_row_ctx_count = 0;
+
     switch (idx) {
         case TAB_DATA:
             if (s_widget && s_widget->inspector_get && s_widget->inspector_set &&
-                widget_fields_for_type(s_widget->type))
+                widget_fields_for_type(s_widget->type)) {
                 _build_schema_tab(s_widget, WF_CAT_DATA);
-            else
+                /* Alerts ride along at the end of DATA. The dock has only two
+                 * tabs (DATA + STYLE), so before this every WF_CAT_ALERTS field
+                 * — panel's warning_low/high pair, bar's and arc's alert bands,
+                 * 22 in all — was compiled into widget_fields.gen.c and drawn
+                 * nowhere on the glass, while the web editor showed them. Its
+                 * own "ALERTS" group card keeps it separated. */
+                _build_schema_tab(s_widget, WF_CAT_ALERTS);
+            } else {
                 _build_placeholder_tab("Data");
+            }
             break;
         case TAB_STYLE:
             /* Schema-driven path - any widget that implements inspector_get

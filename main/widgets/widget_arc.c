@@ -670,9 +670,13 @@ static void _arc_on_channel_changed(channel_t *c, void *user_data) {
     if (c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH) {
         d->redline_enabled = true;
         d->redline_base = c->high_warn;
-    } else {
-        d->redline_enabled = false;
     }
+    /* Deliberately no else. A channel with no high threshold has nothing to
+     * say about the redline, so the widget's own setting stands. Forcing it
+     * false here discarded what from_json had just honoured and reset the
+     * inspector's toggle on every unrelated channel edit — exactly the bug
+     * described for signal_min/max a few lines down, which from_json also
+     * went to the trouble of honouring and the first notify threw away. */
     /* Re-derive the whole value axis from its native bases. This used to assign
      * d->signal_min/max straight from c->min/max, which had two bugs: it ignored
      * the channel's display unit (so a kPa channel shown as psi kept a kPa dial
@@ -2575,9 +2579,10 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
         if (bound_c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH) {
             d->redline_enabled = true;
             d->redline_base = bound_c->high_warn;
-        } else {
-            d->redline_enabled = false;
         }
+        /* No else — see _arc_on_channel_changed. The layout's own
+         * redline_enabled was read a few hundred lines up; don't discard it
+         * just because this channel carries no threshold. */
         /* Redline colour stays widget-owned — never overridden by the channel. */
     } else if (d->signal_name[0] != '\0') {
         /* Legacy layout: no channel yet, so the widget's own numbers ARE the
@@ -2818,12 +2823,30 @@ static bool _arc_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "ticks_on_top") == 0)   { out->b = d->ticks_on_top;     return true; }
 	if (strcmp(name, "tick_min") == 0)       { out->i = (int32_t)d->tick_min; return true; }
 	if (strcmp(name, "tick_max") == 0)       { out->i = (int32_t)d->tick_max; return true; }
+	/* redline_threshold is on the value axis, so it reads and writes in the
+	 * DISPLAY unit — same as signal_min/max and tick_min/max just below, and
+	 * same as the meter's identically-named field. The native base is the
+	 * storage (_arc_to_native on the way in, _arc_sync_units to re-derive);
+	 * handing back the base here would print kPa in a box sitting between
+	 * two psi boxes. */
+	if (strcmp(name, "redline_enabled") == 0) { out->b = d->redline_enabled; return true; }
+	if (strcmp(name, "redline_threshold") == 0) { out->i = (int32_t)d->redline_threshold; return true; }
 	if (strcmp(name, "redline_arc_width") == 0) { out->i = d->redline_arc_width; return true; }
 	if (strcmp(name, "redline_color") == 0)  { out->color = lv_color_to32(d->redline_color) & 0xFFFFFF; return true; }
 	if (strcmp(name, "redline_recolor_fill") == 0) { out->b = d->redline_recolor_fill; return true; }
 	if (strcmp(name, "label_gap") == 0)      { out->i = d->label_gap;        return true; }
 	if (strcmp(name, "tick_label_divisor") == 0) { out->i = d->tick_label_divisor; return true; }
 	if (strcmp(name, "tick_label_color") == 0) { out->color = lv_color_to32(d->tick_label_color) & 0xFFFFFF; return true; }
+	/* User-space geometry (see the matching setter): 0° = 12 o'clock,
+	 * clockwise, so user = lvgl + 90. start_angle/end_angle below stay the
+	 * raw LVGL pair and remain inspector-internal (allowlisted). */
+	if (strcmp(name, "start_angle_user") == 0) { out->i = ((int)d->start_angle + 90) % 360; return true; }
+	if (strcmp(name, "sweep_degrees") == 0) {
+		int sweep = ((int)d->end_angle - (int)d->start_angle + 360) % 360;
+		if (sweep == 0) sweep = 360;   /* start==end → full revolution */
+		out->i = sweep;
+		return true;
+	}
 	if (strcmp(name, "start_angle") == 0)    { out->i = d->start_angle;      return true; }
 	if (strcmp(name, "end_angle") == 0)      { out->i = d->end_angle;        return true; }
 	if (strcmp(name, "signal_min") == 0)     { out->i = (int32_t)d->signal_min; return true; }
@@ -2899,6 +2922,21 @@ static bool _arc_inspector_get(const widget_t *w, const char *name,
 	return false;
 }
 
+/* Re-angle the redline marker in place. Its span depends on the threshold AND
+ * on the dial's own start/end, so both setters below need it. Mirrors the
+ * create-time math in _arc_create_standard. No-op when the marker does not
+ * exist (redline off — the object is only built when enabled). */
+static void _arc_reangle_redline(arc_data_t *d) {
+	if (!d->redline_arc_obj || !lv_obj_is_valid(d->redline_arc_obj)) return;
+	int16_t tang   = _value_to_angle(d, d->redline_threshold);
+	int16_t rstart = d->reverse ? d->start_angle : tang;
+	int16_t rend   = d->reverse ? tang           : d->end_angle;
+	int16_t ls, le;
+	_arc_full_circle_angles(rstart, rend, &ls, &le);
+	lv_arc_set_bg_angles(d->redline_arc_obj, ls, le);
+	lv_arc_set_angles(d->redline_arc_obj, ls, le);
+}
+
 static bool _arc_inspector_set(widget_t *w, const char *name,
                                const widget_field_value_t *in) {
 	if (!w || w->type != WIDGET_ARC || !w->type_data || !name || !in) return false;
@@ -2934,6 +2972,38 @@ static bool _arc_inspector_set(widget_t *w, const char *name,
 	if (strcmp(name, "arc_image_full_recolor_opa") == 0) { d->arc_image_full_recolor_opa = (uint8_t)in->i; _arc_apply_image_style(d, d->img_full_obj, true); return true; }
 	if (strcmp(name, "arc_image_full_blend") == 0)       { d->arc_image_full_blend = (uint8_t)in->i;       _arc_apply_image_style(d, d->img_full_obj, true); return true; }
 	if (strcmp(name, "arc_image_radial") == 0)           { d->arc_image_radial = in->b; return true; }  /* mode change — needs rebuild */
+	/* The dial's geometry, in the units both inspectors speak: a START (0° =
+	 * 12 o'clock, clockwise) and a SWEEP. The pair below stores the absolute
+	 * LVGL angles those imply — lvgl = user + 270 — and is the only pair the
+	 * editor writes. Without these the arc had no angle control on the glass
+	 * at all: the schema declared start_angle_user/sweep_degrees, nothing
+	 * answered to those names, and the rows read back schema defaults.
+	 *
+	 * Moving the start rotates the whole dial; end_angle is absolute, so it
+	 * has to travel with it or the sweep silently resizes. */
+	if (strcmp(name, "start_angle_user") == 0 || strcmp(name, "sweep_degrees") == 0) {
+		int sweep = ((int)d->end_angle - (int)d->start_angle + 360) % 360;
+		if (sweep == 0) sweep = 360;   /* start==end is a full revolution */
+		if (strcmp(name, "start_angle_user") == 0) {
+			int v = in->i; v %= 360; if (v < 0) v += 360;
+			d->start_angle = (int16_t)((v + 270) % 360);
+		} else {
+			sweep = in->i;
+			if (sweep < 1)   sweep = 1;
+			if (sweep > 360) sweep = 360;
+		}
+		d->end_angle = (int16_t)(((int)d->start_angle + sweep) % 360);
+		if (a && lv_obj_is_valid(a)) {
+			int16_t ls, le;
+			_arc_full_circle_angles(d->start_angle, d->end_angle, &ls, &le);
+			lv_arc_set_bg_angles(a, ls, le);
+			lv_arc_set_angles(a, ls, le);
+		}
+		_arc_reangle_redline(d);
+		_arc_apply_sector_crop(w);
+		_arc_rebuild_overlay(w, night_mode_is_active());   /* ticks + labels follow */
+		return true;
+	}
 	if (strcmp(name, "start_angle") == 0 || strcmp(name, "end_angle") == 0) {
 		int v = in->i; v %= 360; if (v < 0) v += 360;
 		if (strcmp(name, "start_angle") == 0) d->start_angle = (int16_t)v;
@@ -3078,9 +3148,33 @@ static bool _arc_inspector_set(widget_t *w, const char *name,
 		_arc_rebuild_overlay(w, night_mode_is_active());
 		return true;
 	}
-	/* Redline styling (widget-owned; threshold/enable come from the channel).
-	 * Width rebuilds the redline arc via the overlay path; colour + recolor
-	 * re-run the fill precedence so they land live. */
+	/* Redline. The threshold and enable also come from the bound channel when
+	 * it carries a high_warn (see _arc_on_channel_changed) — the channel wins
+	 * on the next notify. These hooks are what an UNBOUND arc, or one on a
+	 * channel with no threshold set, is steered by; before them the arc was
+	 * the only gauge with no way to set its redline from either inspector.
+	 *
+	 * Toggling `enabled` can't apply live: the redline arc object is only
+	 * created when enabled (see _arc_create_standard), so switching it on
+	 * needs the rebuild a save + reload does. Same convention as the meter —
+	 * always write type_data so the reload picks it up. Moving an already-
+	 * visible threshold IS live, because the object is there to re-angle. */
+	if (strcmp(name, "redline_enabled") == 0) {
+		d->redline_enabled = in->b;
+		if (d->arc_obj && lv_obj_is_valid(d->arc_obj))
+			_arc_apply_fill_color(d, night_mode_is_active());
+		return true;
+	}
+	if (strcmp(name, "redline_threshold") == 0) {
+		d->redline_base = _arc_to_native(d, (float)in->i);   /* display -> storage */
+		_arc_sync_units(d);          /* refresh the display-unit copy */
+		_arc_reangle_redline(d);
+		if (d->arc_obj && lv_obj_is_valid(d->arc_obj))
+			_arc_apply_fill_color(d, night_mode_is_active());
+		return true;
+	}
+	/* Redline styling. Width rebuilds the redline arc via the overlay path;
+	 * colour + recolor re-run the fill precedence so they land live. */
 	if (strcmp(name, "redline_arc_width") == 0) {
 		int v = in->i; if (v < 0) v = 0; if (v > 50) v = 50;
 		d->redline_arc_width = (uint8_t)v;

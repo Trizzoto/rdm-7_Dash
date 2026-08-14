@@ -2755,7 +2755,9 @@ static void _meter_night_cb(bool active, void *user_data) {
  *   - For the small set of fields that map to lv_obj_set_style_* on the
  *     meter object (bg / border), apply live too.
  *   - Schema field deltas:
- *       "start_angle_user" -> md->start_angle (raw)
+ *       "start_angle_user" -> md->start_angle, converted (user 0° = 12
+ *                             o'clock; lvgl = user + 270) and rotating
+ *                             end_angle with it so the sweep is preserved
  *       "sweep_degrees"    -> recomputes md->end_angle from start_angle
  *       "minor_tick_step"  -> derives md->minor_tick_count from (max-min)
  *       "major_tick_step"  -> derives md->major_tick_every from minor_count */
@@ -2778,7 +2780,13 @@ static bool _meter_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "tick_outline_fade") == 0)     { out->i = md->tick_outline_fade;       return true; }
 	if (strcmp(name, "min") == 0)                { out->i = md->min;                 return true; }
 	if (strcmp(name, "max") == 0)                { out->i = md->max;                 return true; }
-	if (strcmp(name, "start_angle_user") == 0)   { out->i = md->start_angle;         return true; }
+	/* start_angle_user is the USER angle: 0° = 12 o'clock, clockwise. The
+	 * stored md->start_angle is LVGL's (0° = 3 o'clock), and the two differ
+	 * by 270 — lvgl = user + 270, so user = lvgl + 90 (mod 360). This hook
+	 * used to hand back the raw LVGL value under the user-angle name, so the
+	 * dash inspector read 135 where Studio read 225 for the same dial and
+	 * typing 225 here pointed it somewhere else entirely. */
+	if (strcmp(name, "start_angle_user") == 0)   { out->i = ((int)md->start_angle + 90) % 360; return true; }
 	if (strcmp(name, "sweep_degrees") == 0) {
 		int sweep = ((int)md->end_angle - (int)md->start_angle + 360) % 360;
 		if (sweep == 0) sweep = 360;   /* start==end → full revolution, not a 0° dial */
@@ -2908,8 +2916,15 @@ static bool _meter_inspector_set(widget_t *w, const char *name,
 	if (strcmp(name, "min") == 0) { _meter_set_range_display(md, (float)(int32_t)in->i, md->max); return true; }
 	if (strcmp(name, "max") == 0) { _meter_set_range_display(md, md->min, (float)(int32_t)in->i); return true; }
 	if (strcmp(name, "start_angle_user") == 0) {
+		/* Convert user -> LVGL (see the getter), and carry the sweep with the
+		 * start. end_angle is stored absolutely, so moving the start without
+		 * moving the end silently resized the dial — rotate the whole sweep
+		 * instead, which is what Studio does and what "start angle" means. */
+		int sweep = ((int)md->end_angle - (int)md->start_angle + 360) % 360;
+		if (sweep == 0) sweep = 360;   /* start==end is a full revolution */
 		int v = in->i; v %= 360; if (v < 0) v += 360;
-		md->start_angle = (int16_t)v;
+		md->start_angle = (int16_t)((v + 270) % 360);
+		md->end_angle   = (int16_t)(((int)md->start_angle + sweep) % 360);
 		return true;
 	}
 	if (strcmp(name, "sweep_degrees") == 0) {
