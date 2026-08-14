@@ -4561,127 +4561,149 @@
         <input type="checkbox" id="livePreviewToggle" checked style="display:none;">
     </header>
 
-    <!-- Studio Setup mode panel — appears in place of the workspace
-         when mode = setup. Grid of cards that link out to the existing
-         modals (Channels, Signals, ECU, WiFi, Device, Diagnostics).
-         Cards show live stat hints (e.g. "12 channels active"). -->
-    <div class="studio-mode-panel setup-panel" id="studioSetupPanel">
-        <div class="setup-section-title">Vehicle &amp; channels</div>
-        <div class="setup-grid">
-            <!-- One card, one concept. Pre-defined ECUs, DBC import, custom
-                 CAN signals, backup and restore were four sibling cards that
-                 all produced the same thing — a channel. They are now the
-                 "Add channels" menu inside this page (ADR-0030). -->
-            <!-- Channels has its own top-level page now; this card is a
-                 signpost to it, not a second way in. -->
-            <div class="setup-card" onclick="setStudioMode('channels')">
-                <div class="card-title"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3v18"/><path d="M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/></svg>Channels</div>
-                <div class="card-body">Everything the dash can read — RPM, Coolant, Lambda. Add them from a pre-defined ECU, a DBC file, or by hand; set ranges and warnings; back the whole setup up to a file.</div>
-                <div class="card-stat" id="setupChannelsStat">—</div>
-            </div>
-        </div>
+    <!-- Studio Setup mode panel — appears in place of the workspace when
+         mode = setup.
 
-        <div class="setup-section-title" style="margin-top:30px;">Connectivity</div>
+         Grouped by the question you arrived with, not by which subsystem
+         implements the answer (ADR-0039). Before this the headings were
+         "Vehicle & channels" (one card, a signpost to a page that now has
+         its own tab), "Connectivity" (WiFi, which opened Device Info, and
+         OBD2), "Device" (four unrelated things), "Logging & dashboards"
+         (which is where Marketplace lived) and "Files & storage" (Open,
+         Save, a JSON paste box, a screenshot exporter and a file browser,
+         in that order). Someone looking for "make the screen dim at night"
+         had to guess it was filed under Device. -->
+    <div class="studio-mode-panel setup-panel" id="studioSetupPanel">
+
+        <!-- ── Your car ───────────────────────────────────────────────────
+             The facts that make the numbers correct. Everything here is
+             about the vehicle; nothing here is about the dash. -->
+        <div class="setup-section-title">Your car</div>
         <div class="setup-grid">
-            <div class="setup-card" onclick="openDeviceInfo()">
-                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M5 13a10 10 0 0114 0M8.5 16.5a5 5 0 017 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg>WiFi &amp; network</div>
-                <div class="card-body">Current SSID, IP, hotspot status. Configure WiFi on the dash's touchscreen Settings.</div>
-                <div class="card-stat" id="setupWifiStat">—</div>
+            <!-- ECU preset used to be reachable only from the Channels
+                 context strip, and the CAN bitrate only from the dash's own
+                 touchscreen — two halves of one question ("is the dash
+                 talking to my car?") with no single place to ask it. -->
+            <div class="setup-card" onclick="openCanSetup && openCanSetup()">
+                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="8" cy="7" r="1.6" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="10" cy="17" r="1.6" fill="currentColor" stroke="none"/></svg>ECU &amp; CAN bus</div>
+                <div class="card-body">Which ECU this car has, what speed the bus runs at, and whether frames are arriving.</div>
+                <div class="card-stat" id="setupCanStat">—</div>
             </div>
             <div class="setup-card" onclick="openObd2Setup && openObd2Setup()">
-                <div class="card-title"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 004.6 15a1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 4.6a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>OBD2 diagnostics</div>
+                <div class="card-title"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><circle cx="12" cy="16" r="0.9" fill="currentColor" stroke="none"/></svg>OBD2 diagnostics</div>
                 <div class="card-body">Trouble codes, VIN and ECU name, protocol status. Adding OBD2 readings as channels lives in Channels.</div>
                 <div class="card-stat" id="setupObd2Stat">—</div>
             </div>
-        </div>
-
-        <div class="setup-section-title" style="margin-top:30px;">Device</div>
-        <div class="setup-grid">
-            <div class="setup-card" onclick="openDeviceInfo && openDeviceInfo()">
-                <div class="card-title"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="12"/><circle cx="12" cy="16" r="0.8" fill="currentColor" stroke="none"/></svg>Device Info</div>
-                <div class="card-body">Firmware version, device id, free heap, OTA update.</div>
-                <div class="card-stat" id="setupDeviceStat">—</div>
-            </div>
-            <div class="setup-card" onclick="openDimmerSettings && openDimmerSettings()">
-                <div class="card-title"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>Dimmer &amp; Night</div>
-                <div class="card-body">Brightness curve, night-mode trigger, auto-dim from ignition.</div>
-                <div class="card-stat">Configurable</div>
-            </div>
             <div class="setup-card" onclick="openGearSetup && openGearSetup()">
-                <div class="card-title"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>Gear Calc</div>
-                <div class="card-body">Calculate gear from RPM + speed. Wheel + final drive + ratios.</div>
-                <div class="card-stat">CALCULATED_GEAR</div>
+                <div class="card-title"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>Gear calculation</div>
+                <div class="card-body">Work out which gear you're in from RPM and speed, when the ECU doesn't send it.</div>
+                <div class="card-stat" id="setupGearStat">Configurable</div>
             </div>
             <div class="setup-card" onclick="openFuelSenderSetup && openFuelSenderSetup()">
-                <div class="card-title"><svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>Fuel Sender</div>
-                <div class="card-body">Calibrate fuel-level sender curve. Multi-point linear.</div>
+                <div class="card-title"><svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>Fuel sender</div>
+                <div class="card-body">Teach the dash what your tank reads when it's empty and when it's full.</div>
                 <div class="card-stat">Calibrate</div>
             </div>
+            <!-- Was inside the Gear Setup modal, because the two share a
+                 speed signal — an implementation detail that made the
+                 odometer unfindable. It is its own thing to the user. -->
+            <div class="setup-card" onclick="openOdometer && openOdometer()">
+                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M12 20a8 8 0 110-16 8 8 0 010 16z"/><path d="M12 12l4-3"/><path d="M4.5 15.5h15"/></svg>Odometer</div>
+                <div class="card-body">Total distance, counted from the speed signal. Set it to match the car.</div>
+                <div class="card-stat" id="setupOdoStat">—</div>
+            </div>
         </div>
 
-        <div class="setup-section-title" style="margin-top:30px;">Logging &amp; dashboards</div>
+        <!-- ── This dash ──────────────────────────────────────────────────
+             How the unit itself behaves. -->
+        <div class="setup-section-title" style="margin-top:30px;">This dash</div>
         <div class="setup-grid">
-            <!-- Live values and recording are one surface: it opens live, and
-                 Record is what turns watching into a file (ADR-0030). The old
-                 "Live Signals" card pointed at a read-only twin of this table. -->
-            <div class="setup-card" onclick="openDataLogger && openDataLogger()">
-                <div class="card-title"><svg viewBox="0 0 24 24"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="14 7 21 7 21 14"/></svg>Live Data &amp; Logging</div>
-                <div class="card-body">Watch every signal arrive — live value, min/max, staleness. Press Record to write it to the SD card.</div>
-                <div class="card-stat" id="setupSignalsStat">—</div>
+            <div class="setup-card" onclick="openDimmerSettings && openDimmerSettings()">
+                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/></svg>Screen &amp; night</div>
+                <div class="card-body">How bright the screen is, and what makes it dim at night.</div>
+                <div class="card-stat" id="setupDimmerStat">—</div>
             </div>
             <div class="setup-card" onclick="openSwitcherSetup && openSwitcherSetup()">
-                <div class="card-title"><svg viewBox="0 0 24 24"><polyline points="7 17 2 12 7 7"/><line x1="2" y1="12" x2="22" y2="12"/><polyline points="17 7 22 12 17 17"/></svg>Dashboard Switcher</div>
-                <div class="card-body">Map a CAN signal or button to cycle through saved layouts while driving.</div>
-                <div class="card-stat">Configurable</div>
+                <div class="card-title"><svg viewBox="0 0 24 24"><polyline points="7 17 2 12 7 7"/><line x1="2" y1="12" x2="22" y2="12"/><polyline points="17 7 22 12 17 17"/></svg>Layout switching</div>
+                <div class="card-body">Change dashboards while driving from a button or a CAN signal.</div>
+                <div class="card-stat" id="setupSwitcherStat">Configurable</div>
             </div>
-            <div class="setup-card" onclick="openMarketplace && openMarketplace()">
-                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>Marketplace</div>
-                <div class="card-body">Browse and download community layouts and presets.</div>
-                <div class="card-stat">Community</div>
+            <!-- Two cards used to point at openDeviceInfo(): this one and a
+                 "WiFi & network" card in another section. WiFi now has its
+                 own page, and the firmware update lives with the firmware
+                 version instead of being a line inside Device Info. -->
+            <div class="setup-card" onclick="openDeviceInfo && openDeviceInfo()">
+                <div class="card-title"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="12"/><circle cx="12" cy="16" r="0.8" fill="currentColor" stroke="none"/></svg>Device &amp; updates</div>
+                <div class="card-body">Serial number, firmware version and free space — and the update button.</div>
+                <div class="card-stat" id="setupDeviceStat">—</div>
+            </div>
+            <div class="setup-card" onclick="openNetworkSetup && openNetworkSetup()">
+                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M5 13a10 10 0 0114 0M8.5 16.5a5 5 0 017 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg>WiFi &amp; network</div>
+                <div class="card-body">Which network the dash is on, its address, and how to reach this editor.</div>
+                <div class="card-stat" id="setupWifiStat">—</div>
             </div>
         </div>
 
-        <div class="setup-section-title" style="margin-top:30px;">Files &amp; storage</div>
+        <!-- ── Data ───────────────────────────────────────────────────────
+             One surface: it opens live, and Record is what turns watching
+             into a file (ADR-0030). -->
+        <div class="setup-section-title" style="margin-top:30px;">Data</div>
+        <div class="setup-grid">
+            <div class="setup-card" onclick="openDataLogger && openDataLogger()">
+                <div class="card-title"><svg viewBox="0 0 24 24"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="14 7 21 7 21 14"/></svg>Live data &amp; recording</div>
+                <div class="card-body">Watch every reading arrive — value, min/max, whether it's gone stale. Press Record to write it to the SD card.</div>
+                <div class="card-stat" id="setupSignalsStat">—</div>
+            </div>
+        </div>
+
+        <!-- ── Files & sharing ────────────────────────────────────────────
+             Open and Save are a pair and now sit next to each other; the
+             JSON paste box that used to separate them is an expert path and
+             moved to Developer options. Marketplace is here because it is
+             sharing, not "logging & dashboards". -->
+        <div class="setup-section-title" style="margin-top:30px;">Files &amp; sharing</div>
         <div class="setup-grid">
             <!-- A .rdm is the whole dashboard, not just the picture. Customers
                  read "bundle" and guessed it was the channel backup, so both
-                 cards now list what is actually inside (ADR-0030). -->
+                 cards list what is actually inside (ADR-0030). -->
             <div class="setup-card" onclick="importRdm && importRdm()">
                 <div class="card-title"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Open dashboard bundle</div>
                 <div class="card-body">Load a whole dashboard from a .rdm file — the layout, its images and fonts, and the channel setup that came with it.</div>
                 <div class="card-stat">.rdm file</div>
-            </div>
-            <div class="setup-card" onclick="openLoadJsonModal && openLoadJsonModal()">
-                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg>Load JSON</div>
-                <div class="card-body">Paste a layout in JSON format (e.g. from an AI builder) straight into the editor &mdash; no device needed.</div>
-                <div class="card-stat">Paste &amp; preview</div>
             </div>
             <div class="setup-card" onclick="exportRdm && exportRdm()">
                 <div class="card-title"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Save dashboard bundle</div>
                 <div class="card-body">Save this dashboard to a .rdm file — layout, images, fonts and the dash's channel setup, all in one. To back up only the channels, use Channels &rsaquo; Add channels.</div>
                 <div class="card-stat">.rdm file</div>
             </div>
-            <div class="setup-card" onclick="downloadScreenshot && downloadScreenshot()">
-                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>Export Screenshot</div>
-                <div class="card-body">Grab a still of the live dash screen as a JPEG.</div>
-                <div class="card-stat">JPEG</div>
+            <div class="setup-card" onclick="openMarketplace && openMarketplace()">
+                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>Marketplace</div>
+                <div class="card-body">Browse and download dashboards other people have built.</div>
+                <div class="card-stat">Community</div>
             </div>
-            <!-- Backup/Restore Channels used to live here, three sections away
-                 from the page that owns channels. They are now on the Channels
-                 page itself, under "Add channels" (ADR-0030). -->
             <div class="setup-card" onclick="openStorageManager && openStorageManager()">
-                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>File Manager</div>
+                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>File manager</div>
                 <div class="card-body">Browse layouts, images and fonts on the device and SD card.</div>
                 <div class="card-stat">/lfs · /sdcard</div>
             </div>
+            <div class="setup-card" onclick="downloadScreenshot && downloadScreenshot()">
+                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>Export screenshot</div>
+                <div class="card-body">Grab a still of the live dash screen as a JPEG.</div>
+                <div class="card-stat">JPEG</div>
+            </div>
         </div>
 
-        <div class="setup-section-title" style="margin-top:30px;">Developer Options</div>
+        <div class="setup-section-title" style="margin-top:30px;">Developer options</div>
         <div class="setup-grid">
             <div class="setup-card" onclick="openDevOptions && openDevOptions()">
-                <div class="card-title"><svg viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>Developer Options</div>
+                <div class="card-title"><svg viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>Developer options</div>
                 <div class="card-body">Bench OBD2 simulator and offline-preview rendering toggles &mdash; for testing on the desk without a car.</div>
                 <div class="card-stat">Bench &amp; preview</div>
+            </div>
+            <div class="setup-card" onclick="openLoadJsonModal && openLoadJsonModal()">
+                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg>Load layout JSON</div>
+                <div class="card-body">Paste a layout in JSON format (e.g. from an AI builder) straight into the editor &mdash; no device needed.</div>
+                <div class="card-stat">Paste &amp; preview</div>
             </div>
         </div>
     </div>
@@ -5273,6 +5295,141 @@
     </div>
 
     <!-- ────────────────────────────────────────────────────────────────
+         ECU & CAN bus — "is the dash talking to my car?" in one place.
+
+         These were two halves of one question in two different places: the
+         ECU preset was reachable only from the Channels context strip, and
+         the bus speed only from the dash's own touchscreen. Someone whose
+         readings were all dashes had nowhere to go and check (ADR-0039).
+         ──────────────────────────────────────────────────────────────── -->
+    <div id="canSetupModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;" onclick="closeCanSetup()">
+        <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; width:520px; max-width:95vw; max-height:90vh; overflow-y:auto; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <span style="font-weight:600; font-size:14px;">ECU &amp; CAN bus</span>
+                <button class="close-btn" onclick="closeCanSetup()" style="font-size:18px;">&times;</button>
+            </div>
+            <div style="font-size:11px; color:var(--text-muted); margin-bottom:14px;">What the dash is listening to, and whether anything is arriving.</div>
+
+            <!-- Verdict first. A count of bus errors means nothing to most
+                 people; "frames are arriving" does. -->
+            <div id="canSetupVerdict" style="display:flex; align-items:center; gap:10px; padding:12px 14px; border-radius:var(--radius-md); border:1px solid var(--border); background:var(--bg); margin-bottom:14px;">
+                <span id="canSetupDot" style="width:10px; height:10px; border-radius:50%; background:var(--text-muted); flex:0 0 auto;"></span>
+                <div style="flex:1; min-width:0;">
+                    <div id="canSetupHeadline" style="font-size:13px; color:var(--text);">Checking…</div>
+                    <div id="canSetupDetail" style="font-size:11px; color:var(--text-muted); margin-top:2px;"></div>
+                </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns:auto 1fr; row-gap:10px; column-gap:14px; align-items:center; font-size:12px; margin-bottom:14px;">
+                <span style="color:var(--text-muted);">ECU preset</span>
+                <div style="display:flex; align-items:center; gap:8px; min-width:0;">
+                    <span id="canSetupEcu" style="font-family:'JetBrains Mono', monospace; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">—</span>
+                    <button class="btn" style="padding:4px 10px; font-size:11px;" onclick="closeCanSetup(); openEcuPreset();">Change…</button>
+                </div>
+
+                <span style="color:var(--text-muted);">Bus speed</span>
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <select id="canSetupBitrate" onchange="_canSetupSaveBitrate(this.value)"
+                            style="flex:1; padding:5px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
+                        <option value="0">125 kbps</option>
+                        <option value="1">250 kbps</option>
+                        <option value="2">500 kbps &mdash; most cars</option>
+                        <option value="3">1 Mbps</option>
+                    </select>
+                </div>
+
+                <span style="color:var(--text-muted);">Readings live</span>
+                <span id="canSetupSignals" style="font-family:'JetBrains Mono', monospace;">—</span>
+            </div>
+
+            <div id="canSetupHint" style="font-size:11px; color:var(--text-muted); line-height:1.6; padding-top:12px; border-top:1px solid var(--border);">
+                If nothing is arriving: check the bus speed matches your ECU (500 kbps suits most),
+                that CAN-H and CAN-L aren't swapped, and that the preset above is the right one for this car.
+                Channels shows exactly which readings are and aren't turning up.
+            </div>
+        </div>
+    </div>
+
+    <!-- ────────────────────────────────────────────────────────────────
+         WiFi & network. Until now the Setup card with this name opened
+         Device Info — two cards, two sections, one destination, and no
+         page that actually answered "what network is the dash on?"
+         (ADR-0039). Read-only: the dash owns credential entry on its own
+         touchscreen, and this page says so rather than pretending.
+         ──────────────────────────────────────────────────────────────── -->
+    <div id="networkModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;" onclick="closeNetworkSetup()">
+        <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; width:520px; max-width:95vw; max-height:90vh; overflow-y:auto; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <span style="font-weight:600; font-size:14px;">WiFi &amp; network</span>
+                <button class="close-btn" onclick="closeNetworkSetup()" style="font-size:18px;">&times;</button>
+            </div>
+            <div style="font-size:11px; color:var(--text-muted); margin-bottom:14px;">How this editor is reaching the dash.</div>
+
+            <div id="netVerdict" style="display:flex; align-items:center; gap:10px; padding:12px 14px; border-radius:var(--radius-md); border:1px solid var(--border); background:var(--bg); margin-bottom:14px;">
+                <span id="netDot" style="width:10px; height:10px; border-radius:50%; background:var(--text-muted); flex:0 0 auto;"></span>
+                <div style="flex:1; min-width:0;">
+                    <div id="netHeadline" style="font-size:13px; color:var(--text);">Checking…</div>
+                    <div id="netDetail" style="font-size:11px; color:var(--text-muted); margin-top:2px;"></div>
+                </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns:auto 1fr; row-gap:8px; column-gap:14px; font-size:12px; margin-bottom:14px;">
+                <span style="color:var(--text-muted);">Network</span>
+                <span id="netSsid" style="font-family:'JetBrains Mono', monospace;">—</span>
+                <span style="color:var(--text-muted);">Dash address</span>
+                <span id="netIp" style="font-family:'JetBrains Mono', monospace;">—</span>
+                <span style="color:var(--text-muted);">Signal</span>
+                <span id="netRssi" style="font-family:'JetBrains Mono', monospace;">—</span>
+                <span style="color:var(--text-muted);">Own hotspot</span>
+                <span id="netAp" style="font-family:'JetBrains Mono', monospace;">—</span>
+            </div>
+
+            <div style="font-size:11px; color:var(--text-muted); line-height:1.6; padding-top:12px; border-top:1px solid var(--border);">
+                To join a different network, use <b style="color:var(--text);">Settings &rsaquo; WiFi &amp; Network</b> on the
+                dash's own screen — the password is typed there, never here.
+                If the dash can't find a network it falls back to its own hotspot, which you can
+                connect a phone to directly.
+            </div>
+        </div>
+    </div>
+
+    <!-- ────────────────────────────────────────────────────────────────
+         Odometer. Was a subsection inside Gear Setup because the two share
+         a speed signal — true, and invisible to anyone looking for their
+         odometer. It gets its own door and names the signal feeding it,
+         with a link to change that where it lives (ADR-0039).
+         ──────────────────────────────────────────────────────────────── -->
+    <div id="odometerModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;" onclick="closeOdometer()">
+        <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; width:440px; max-width:95vw; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <span style="font-weight:600; font-size:14px;">Odometer</span>
+                <button class="close-btn" onclick="closeOdometer()" style="font-size:18px;">&times;</button>
+            </div>
+            <div style="font-size:11px; color:var(--text-muted); margin-bottom:14px;">Total distance, counted from your speed reading.</div>
+
+            <div style="text-align:center; padding:16px 0 8px;">
+                <div id="odoLive" style="font-family:'JetBrains Mono', monospace; font-size:30px; color:var(--text);">—</div>
+                <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">km on the dash right now</div>
+            </div>
+
+            <label style="font-size:11px; color:var(--text-muted); display:block; margin-top:14px;">Set it to match the car
+                <input id="odoKm" type="number" step="0.1" min="0" max="9999999" placeholder="e.g. 145320"
+                    style="width:100%; margin-top:4px; padding:7px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:13px; font-family:'JetBrains Mono', monospace;">
+            </label>
+            <div style="font-size:10px; color:var(--text-muted); margin-top:6px; line-height:1.5;">
+                Type your real odometer reading once and the dash counts on from there. Saved every 1 km or 5 minutes.
+            </div>
+
+            <div id="odoSource" style="font-size:11px; color:var(--text-muted); margin-top:14px; padding-top:12px; border-top:1px solid var(--border); line-height:1.6;"></div>
+
+            <div style="display:flex; gap:8px; margin-top:14px;">
+                <button class="btn" style="flex:1;" onclick="closeOdometer()">Cancel</button>
+                <button class="btn btn-primary" style="flex:1;" onclick="saveOdometer()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ────────────────────────────────────────────────────────────────
          OBD2 Setup modal — entry point into the OBD2 toolkit. Shows the
          current ECU preset + a CAN-RX heartbeat indicator + quick links
          out to the other OBD2 modals. Intentionally not a wizard: this
@@ -5636,14 +5793,29 @@
     <div id="fuelSenderSetupModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;" onclick="closeFuelSenderSetup()">
         <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; width:520px; max-width:94vw; max-height:90vh; overflow-y:auto; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                <span style="font-weight:600; font-size:14px;">Fuel Sender Setup &mdash; Calibration Curve</span>
+                <span style="font-weight:600; font-size:14px;">Fuel sender</span>
                 <button class="close-btn" onclick="closeFuelSenderSetup()" style="font-size:18px;">&times;</button>
             </div>
-            <div style="font-size:11px; color:var(--text-muted); margin-bottom:12px; line-height:1.4;">
-                Map the fuel sender's analog voltage to a tank reading. Add a point for each known reference
-                level (most senders are non-linear, so 3&ndash;5 points improve accuracy). For each point, type
-                the tank reading (% or litres) and capture the live voltage with <b>Use current</b>.
-                Points are sorted automatically.
+            <div style="font-size:11px; color:var(--text-muted); margin-bottom:12px; line-height:1.5;">
+                The dash reads a voltage from your tank sender; you tell it what that voltage means.
+                Do the two ends and you're done — most people never need more.
+            </div>
+
+            <!-- The two-point case is nearly everyone, and it used to be
+                 buried in the same generic "add a point, type a number,
+                 press Use current" loop as an eight-point curve. These do it
+                 in one press each, against the live voltage (ADR-0039). -->
+            <div style="display:flex; gap:8px; margin-bottom:12px;">
+                <button class="btn" style="flex:1; padding:9px; font-size:12px; text-align:left; line-height:1.35;"
+                        onclick="_fuelQuickCapture(0)" title="Press this with the tank empty">
+                    <b style="color:var(--text);">Tank is empty</b><br>
+                    <span style="font-size:10px; color:var(--text-muted);">Capture this voltage as 0</span>
+                </button>
+                <button class="btn" style="flex:1; padding:9px; font-size:12px; text-align:left; line-height:1.35;"
+                        onclick="_fuelQuickCapture(100)" title="Press this with the tank full">
+                    <b style="color:var(--text);">Tank is full</b><br>
+                    <span style="font-size:10px; color:var(--text-muted);">Capture this voltage as 100</span>
+                </button>
             </div>
             <div style="display:flex; flex-direction:column; gap:10px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--bg); border:1px solid var(--border); border-radius:4px;">
@@ -5728,37 +5900,82 @@
         </div>
     </div>
 
+    <!-- Screen & night. This modal used to open on a field called "Signal
+         Source" and ask for a threshold before it had said what any of it
+         was for — the wiring first, the outcome never. It now leads with the
+         two things people came to change (how bright, and does it dim at
+         night) and keeps the signal/threshold/momentary wiring behind
+         Advanced, where it only matters once you've said you want a
+         trigger. Screen brightness moved in here too: "how bright is my
+         screen" and "when does it dim" are one question (ADR-0039). -->
     <div id="dimmerModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;" onclick="closeDimmerSettings()">
-        <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; width:380px; max-width:90vw; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
-                <span style="font-weight:600; font-size:14px;">Brightness Dimmer</span>
+        <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; width:440px; max-width:92vw; max-height:90vh; overflow-y:auto; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <span style="font-weight:600; font-size:14px;">Screen &amp; night</span>
                 <button class="close-btn" onclick="closeDimmerSettings()" style="font-size:18px;">&times;</button>
             </div>
-            <div style="display:flex; flex-direction:column; gap:10px;">
-                <label style="font-size:11px; color:var(--text-muted);">Signal Source
-                    <select id="dimSignalSelect" style="width:100%; margin-top:2px; padding:5px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;"></select>
+            <div style="font-size:11px; color:var(--text-muted); margin-bottom:16px;">How bright the dash is, and what makes it dim.</div>
+
+            <!-- Brightness applies as you drag: you are looking at the thing
+                 you are adjusting, so a Save button in between would be odd. -->
+            <label style="font-size:12px; color:var(--text); display:block;">Brightness
+                <span id="scrBrVal" style="float:right; font-family:'JetBrains Mono', monospace; color:var(--text-muted);">100%</span>
+                <input id="scrBrightness" type="range" min="5" max="100" value="100" style="width:100%; margin-top:6px;"
+                       oninput="document.getElementById('scrBrVal').textContent=this.value+'%'"
+                       onchange="_applyScreenBrightness(this.value)">
+            </label>
+            <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">Takes effect straight away.</div>
+
+            <div style="margin-top:18px; padding-top:16px; border-top:1px solid var(--border);">
+                <div style="font-size:12px; color:var(--text); margin-bottom:8px;">Dim at night</div>
+                <label style="display:flex; align-items:flex-start; gap:8px; font-size:12px; color:var(--text); padding:7px 0; cursor:pointer;">
+                    <input type="radio" name="dimWhen" value="never" onchange="_dimModeChanged()" style="margin-top:2px;">
+                    <span>Never<span style="display:block; font-size:10px; color:var(--text-muted);">Always the brightness above.</span></span>
                 </label>
-                <label style="font-size:11px; color:var(--text-muted);">Threshold
-                    <input id="dimThreshold" type="number" step="0.01" value="0.5" style="width:100%; margin-top:2px; padding:5px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
+                <label style="display:flex; align-items:flex-start; gap:8px; font-size:12px; color:var(--text); padding:7px 0; cursor:pointer;">
+                    <input type="radio" name="dimWhen" value="signal" onchange="_dimModeChanged()" style="margin-top:2px;">
+                    <span>When the car tells it to<span style="display:block; font-size:10px; color:var(--text-muted);">Headlights, a dimmer wire, or any other reading.</span></span>
                 </label>
-                <div style="display:flex; gap:12px;">
-                    <label style="font-size:11px; color:var(--text-muted); flex:1;">Mode
-                        <select id="dimMode" style="width:100%; margin-top:2px; padding:5px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
-                            <option value="toggle">On/Off Toggle</option>
-                            <option value="momentary">Momentary</option>
-                        </select>
+
+                <div id="dimSignalBlock" style="display:none; margin-top:10px; padding:12px; background:var(--bg); border:1px solid var(--border); border-radius:var(--radius-md);">
+                    <label style="font-size:11px; color:var(--text-muted); display:block;">What tells it
+                        <select id="dimSignalSelect" style="width:100%; margin-top:3px; padding:5px; background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;"></select>
                     </label>
-                    <label style="font-size:11px; color:var(--text-muted); display:flex; align-items:center; gap:6px; padding-top:14px;">
-                        <input id="dimInvert" type="checkbox" style="width:14px; height:14px;"> Invert
+                    <label style="font-size:11px; color:var(--text-muted); display:block; margin-top:10px;">How dim it goes
+                        <span id="dimBrVal" style="float:right; font-family:'JetBrains Mono', monospace;">50</span>%
+                        <input id="dimBrightness" type="range" min="5" max="100" value="50" style="width:100%; margin-top:3px;"
+                               oninput="document.getElementById('dimBrVal').textContent=this.value">
                     </label>
+
+                    <details style="margin-top:10px;">
+                        <summary style="font-size:11px; color:var(--text-muted); cursor:pointer;">Advanced</summary>
+                        <div style="display:flex; flex-direction:column; gap:10px; margin-top:10px;">
+                            <label style="font-size:11px; color:var(--text-muted);">Switches over at
+                                <input id="dimThreshold" type="number" step="0.01" value="0.5" style="width:100%; margin-top:2px; padding:5px; background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
+                                <span style="display:block; font-size:10px; margin-top:3px;">Above this value counts as "on".</span>
+                            </label>
+                            <div style="display:flex; gap:12px;">
+                                <label style="font-size:11px; color:var(--text-muted); flex:1;">Signal behaves like
+                                    <select id="dimMode" style="width:100%; margin-top:2px; padding:5px; background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
+                                        <option value="toggle">A switch that stays on</option>
+                                        <option value="momentary">A button you press</option>
+                                    </select>
+                                </label>
+                                <label style="font-size:11px; color:var(--text-muted); display:flex; align-items:center; gap:6px; padding-top:14px;">
+                                    <input id="dimInvert" type="checkbox" style="width:14px; height:14px;"> Backwards
+                                </label>
+                            </div>
+                        </div>
+                    </details>
                 </div>
-                <label style="font-size:11px; color:var(--text-muted);">Dim Brightness: <span id="dimBrVal">50</span>%
-                    <input id="dimBrightness" type="range" min="5" max="100" value="50" style="width:100%; margin-top:2px;" oninput="document.getElementById('dimBrVal').textContent=this.value">
-                </label>
-                <label style="font-size:11px; color:var(--text-muted); display:flex; align-items:center; gap:6px;">
-                    <input id="dimEnabled" type="checkbox" style="width:14px; height:14px;"> Enabled
-                </label>
-                <button class="btn" style="margin-top:6px; padding:8px;" onclick="saveDimmerSettings()">Save</button>
+                <!-- Kept in the DOM so the existing save path is untouched;
+                     the radios above are what the user actually sets. -->
+                <input id="dimEnabled" type="checkbox" style="display:none;">
+            </div>
+
+            <div style="display:flex; gap:8px; margin-top:18px;">
+                <button class="btn" style="flex:1;" onclick="closeDimmerSettings()">Cancel</button>
+                <button class="btn btn-primary" style="flex:1;" onclick="saveDimmerSettings()">Save</button>
             </div>
         </div>
     </div>
@@ -19504,6 +19721,29 @@
             }
         }
 
+        /* One-press capture for the two ends of the tank. Writes into the
+         * same points array the curve editor below uses — this is a faster
+         * road to the common answer, not a second mechanism. */
+        async function _fuelQuickCapture(tankValue) {
+            try {
+                const r = await fetch('/api/fuel/status');
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                const d = await r.json();
+                if (typeof d.voltage !== 'number') {
+                    showToast('No sender voltage yet — check the wiring', 'error');
+                    return;
+                }
+                const v = +d.voltage.toFixed(3);
+                const existing = _fuelSetupPoints.find(p => p.val === tankValue);
+                if (existing) existing.v = v;
+                else _fuelSetupPoints.push({ v, val: tankValue });
+                _fuelSetupRender();
+                showToast(`${tankValue === 0 ? 'Empty' : 'Full'} captured at ${v.toFixed(2)} V`, 'success');
+            } catch (e) {
+                showToast('Could not read the sender voltage', 'error');
+            }
+        }
+
         function _fuelSetupAddPoint() {
             if (_fuelSetupPoints.length >= FUEL_CAL_MAX_POINTS) return;
             /* Suggest a default tank reading the row above doesn't have. */
@@ -19770,8 +20010,50 @@
                     document.getElementById('dimBrightness').value = cfg.dim_brightness;
                     document.getElementById('dimBrVal').textContent = cfg.dim_brightness;
                     document.getElementById('dimEnabled').checked = cfg.enabled;
+                    /* Drive the radios from the same flag the firmware
+                     * stores, so there is one truth, not two. */
+                    const want = cfg.enabled ? 'signal' : 'never';
+                    document.querySelectorAll('input[name="dimWhen"]').forEach(r => {
+                        r.checked = (r.value === want);
+                    });
+                    _dimModeChanged();
                 }
             } catch (e) { console.warn('Failed to load dimmer config', e); }
+
+            /* Screen brightness lives here now — same question. */
+            try {
+                const br = await fetch('/api/brightness');
+                if (br.ok) {
+                    const b = await br.json();
+                    const v = (b.brightness != null) ? b.brightness : 100;
+                    document.getElementById('scrBrightness').value = v;
+                    document.getElementById('scrBrVal').textContent = v + '%';
+                }
+            } catch (e) { /* leave the slider where it is */ }
+        }
+
+        /* Show the wiring only once the user has asked for a trigger. */
+        function _dimModeChanged() {
+            const picked = document.querySelector('input[name="dimWhen"]:checked');
+            const on = !!picked && picked.value === 'signal';
+            const block = document.getElementById('dimSignalBlock');
+            if (block) block.style.display = on ? '' : 'none';
+            const en = document.getElementById('dimEnabled');
+            if (en) en.checked = on;
+        }
+
+        /* Brightness applies live — you are looking at the screen you are
+         * dragging. Saved by the same endpoint the dash's own slider uses. */
+        async function _applyScreenBrightness(v) {
+            try {
+                const r = await fetch('/api/brightness', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ brightness: Number(v) }),
+                });
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            } catch (e) {
+                showToast('Could not change brightness: ' + (e.message || e), 'error');
+            }
         }
 
         function closeDimmerSettings() {
@@ -19893,6 +20175,254 @@
             const off = (p.offset || 0);
             const offStr = off >= 0 ? ('+' + off) : ('' + off);
             return `B${p.data_offset || 0}×${p.scale || 1}${offStr} ${p.unit || ''} (${p.data_bytes || 1}${sgn}B)`;
+        }
+
+        /* ── ECU & CAN bus ────────────────────────────────────────────────
+         * One page for "is the dash talking to my car?" — the preset, the
+         * bus speed and whether frames are actually arriving. All three
+         * existed; none of them were in the same place (ADR-0039). */
+        let _canSetupTimer = null;
+
+        async function openCanSetup() {
+            const m = document.getElementById('canSetupModal');
+            if (!m) return;
+            m.style.display = 'flex';
+            await _refreshCanSetup();
+            /* Self-rescheduling, never setInterval — /api/device/info can take
+             * a moment on a busy dash and a fixed interval stacks up. */
+            const tick = async () => {
+                if (m.style.display === 'none') return;
+                await _refreshCanSetup();
+                if (m.style.display !== 'none') _canSetupTimer = setTimeout(tick, 1500);
+            };
+            if (_canSetupTimer) clearTimeout(_canSetupTimer);
+            _canSetupTimer = setTimeout(tick, 1500);
+        }
+
+        function closeCanSetup() {
+            const m = document.getElementById('canSetupModal');
+            if (m) m.style.display = 'none';
+            if (_canSetupTimer) { clearTimeout(_canSetupTimer); _canSetupTimer = null; }
+        }
+
+        async function _refreshCanSetup() {
+            const set = (id, txt) => { const e = document.getElementById(id); if (e) e.textContent = txt; };
+            let info = null;
+            try {
+                const r = await fetch('/api/device/info');
+                if (r.ok) info = await r.json();
+            } catch (e) { /* offline — handled below */ }
+
+            if (!info) {
+                set('canSetupHeadline', 'No dash connected');
+                set('canSetupDetail', 'Connect to the dash to see its bus state.');
+                const d = document.getElementById('canSetupDot');
+                if (d) d.style.background = 'var(--text-muted)';
+                return;
+            }
+
+            const can = info.can || {};
+            /* Count CAN-sourced readings specifically. info.signals.fresh
+             * counts every live signal including the dash's own internals
+             * (FPS, heap, uptime), so on a bench with no bus at all it reads
+             * 9 fresh and the card would cheerfully claim frames are
+             * arriving. The question is about the CAN bus, so only CAN
+             * counts. */
+            let canTotal = 0, canFresh = 0;
+            try {
+                const sr = await fetch('/api/signals/values');
+                if (sr.ok) {
+                    const sd = await sr.json();
+                    const sigs = Array.isArray(sd) ? sd : (sd.signals || []);
+                    sigs.forEach(x => {
+                        if (x.source !== 'can') return;
+                        canTotal++;
+                        if (!x.stale) canFresh++;
+                    });
+                }
+            } catch (e) { /* fall through with zeros */ }
+            const fresh = canFresh;
+            set('canSetupSignals', canTotal ? `${canFresh} of ${canTotal} arriving` : '—');
+
+            /* Say what it means, not what the counter says. "bus_errors:
+             * 68242843" is true and useless; "nothing is arriving" is the
+             * thing the user can act on. */
+            const dot = document.getElementById('canSetupDot');
+            let colour = 'var(--text-muted)', head = '', detail = '';
+            if (can.state !== 'running') {
+                colour = '#ef4444'; head = 'CAN bus is not running';
+                detail = 'The driver is stopped — check the dash has power on its CAN pins.';
+            } else if (fresh > 0) {
+                colour = '#22c55e'; head = 'Frames are arriving';
+                detail = `${fresh} reading${fresh === 1 ? '' : 's'} updating live.`;
+            } else {
+                colour = '#f59e0b'; head = 'Bus is up, but nothing is arriving';
+                detail = 'Wrong bus speed, swapped CAN-H/CAN-L, or the wrong ECU preset.';
+            }
+            if (dot) dot.style.background = colour;
+            set('canSetupHeadline', head);
+            set('canSetupDetail', detail);
+
+            /* ECU preset — the layout owns it (ADR-0005 keeps decode on the
+             * channels, but the ECU identity still rides the layout). */
+            try {
+                const lr = await fetch('/api/layout/current');
+                if (lr.ok) {
+                    const l = await lr.json();
+                    const name = [l.ecu, l.ecu_version].filter(Boolean).join(' ');
+                    set('canSetupEcu', name || 'Not set');
+                }
+            } catch (e) { /* leave the dash */ }
+
+            try {
+                const br = await fetch('/api/can/config');
+                if (br.ok) {
+                    const b = await br.json();
+                    const sel = document.getElementById('canSetupBitrate');
+                    if (sel && !sel._dirty) sel.value = String(b.bitrate | 0);
+                }
+            } catch (e) { /* leave whatever is shown */ }
+        }
+
+        async function _canSetupSaveBitrate(v) {
+            const sel = document.getElementById('canSetupBitrate');
+            if (sel) sel._dirty = true;   /* stop the poll fighting the user */
+            try {
+                const r = await fetch('/api/can/config', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bitrate: Number(v) }),
+                });
+                if (!r.ok) throw new Error((await r.text()) || `HTTP ${r.status}`);
+                const label = { 0: '125 kbps', 1: '250 kbps', 2: '500 kbps', 3: '1 Mbps' }[v] || v;
+                showToast(`Bus speed set to ${label}`, 'success');
+            } catch (e) {
+                showToast('Could not change the bus speed: ' + (e.message || e), 'error');
+            } finally {
+                if (sel) setTimeout(() => { sel._dirty = false; }, 2000);
+            }
+        }
+
+        /* ── WiFi & network ───────────────────────────────────────────────
+         * Read-only on purpose: credentials are typed on the dash's own
+         * screen. This page answers "what is it on, and how do I reach it",
+         * which the card promised and Device Info never delivered. */
+        let _netTimer = null;
+
+        async function openNetworkSetup() {
+            const m = document.getElementById('networkModal');
+            if (!m) return;
+            m.style.display = 'flex';
+            await _refreshNetwork();
+            const tick = async () => {
+                if (m.style.display === 'none') return;
+                await _refreshNetwork();
+                if (m.style.display !== 'none') _netTimer = setTimeout(tick, 3000);
+            };
+            if (_netTimer) clearTimeout(_netTimer);
+            _netTimer = setTimeout(tick, 3000);
+        }
+
+        function closeNetworkSetup() {
+            const m = document.getElementById('networkModal');
+            if (m) m.style.display = 'none';
+            if (_netTimer) { clearTimeout(_netTimer); _netTimer = null; }
+        }
+
+        async function _refreshNetwork() {
+            const set = (id, txt) => { const e = document.getElementById(id); if (e) e.textContent = txt; };
+            let info = null, health = null;
+            try {
+                const r = await fetch('/api/device/info');
+                if (r.ok) info = await r.json();
+                const h = await fetch('/api/system/health');
+                if (h.ok) health = await h.json();
+            } catch (e) { /* handled below */ }
+
+            const dot = document.getElementById('netDot');
+            if (!info) {
+                set('netHeadline', 'No dash connected');
+                set('netDetail', 'This editor cannot reach a dash right now.');
+                if (dot) dot.style.background = 'var(--text-muted)';
+                ['netSsid', 'netIp', 'netRssi', 'netAp'].forEach(i => set(i, '—'));
+                return;
+            }
+
+            const w = info.wifi || {};
+            const connected = w.state === 'connected';
+            if (dot) dot.style.background = connected ? '#22c55e' : (w.ap_enabled ? '#f59e0b' : '#ef4444');
+            set('netHeadline', connected ? `Connected to ${w.ssid || 'a network'}`
+                            : w.ap_enabled ? 'Running its own hotspot'
+                            : 'Not on a network');
+            set('netDetail', connected ? `Reachable at ${w.sta_ip || '—'}`
+                           : w.ap_enabled ? `Join ${w.ap_ssid || 'the dash hotspot'} and open ${w.ap_ip || '192.168.4.1'}`
+                           : 'Set up WiFi on the dash’s own screen.');
+
+            set('netSsid', w.ssid || 'None');
+            set('netIp', w.sta_ip || '—');
+            const rssi = health && typeof health.wifi_rssi === 'number' ? health.wifi_rssi : null;
+            /* dBm means nothing to most people; pair it with a word. */
+            set('netRssi', rssi == null ? '—'
+                : `${rssi} dBm · ${rssi > -60 ? 'strong' : rssi > -75 ? 'ok' : 'weak'}`);
+            set('netAp', w.ap_enabled ? `${w.ap_ssid || 'on'} · ${w.ap_ip || ''}`.trim() : 'Off');
+        }
+
+        /* ── Odometer ─────────────────────────────────────────────────────
+         * Promoted out of the Gear Setup modal. It still reads the same
+         * speed signal, so it names it and points at where that is set. */
+        let _odoLoaded = null;
+
+        async function openOdometer() {
+            const m = document.getElementById('odometerModal');
+            if (!m) return;
+            m.style.display = 'flex';
+            const set = (id, txt) => { const e = document.getElementById(id); if (e) e.textContent = txt; };
+            set('odoLive', '—');
+            const input = document.getElementById('odoKm');
+            if (input) input.value = '';
+            try {
+                const r = await fetch('/api/odometer');
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                const d = await r.json();
+                _odoLoaded = d;
+                set('odoLive', (d.km != null) ? Number(d.km).toFixed(1) : '—');
+                if (input && d.km != null) input.placeholder = Number(d.km).toFixed(1);
+                const srcEl = document.getElementById('odoSource');
+                if (srcEl) {
+                    srcEl.innerHTML = d.speed_signal
+                        ? `Counting from <b style="color:var(--text);">${_textEscape(d.speed_signal)}</b>. `
+                          + `<a href="#" onclick="closeOdometer(); openGearSetup(); return false;" style="color:var(--accent);">Change which reading feeds it</a>`
+                        : 'No speed reading is feeding the odometer yet — '
+                          + '<a href="#" onclick="closeOdometer(); openGearSetup(); return false;" style="color:var(--accent);">pick one</a>.';
+                }
+            } catch (e) {
+                set('odoLive', '—');
+                const srcEl = document.getElementById('odoSource');
+                if (srcEl) srcEl.textContent = 'Could not read the odometer from the dash.';
+            }
+        }
+
+        function closeOdometer() {
+            const m = document.getElementById('odometerModal');
+            if (m) m.style.display = 'none';
+        }
+
+        async function saveOdometer() {
+            const input = document.getElementById('odoKm');
+            const raw = (input?.value || '').trim();
+            if (!raw) { closeOdometer(); return; }   /* nothing typed = nothing meant */
+            const km = Number(raw);
+            if (!isFinite(km) || km < 0) { showToast('Enter a distance in km', 'error'); return; }
+            try {
+                const r = await fetch('/api/odometer', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ km }),
+                });
+                if (!r.ok) throw new Error((await r.text()) || `HTTP ${r.status}`);
+                showToast(`Odometer set to ${km.toFixed(1)} km`, 'success');
+                closeOdometer();
+            } catch (e) {
+                showToast('Could not set the odometer: ' + (e.message || e), 'error');
+            }
         }
 
         /* ── OBD2 Setup modal ─────────────────────────────────────────
@@ -20699,16 +21229,10 @@
         /* Populate Setup-mode card stat lines (live counts).
          * Cheap — fires once on mode-switch, not in a loop. */
         async function _refreshSetupStats() {
-            /* Channels */
-            try {
-                const r = await fetch('/api/channels');
-                if (r.ok) {
-                    const d = await r.json();
-                    const active = (d.channels || []).filter(c => c.signal).length;
-                    document.getElementById('setupChannelsStat').textContent =
-                        `${d.count || 0} active · ${active} bound`;
-                }
-            } catch(e) {}
+            const setStat = (id, txt) => {
+                const el = document.getElementById(id);
+                if (el && txt) el.textContent = txt;
+            };
             /* Signals */
             try {
                 const r = await fetch('/api/signals/values');
@@ -20720,13 +21244,35 @@
                         `${sigs.length} defined · ${live} live`;
                 }
             } catch(e) {}
-            /* ECU */
-            const ecuSel = document.getElementById('ecuSelect');
-            if (ecuSel) {
-                const txt = ecuSel.options[ecuSel.selectedIndex]?.text || 'Not selected';
-                const el = document.getElementById('setupEcuStat');
-                if (el) el.textContent = txt;
-            }
+            /* ECU preset + bus verdict, for the "ECU & CAN bus" card. The
+             * preset lives on the layout; the verdict is the same
+             * plain-words rule the modal uses. */
+            try {
+                const r = await fetch('/api/layout/current');
+                if (r.ok) {
+                    const l = await r.json();
+                    const name = [l.ecu, l.ecu_version].filter(Boolean).join(' ');
+                    setStat('setupCanStat', name || 'No preset set');
+                }
+            } catch(e) {}
+            /* Odometer */
+            try {
+                const r = await fetch('/api/odometer');
+                if (r.ok) {
+                    const d = await r.json();
+                    if (d.km != null) setStat('setupOdoStat', Number(d.km).toFixed(1) + ' km');
+                }
+            } catch(e) {}
+            /* Screen & night — say whether a night trigger is actually set,
+             * not the word "Configurable", which is true of every card. */
+            try {
+                const r = await fetch('/api/dimmer/config');
+                if (r.ok) {
+                    const d = await r.json();
+                    setStat('setupDimmerStat', (d.enabled && d.signal_name)
+                        ? `Dims on ${d.signal_name}` : 'Always full brightness');
+                }
+            } catch(e) {}
             /* WiFi + Device, from ONE call to an endpoint that exists.
              *
              * These two lines had read "—" forever. They asked for
@@ -20754,6 +21300,30 @@
                         ? Math.round(d.system.heap_free / 1024) + ' KB free' : '';
                     const dEl = document.getElementById('setupDeviceStat');
                     if (dEl && heap) dEl.textContent = heap;
+
+                    /* Append the bus verdict to the ECU preset name — the two
+                     * facts the card exists to carry. */
+                    /* CAN-sourced only — see _refreshCanSetup for why
+                     * d.signals.fresh is the wrong number to ask. */
+                    const can = d.can || {};
+                    const cEl = document.getElementById('setupCanStat');
+                    if (cEl) {
+                        let live = 0;
+                        try {
+                            const sr = await fetch('/api/signals/values');
+                            if (sr.ok) {
+                                const sd = await sr.json();
+                                const sigs = Array.isArray(sd) ? sd : (sd.signals || []);
+                                live = sigs.filter(x => x.source === 'can' && !x.stale).length;
+                            }
+                        } catch (e) {}
+                        const verdict = (can.state !== 'running') ? 'bus stopped'
+                                      : live > 0 ? `${live} live`
+                                      : 'nothing arriving';
+                        const preset = cEl.textContent.split(' · ')[0];
+                        cEl.textContent = [preset && preset !== '—' ? preset : null, verdict]
+                            .filter(Boolean).join(' · ');
+                    }
                 }
             } catch(e) {}
             /* OBD2 PID count */

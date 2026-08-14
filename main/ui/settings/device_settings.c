@@ -3234,12 +3234,27 @@ static void _channels_card_cb(lv_event_t *e) {
     first_run_wizard_open_channels();
 }
 
+/* ── Setup grids ───────────────────────────────────────────────────────
+ *
+ * Same three groups, same names, same order as Studio's Setup page, so
+ * the two surfaces stop drifting (ADR-0039). They had grown apart: the
+ * dash filed Trouble Codes under CONNECTIVITY and Live Data under DEVICE,
+ * while the web had them under Connectivity and "Logging & dashboards" —
+ * same features, four different homes, and no reason a user could infer.
+ *
+ * Grouped by what you came to change: the car, the dash itself, or the
+ * data coming off it. "Files & sharing" has no dash equivalent (no file
+ * dialogs on the glass) and Studio's Developer options collapse into the
+ * simulator, which lives with Data & testing here.
+ * ────────────────────────────────────────────────────────────────────── */
+
 static void _build_vehicle_grid(lv_obj_t *content) {
-    _make_setup_section_title(content, "VEHICLE & CHANNELS");
+    _make_setup_section_title(content, "YOUR CAR");
     lv_obj_t *grid = _make_setup_grid(content);
 
-    /* Channels card — primary vehicle-setup surface. Stat shows how many
-     * channels are currently mapped to a live signal. */
+    /* Channels card — primary vehicle-setup surface. On the glass this IS
+     * the way in; Studio dropped its equivalent card because Channels has
+     * its own top-level tab there. Stat shows how many are actually fed. */
     size_t ch_total = channel_manager_count();
     size_t ch_bound = 0;
     for (size_t i = 0; i < ch_total; i++) {
@@ -3249,14 +3264,26 @@ static void _build_vehicle_grid(lv_obj_t *content) {
     char ch_txt[32];
     snprintf(ch_txt, sizeof(ch_txt), "%u MAPPED", (unsigned)ch_bound);
     _make_setup_card(grid, LV_SYMBOL_LIST, "Channels",
-        "Map signals to channels, set ranges + warnings.",
+        "Everything the dash can read, and where it comes from.",
         ch_txt, _channels_card_cb);
+
+    /* Bitrate + the live frame table. Named for what it opens: unlike
+     * Studio's card it does not carry the ECU preset, because on the dash
+     * presets are bound per-channel and by the setup wizard. */
+    _make_setup_card(grid, LV_SYMBOL_SHUFFLE, "CAN bus",
+        "Bus speed, and whether frames are arriving.",
+        "500 KBPS", _can_bus_popup_open);
+
+    /* Diagnostics moved here from CONNECTIVITY: reading a check-engine
+     * light is a question about the car, not about the dash's plumbing. */
+    _make_setup_card(grid, LV_SYMBOL_WARNING, "OBD2 diagnostics",
+        "Read and clear the car's trouble codes.",
+        "READ", _dtc_btn_cb);
 
     /* OBD2 PIDs card — the by-hand tool, named as such. Getting OBD2
      * readings onto the dash is one action and it lives in Channels
      * ("Scan for OBD2"); this card is for picking exact PIDs and adding
-     * ones the standard list doesn't know (ADR-0037). Same
-     * repoint-the-stat-label pattern as the cards above. */
+     * ones the standard list doesn't know (ADR-0037). */
     char obd2_txt[48];
     _obd2_label_compose(obd2_txt, sizeof(obd2_txt));
     setup_card_t obd2 = _make_setup_card(grid, LV_SYMBOL_DRIVE, "OBD2 PIDs",
@@ -3264,63 +3291,58 @@ static void _build_vehicle_grid(lv_obj_t *content) {
         obd2_txt, _obd2_btn_cb);
     s_obd2_btn_label = obd2.stat_label;
 
-    _make_setup_card(grid, LV_SYMBOL_SETTINGS, "Gear Calc",
-        "RPM + speed = calculated gear.",
+    _make_setup_card(grid, LV_SYMBOL_SETTINGS, "Gear calculation",
+        "Work out the gear from RPM and speed.",
         "CALCULATED_GEAR", _veh_gear_btn_cb);
 
     _make_setup_card(grid, LV_SYMBOL_CHARGE, "Odometer",
-        "Auto-accumulates from VEHICLE_SPEED.",
+        "Total distance, counted from your speed reading.",
         "KM", _odo_popup_open);
 }
 
 static void _build_connectivity_grid(lv_obj_t *content) {
-    _make_setup_section_title(content, "CONNECTIVITY");
+    _make_setup_section_title(content, "THIS DASH");
     lv_obj_t *grid = _make_setup_grid(content);
+
+    /* Brightness + the auto-dim hookup. Studio calls this "Screen & night"
+     * and so does this now — the old "Brightness" undersold the half of it
+     * people actually go looking for. */
+    char bri_stat[12];
+    snprintf(bri_stat, sizeof(bri_stat), "%d%%", current_brightness);
+    _make_setup_card(grid, LV_SYMBOL_EYE_OPEN, "Screen & night",
+        "How bright the screen is, and what makes it dim.",
+        bri_stat, _dimmer_popup_open);
+
+    char fw_stat[24];
+    snprintf(fw_stat, sizeof(fw_stat), "v%s", FIRMWARE_VERSION);
+    _make_setup_card(grid, LV_SYMBOL_HOME, "Device & updates",
+        "Serial, firmware, VIN and ECU name.",
+        fw_stat, _device_info_popup_open);
 
     /* WiFi card. Stat shows the current SSID — refresh_wifi_status writes
      * into wifi_status_label every 2 s via s_wifi_status_timer. */
-    setup_card_t wifi = _make_setup_card(grid, LV_SYMBOL_WIFI, "WiFi & Network",
-        "Configure WiFi, view IP and hotspot status.",
+    setup_card_t wifi = _make_setup_card(grid, LV_SYMBOL_WIFI, "WiFi & network",
+        "Which network the dash is on, and its address.",
         "—", wifi_btn_event_cb);
     wifi_status_label = wifi.stat_label;
 
     /* Web Editor QR card. Stat shows the IP. Same timer drives it via the
      * repurposed web_status_label pointer. */
-    setup_card_t qr = _make_setup_card(grid, LV_SYMBOL_EYE_OPEN, "Web Editor",
-        "Scan QR to open the dash web UI on your phone.",
+    setup_card_t qr = _make_setup_card(grid, LV_SYMBOL_EYE_OPEN, "Web editor",
+        "Scan the QR to open this dash on your phone.",
         "—", _qr_btn_cb);
     web_status_label = qr.stat_label;
-
-    _make_setup_card(grid, LV_SYMBOL_SHUFFLE, "CAN Bus",
-        "Bitrate + live bus health diagnostics.",
-        "500 KBPS", _can_bus_popup_open);
-
-    _make_setup_card(grid, LV_SYMBOL_WARNING, "Trouble Codes",
-        "Read & clear DTCs over OBD2.",
-        "READ", _dtc_btn_cb);
 }
 
 static void _build_device_grid(lv_obj_t *content) {
-    _make_setup_section_title(content, "DEVICE");
+    _make_setup_section_title(content, "DATA & TESTING");
     lv_obj_t *grid = _make_setup_grid(content);
-
-    char fw_stat[24];
-    snprintf(fw_stat, sizeof(fw_stat), "v%s", FIRMWARE_VERSION);
-    _make_setup_card(grid, LV_SYMBOL_HOME, "Device Info",
-        "Serial, firmware, VIN, ECU name.",
-        fw_stat, _device_info_popup_open);
-
-    char bri_stat[12];
-    snprintf(bri_stat, sizeof(bri_stat), "%d%%", current_brightness);
-    _make_setup_card(grid, LV_SYMBOL_EYE_OPEN, "Brightness",
-        "Slider + auto-dim wire/signal hookup.",
-        bri_stat, _dimmer_popup_open);
 
     /* One card. The old "Peak Hold" card next door was the live-signal view;
      * it now opens from inside this popup, matching Studio's merged Live Data
      * & Logging page (ADR-0030). */
-    _make_setup_card(grid, LV_SYMBOL_SD_CARD, "Live Data & Logging",
-        "Live values, min/max, signal log + Raw CAN.",
+    _make_setup_card(grid, LV_SYMBOL_SD_CARD, "Live data & recording",
+        "Watch readings arrive, then record them to the card.",
         "IDLE", _logger_popup_open);
 
     /* Simulator — moved out of the old Peak Hold & Testing popup into its own
@@ -3328,7 +3350,7 @@ static void _build_device_grid(lv_obj_t *content) {
      * live ON/OFF state. */
     bool sim_on = signal_sim_is_active();
     setup_card_t sim = _make_setup_card(grid, LV_SYMBOL_PLAY, "Simulator",
-        "Replay fake CAN frames to preview the dash.",
+        "Feed the dash fake readings to try a layout at the desk.",
         sim_on ? "ON" : "OFF", _sim_card_cb);
     s_sim_card_stat = sim.stat_label;
     lv_obj_set_style_text_color(s_sim_card_stat,
