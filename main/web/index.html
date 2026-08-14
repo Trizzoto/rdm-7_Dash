@@ -236,6 +236,25 @@
         }
         .sidebar-collapse-toggle:hover { color: var(--text); border-color: var(--text-muted); }
 
+        /* Layout in/out, pinned under the widget palette. */
+        .sidebar-file-actions {
+            flex: 0 0 auto; display: flex; gap: 6px; padding: 8px 0 2px;
+            border-top: 1px solid var(--border); margin-top: 6px;
+        }
+        .sidebar-file-btn {
+            flex: 1 1 0; min-width: 0;
+            display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+            padding: 7px 6px; font-size: 11px; font-weight: 600; cursor: pointer;
+            background: var(--panel); color: var(--text-muted);
+            border: 1px solid var(--border); border-radius: var(--radius-sm);
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .sidebar-file-btn svg { width: 13px; height: 13px; flex: 0 0 auto; }
+        .sidebar-file-btn:hover { color: var(--text); border-color: var(--text-muted); }
+        .sidebar-file-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+        /* Collapsed rail: the toggle is the only thing that stays. */
+        .workspace.left-collapsed .sidebar-file-actions { display: none; }
+
         /* ── Widget selection toolbar (mobile/touch only, visible when a widget
          * is selected). Nudge arrows, W/H steppers, copy/paste/lock/delete,
          * optional test-value slider. Glassmorphic, animates in. */
@@ -4728,14 +4747,19 @@
                  read "bundle" and guessed it was the channel backup, so both
                  cards list what is actually inside (ADR-0030). -->
             <div class="setup-card" onclick="importRdm && importRdm()">
-                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Open dashboard bundle</div>
-                <div class="card-body">Load a whole dashboard from a .rdm file — the layout, its images and fonts, and the channel setup that came with it.</div>
+                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Open</div>
+                <div class="card-body">Open a .rdm file — a layout, or a full dashboard. It says which as it loads, and only asks about your channel setup if the file actually carries one.</div>
                 <div class="card-stat">.rdm file</div>
             </div>
-            <div class="setup-card" onclick="exportRdm && exportRdm()">
-                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Save dashboard bundle</div>
-                <div class="card-body">Save this dashboard to a .rdm file — layout, images, fonts and the dash's channel setup, all in one. To back up only the channels, use Channels &rsaquo; Add channels.</div>
-                <div class="card-stat">.rdm file</div>
+            <div class="setup-card" onclick="exportRdm && exportRdm('layout')">
+                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Save layout</div>
+                <div class="card-body">The widgets with their images and fonts, and nothing about your car. Safe to share or publish — no CAN ids, thresholds or units travel with it.</div>
+                <div class="card-stat">.layout.rdm</div>
+            </div>
+            <div class="setup-card" onclick="exportRdm && exportRdm('dashboard')">
+                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Save full dashboard</div>
+                <div class="card-body">The layout plus this dash's channel setup — CAN decode, thresholds, units. For your own backup, or to set up a second dash exactly like this one.</div>
+                <div class="card-stat">.dashboard.rdm</div>
             </div>
             <div class="setup-card" onclick="openMarketplace && openMarketplace()">
                 <div class="card-title"><svg viewBox="0 0 24 24"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>Marketplace</div>
@@ -4775,6 +4799,18 @@
             <button class="sidebar-collapse-toggle" id="leftCollapseBtn" onclick="toggleLeftSidebar()" title="Collapse sidebar">&laquo;</button>
             <div class="sidebar-header" style="padding-right:36px;">Widgets</div>
             <div id="paletteList" style="flex:1; overflow-y:auto; min-height:0;"></div>
+            <!-- Layout in / out, where the layout work happens. These also sit
+                 in the app menu and on the Setup page, but a file action you
+                 reach for mid-design should not need either. Pinned below the
+                 palette so it does not scroll away with the widget list. -->
+            <div class="sidebar-file-actions">
+                <button class="sidebar-file-btn" onclick="importRdm()" title="Open a .rdm file — a layout, or a full dashboard">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Open
+                </button>
+                <button class="sidebar-file-btn" onclick="exportRdm('layout')" title="Save the widgets, images and fonts. Nothing about your car — safe to share.">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Save layout
+                </button>
+            </div>
         </aside>
 
         <!-- Left Resize Handle -->
@@ -18163,7 +18199,15 @@
          *     [0-3]   Magic: "RDM1"
          *     [4-5]   Version: uint16 LE = 1
          *     [6-7]   Entry count: uint16 LE
-         *     [8-15]  Reserved (zeros)
+         *     [8]     Flavour: 0 = unstated (files written before 2026-08-14),
+ *                      1 = layout      (widgets + images + fonts)
+ *                      2 = dashboard   (the above + channels.json)
+ *             A .rdm can hold either, and until this byte existed the
+ *             file could not say which — you found out at import time,
+ *             when it offered to replace your channel setup. Readers
+ *             that predate it see 0 and fall back to sniffing for a
+ *             type-3 entry, which is what they did anyway.
+ *     [9-15]  Reserved (zeros)
          *
          *   Per entry:
          *     [0]       Type: uint8 (0 = layout JSON, 1 = image, 2 = font TTF,
@@ -18178,9 +18222,22 @@
          *     [N+4..]   Data: raw bytes
          */
 
-        async function exportRdm() {
+        /* flavour: 'layout' = portable (widgets + images + fonts, nothing
+         * about the car); 'dashboard' = that plus the channel registry, i.e.
+         * the CAN ids, bit offsets and thresholds this dash is running.
+         *
+         * Sharing is why they are separate. A dashboard bundle is a fine
+         * thing to hand a mate who wants your exact setup, and a bad thing
+         * to upload to the marketplace, so the layout flavour simply has no
+         * channels entry to leak. Defaults to dashboard: that is what the
+         * single old button did, and the desktop command binding still
+         * calls this with no argument. */
+        async function exportRdm(flavour) {
+            const isLayout = (flavour === 'layout');
             const name = currentLayout.name || 'layout';
-            updateStatus('Building .rdm bundle...');
+            const suffix = isLayout ? 'layout' : 'dashboard';
+            const fileName = `${name}.${suffix}.rdm`;
+            updateStatus(`Building ${fileName}...`);
 
             /* Collect image names by scanning WIDGET_DEFS for image_picker fields */
             const imageNames = new Set();
@@ -18249,7 +18306,7 @@
              * since ADR-0005 — without this entry a round-tripped bundle loses
              * the whole CAN setup). Offline export just skips it. */
             let channelsBytes = null;
-            try {
+            if (!isLayout) try {
                 updateStatus('Fetching channel setup...');
                 const resp = await fetch('/api/channels/export');
                 if (resp.ok) channelsBytes = new Uint8Array(await resp.arrayBuffer());
@@ -18296,7 +18353,8 @@
             u8[off++] = 0x52; u8[off++] = 0x44; u8[off++] = 0x4D; u8[off++] = 0x31; /* "RDM1" */
             view.setUint16(off, 1, true); off += 2;  /* version */
             view.setUint16(off, entryCount, true); off += 2;  /* entry count */
-            off += 8; /* reserved */
+            u8[off] = isLayout ? 1 : 2;   /* flavour — see the format note above */
+            off += 8; /* flavour + 7 reserved */
 
             /* Layout entry */
             u8[off++] = 0; /* type = layout */
@@ -18336,7 +18394,7 @@
             const blob = new Blob([buf], { type: 'application/octet-stream' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
-            a.href = url; a.download = `${name}.rdm`;
+            a.href = url; a.download = fileName;
             a.click();
             URL.revokeObjectURL(url);
 
@@ -18345,8 +18403,8 @@
             if (fonts.length > 0) parts.push(`${fonts.length} font${fonts.length > 1 ? 's' : ''}`);
             if (channelsBytes) parts.push('channel setup');
             const assetMsg = parts.length > 0 ? ` with ${parts.join(', ')}` : '';
-            updateStatus(`Exported ${name}.rdm${assetMsg}`);
-            showToast(`Exported ${name}.rdm${assetMsg}`, 'success');
+            updateStatus(`Exported ${fileName}${assetMsg}`);
+            showToast(`Exported ${fileName}${assetMsg}`, 'success');
         }
 
         function importRdm() {
@@ -18371,6 +18429,9 @@
                     if (version !== 1) throw new Error(`Unsupported .rdm version: ${version}`);
 
                     const entryCount = view.getUint16(6, true);
+                    /* 0 on anything written before the flavour byte existed;
+                     * those get classified from their entries below. */
+                    const flavour = u8[8];
                     let off = 16;
 
                     let layoutData = null;
@@ -18405,6 +18466,14 @@
                             channelsData = data; /* device channel registry */
                         }
                     }
+
+                    /* Say what arrived before touching anything. An unmarked
+                     * older file is judged by whether it actually carries a
+                     * channels entry, which is the only thing that mattered. */
+                    const isDashboard = (flavour === 2) || (flavour === 0 && !!channelsData);
+                    updateStatus(isDashboard
+                        ? `${file.name} — full dashboard (includes channel setup)`
+                        : `${file.name} — layout only`);
 
                     if (!layoutData) throw new Error('No layout found in .rdm file');
                     if (!layoutData.widgets || !Array.isArray(layoutData.widgets))
@@ -26494,10 +26563,11 @@
                     { type: 'button', label: 'Rename…',        icon: 'edit', onclick: 'renameCurrentLayout()' }
                 ]});
                 sections.push({ heading: 'File', items: [
-                    { type: 'button', label: 'Open dashboard bundle', icon: 'upload',   onclick: 'importRdm()' },
-                    { type: 'button', label: 'Save dashboard bundle', icon: 'download', onclick: 'exportRdm()' },
-                    { type: 'button', label: 'Export screenshot',     icon: 'camera',   onclick: 'downloadScreenshot()' },
-                    { type: 'button', label: 'Marketplace',           icon: 'shop',     onclick: 'openMarketplace()' }
+                    { type: 'button', label: 'Open…',            icon: 'upload',   onclick: 'importRdm()' },
+                    { type: 'button', label: 'Save layout…',     icon: 'download', onclick: "exportRdm('layout')" },
+                    { type: 'button', label: 'Save full dashboard…', icon: 'download', onclick: "exportRdm('dashboard')" },
+                    { type: 'button', label: 'Export screenshot',   icon: 'camera',   onclick: 'downloadScreenshot()' },
+                    { type: 'button', label: 'Marketplace',         icon: 'shop',     onclick: 'openMarketplace()' }
                 ]});
                 sections.push({ heading: 'Edit', items: [
                     { type: 'button', label: 'Undo', hint: 'Ctrl+Z', icon: 'undo', onclick: 'undo()' },

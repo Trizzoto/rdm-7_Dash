@@ -47,6 +47,7 @@ Read the relevant ADR before changing the area it covers. The "we already tried 
 | [0039](0039-setup-is-grouped-by-the-question-you-arrived-with.md) | Accepted | Setup is grouped by the question you arrived with — five sections mirrored on web and dash; ECU & CAN bus / WiFi / Odometer become real pages; modals lead with the outcome and hide the wiring | `main/web/index.html`, `main/ui/settings/device_settings.c` |
 | [0040](0040-a-backup-has-to-stand-on-its-own.md) | Accepted | A backup has to stand on its own — the decode migration declared success after copying nothing, stamping v3 on channels that never got a decode, so restored backups came back unassigned (or silently re-homed onto OBD2) | `main/data/channel_manager.c` |
 | [0041](0041-a-hook-decays-when-what-it-hooks-stops-being-used.md) | Accepted | A hook decays when the thing it hooks stops being used — Studio's WASM preview refresh hung off `triggerPreview()`, which widget moves stopped calling once the live-edit fast paths landed, so offline the canvas froze until a layout switch; `_flushLiveEdits` is hooked too | `rdm7-desktop/src/tauri-overlay.html` |
+| [0042](0042-a-bundle-should-say-whether-it-carries-your-car.md) | Accepted | A bundle should say whether it carries your car — one `.rdm` container, two flavours (`.layout.rdm` / `.dashboard.rdm`) with a header flavour byte; the layout flavour omits `channels.json` entirely so a shared bundle cannot leak a bus configuration | `main/web/index.html` |
 
 ## When to write a new ADR
 
