@@ -637,8 +637,16 @@ const ecu_preset_t ECU_PRESETS[] = {
     },
 
     /* ══════════════════════════════════════════════════════════════════
-     * Link ECU Generic Dash - base 0x3E8, Intel LE
+     * Link ECU Generic Dash - CAN id 0x3E8, Intel LE, MULTIPLEXED
      * Source: Link G4+/G4X CAN reference.
+     *
+     * The entire stream is ONE can id. Byte 0 is a frame index and the three
+     * 16-bit words at bytes 2-3 / 4-5 / 6-7 carry different quantities for
+     * each index, so these rows are separated by mux_value (the trailing
+     * { 0, 8, N }) rather than by id. The frame index used to be folded into
+     * the id as 0x3E8 + frame, which addressed 13 ids the ECU never sends —
+     * see the note above the matching rows in preset_picker_data.c.
+     *
      * Temperatures transmitted as (degC + 50).
      * ══════════════════════════════════════════════════════════════════ */
     {
@@ -646,21 +654,21 @@ const ecu_preset_t ECU_PRESETS[] = {
         .version = "Generic Dash",
         .display = "Link ECU (G4+ / G4X Generic Dash)",
         .rows = {
-            [ECU_SIG_RPM]             = { 0x3E8, 16, 16, 1.0f,  0.0f,    false, 1, "rpm",    0 },
-            [ECU_SIG_MAP]             = { 0x3E8, 32, 16, 1.0f,  0.0f,    false, 1, "kPa",    0 },
-            [ECU_SIG_THROTTLE]        = { 0x3E9, 32, 16, 0.1f,  0.0f,    false, 1, "%",      1 },
-            [ECU_SIG_COOLANT_TEMP]    = { 0x3EA, 48, 16, 1.0f,  -50.0f,  false, 1, "degC",   0 },
-            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x3EB, 16, 16, 1.0f,  -50.0f,  false, 1, "degC",   0 },
-            [ECU_SIG_LAMBDA]          = { 0x3EE, 32, 16, 0.001f, 0.0f,   false, 1, "lambda", 2 },
-            [ECU_SIG_OIL_TEMP]        = { 0x3F0, 16, 16, 1.0f,  -50.0f,  false, 1, "degC",   0 },
-            [ECU_SIG_OIL_PRESSURE]    = { 0x3F0, 32, 16, 1.0f,  0.0f,    false, 1, "kPa",    0 },
-            [ECU_SIG_FUEL_PRESSURE]   = { 0x3EF, 48, 16, 1.0f,  0.0f,    false, 1, "kPa",    0 },
+            [ECU_SIG_RPM]             = { 0x3E8, 16, 16, 1.0f,  0.0f,    false, 1, "rpm",    0, NULL, 0, 8, 0 },
+            [ECU_SIG_MAP]             = { 0x3E8, 32, 16, 1.0f,  0.0f,    false, 1, "kPa",    0, NULL, 0, 8, 0 },
+            [ECU_SIG_THROTTLE]        = { 0x3E8, 32, 16, 0.1f,  0.0f,    false, 1, "%",      1, NULL, 0, 8, 1 },
+            [ECU_SIG_COOLANT_TEMP]    = { 0x3E8, 48, 16, 1.0f,  -50.0f,  false, 1, "degC",   0, NULL, 0, 8, 2 },
+            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x3E8, 16, 16, 1.0f,  -50.0f,  false, 1, "degC",   0, NULL, 0, 8, 3 },
+            [ECU_SIG_LAMBDA]          = { 0x3E8, 32, 16, 0.001f, 0.0f,   false, 1, "lambda", 2, NULL, 0, 8, 6 },
+            [ECU_SIG_OIL_TEMP]        = { 0x3E8, 16, 16, 1.0f,  -50.0f,  false, 1, "degC",   0, NULL, 0, 8, 8 },
+            [ECU_SIG_OIL_PRESSURE]    = { 0x3E8, 32, 16, 1.0f,  0.0f,    false, 1, "kPa",    0, NULL, 0, 8, 8 },
+            [ECU_SIG_FUEL_PRESSURE]   = { 0x3E8, 48, 16, 1.0f,  0.0f,    false, 1, "kPa",    0, NULL, 0, 8, 7 },
             /* Timing is offset-encoded unsigned on the wire: raw =
              * (deg + 100) * 10, so the -100 offset does the sign work. */
-            [ECU_SIG_IGNITION]        = { 0x3EC, 48, 16, 0.1f,  -100.0f, false, 1, "deg",    1 },
-            [ECU_SIG_VEHICLE_SPEED]   = { 0x3F0, 48, 16, 0.1f,  0.0f,    false, 1, "km/h",   0 },
-            [ECU_SIG_GEAR]            = { 0x3EC, 16, 16, 1.0f,  0.0f,    false, 1, "",       0 },
-            [ECU_SIG_BATTERY_VOLTAGE] = { 0x3EB, 32, 16, 0.01f, 0.0f,    false, 1, "V",      1 },
+            [ECU_SIG_IGNITION]        = { 0x3E8, 48, 16, 0.1f,  -100.0f, false, 1, "deg",    1, NULL, 0, 8, 4 },
+            [ECU_SIG_VEHICLE_SPEED]   = { 0x3E8, 48, 16, 0.1f,  0.0f,    false, 1, "km/h",   0, NULL, 0, 8, 8 },
+            [ECU_SIG_GEAR]            = { 0x3E8, 16, 16, 1.0f,  0.0f,    false, 1, "",       0, NULL, 0, 8, 4 },
+            [ECU_SIG_BATTERY_VOLTAGE] = { 0x3E8, 32, 16, 0.01f, 0.0f,    false, 1, "V",      1, NULL, 0, 8, 3 },
             [ECU_SIG_FUEL_TRIM]       = SIG_UNSUPPORTED,  /* not in Generic Dash */
             [ECU_SIG_EGT]             = SIG_UNSUPPORTED,  /* optional extension */
         },
@@ -931,17 +939,30 @@ int ecu_preset_match_score(const ecu_preset_t *preset) {
     if (!preset) return 0;
     if (ecu_preset_is_obd2(preset)) return 0;  /* OBD2 has no broadcast IDs to match */
 
-    /* Collect unique CAN IDs from the preset. */
-    uint32_t preset_ids[ECU_SIG__COUNT];
+    /* Collect the unique FRAMES the preset expects — (can_id, mux_value), not
+     * can_id alone. A multiplexed ECU (Link Generic Dash) runs its whole
+     * stream through one id and separates the payloads with a frame index in
+     * the message, so counting ids would score it 1-out-of-1 the instant any
+     * frame appeared, and never distinguish "the ECU is there" from "one
+     * unrelated device happens to use that id". */
+    struct { uint32_t id; uint8_t mux_len; uint16_t mux_val; }
+        preset_frames[ECU_SIG__COUNT];
     int preset_count = 0;
     for (int s = 0; s < ECU_SIG__COUNT; s++) {
-        uint32_t id = preset->rows[s].can_id;
-        if (id == 0) continue;  /* SIG_UNSUPPORTED */
+        const ecu_signal_row_t *r = &preset->rows[s];
+        if (r->can_id == 0) continue;  /* SIG_UNSUPPORTED */
         bool dup = false;
         for (int j = 0; j < preset_count; j++) {
-            if (preset_ids[j] == id) { dup = true; break; }
+            if (preset_frames[j].id == r->can_id &&
+                preset_frames[j].mux_len == r->mux_bit_length &&
+                preset_frames[j].mux_val == r->mux_value) { dup = true; break; }
         }
-        if (!dup) preset_ids[preset_count++] = id;
+        if (!dup) {
+            preset_frames[preset_count].id      = r->can_id;
+            preset_frames[preset_count].mux_len = r->mux_bit_length;
+            preset_frames[preset_count].mux_val = r->mux_value;
+            preset_count++;
+        }
     }
     if (preset_count == 0) return 0;  /* nothing to match against */
 
@@ -960,7 +981,15 @@ int ecu_preset_match_score(const ecu_preset_t *preset) {
         for (uint16_t k = 0; k < tracker_n; k++) {
             const can_id_entry_t *e = can_id_tracker_get(k);
             if (!e) continue;
-            if (e->can_id != preset_ids[i]) continue;
+            if (e->can_id != preset_frames[i].id || e->extended) continue;
+            /* Multiplexed frame: require its specific index to have been
+             * seen. mux_seen is cumulative rather than windowed, so this
+             * leans on the id's own freshness check below for liveness. */
+            if (preset_frames[i].mux_len) {
+                if (preset_frames[i].mux_val > 15) continue;
+                if (!(e->mux_seen & (uint16_t)(1u << preset_frames[i].mux_val)))
+                    continue;
+            }
             if (e->last_seen_us >= cutoff) { hits++; break; }
         }
     }

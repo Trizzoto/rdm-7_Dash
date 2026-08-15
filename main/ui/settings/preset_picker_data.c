@@ -326,48 +326,61 @@ const preconfig_item_t preconfig_items[] = {
 { "MegaSquirt", "MS3-Pro", "FUEL PRESSURE",   "615", 0,  0, 16, 0.1,       0,         1, true  },
 { "MegaSquirt", "MS3-Pro", "LAMBDA (AFR1)",   "5FF", 0,  0,  8, 0.0068027, 0,         3, false },
 
-/* ── Link ECU — Generic Dash (Base CAN ID = 0x3E8 / 1000) ───────────── */
-{ "Link ECU", "Generic Dash", "ENGINE SPEED",          "3E8", 1, 16, 16, 1.0,    0,    0, false },
-{ "Link ECU", "Generic Dash", "MAP",                   "3E8", 1, 32, 16, 1.0,    0,    0, false },
-{ "Link ECU", "Generic Dash", "MGP",                   "3E8", 1, 48, 16, 1.0,    -100, 0, false },
-{ "Link ECU", "Generic Dash", "BARO PRESSURE",         "3E9", 1, 16, 16, 0.1,    0,    1, false },
-{ "Link ECU", "Generic Dash", "TPS",                   "3E9", 1, 32, 16, 0.1,    0,    1, false },
-{ "Link ECU", "Generic Dash", "INJECTOR DC",           "3E9", 1, 48, 16, 0.1,    0,    1, false },
-{ "Link ECU", "Generic Dash", "INJECTOR DC (SEC)",     "3EA", 1, 16, 16, 0.1,    0,    1, false },
-{ "Link ECU", "Generic Dash", "INJ PULSE WIDTH",       "3EA", 1, 32, 16, 0.001,  0,    3, false },
-{ "Link ECU", "Generic Dash", "COOLANT TEMP",           "3EA", 1, 48, 16, 1.0,    -50,  0, false },
-{ "Link ECU", "Generic Dash", "IAT",                   "3EB", 1, 16, 16, 1.0,    -50,  0, false },
-{ "Link ECU", "Generic Dash", "ECU VOLTS",             "3EB", 1, 32, 16, 0.01,   0,    2, false },
-{ "Link ECU", "Generic Dash", "MAF",                   "3EB", 1, 48, 16, 0.1,    0,    1, false },
-{ "Link ECU", "Generic Dash", "GEAR POSITION",         "3EC", 1, 16, 16, 1.0,    0,    0, false },
-{ "Link ECU", "Generic Dash", "INJECTOR TIMING",       "3EC", 1, 32, 16, 1.0,    0,    0, false },
-{ "Link ECU", "Generic Dash", "IGNITION TIMING",       "3EC", 1, 48, 16, 0.1,    -100, 1, false },
-{ "Link ECU", "Generic Dash", "CAM INLET BANK 1",      "3ED", 1, 16, 16, 0.1,    0,    1, false },
-{ "Link ECU", "Generic Dash", "CAM INLET BANK 2",      "3ED", 1, 32, 16, 0.1,    0,    1, false },
-{ "Link ECU", "Generic Dash", "CAM EXHAUST BANK 1",    "3ED", 1, 48, 16, -0.1,   0,    1, false },
-{ "Link ECU", "Generic Dash", "CAM EXHAUST BANK 2",    "3EE", 1, 16, 16, -0.1,   0,    1, false },
-{ "Link ECU", "Generic Dash", "LAMBDA 1",              "3EE", 1, 32, 16, 0.001,  0,    3, false },
-{ "Link ECU", "Generic Dash", "LAMBDA 2",              "3EE", 1, 48, 16, 0.001,  0,    3, false },
-{ "Link ECU", "Generic Dash", "TRIG 1 ERROR COUNT",    "3EF", 1, 16, 16, 1.0,    0,    0, false },
-{ "Link ECU", "Generic Dash", "FAULT CODES",           "3EF", 1, 32, 16, 1.0,    0,    0, false },
-{ "Link ECU", "Generic Dash", "FUEL PRESSURE",         "3EF", 1, 48, 16, 1.0,    0,    0, false },
-{ "Link ECU", "Generic Dash", "OIL TEMP",              "3F0", 1, 16, 16, 1.0,    -50,  0, false },
-{ "Link ECU", "Generic Dash", "OIL PRESSURE",          "3F0", 1, 32, 16, 1.0,    0,    0, false },
-{ "Link ECU", "Generic Dash", "LF WHEEL SPEED",        "3F0", 1, 48, 16, 0.1,    0,    1, false },
-{ "Link ECU", "Generic Dash", "LR WHEEL SPEED",        "3F1", 1, 16, 16, 0.1,    0,    1, false },
-{ "Link ECU", "Generic Dash", "RF WHEEL SPEED",        "3F1", 1, 32, 16, 0.1,    0,    1, false },
-{ "Link ECU", "Generic Dash", "RR WHEEL SPEED",        "3F1", 1, 48, 16, 0.1,    0,    1, false },
-{ "Link ECU", "Generic Dash", "KNOCK LEVEL 1",         "3F2", 1, 16, 16, 5.0,    0,    0, false },
-{ "Link ECU", "Generic Dash", "KNOCK LEVEL 2",         "3F2", 1, 32, 16, 5.0,    0,    0, false },
-{ "Link ECU", "Generic Dash", "KNOCK LEVEL 3",         "3F2", 1, 48, 16, 5.0,    0,    0, false },
-{ "Link ECU", "Generic Dash", "KNOCK LEVEL 4",         "3F3", 1, 16, 16, 5.0,    0,    0, false },
-{ "Link ECU", "Generic Dash", "KNOCK LEVEL 5",         "3F3", 1, 32, 16, 5.0,    0,    0, false },
-{ "Link ECU", "Generic Dash", "KNOCK LEVEL 6",         "3F3", 1, 48, 16, 5.0,    0,    0, false },
-{ "Link ECU", "Generic Dash", "KNOCK LEVEL 7",         "3F4", 1, 16, 16, 5.0,    0,    0, false },
-{ "Link ECU", "Generic Dash", "KNOCK LEVEL 8",         "3F4", 1, 32, 16, 5.0,    0,    0, false },
-{ "Link ECU", "Generic Dash", "LIMITS FLAGS",          "3F4", 1, 48, 16, 1.0,    0,    0, false },
-{ "Link ECU", "Generic Dash", "APS (MAIN)",            "3F5", 1, 16, 16, 0.1,    0,    1, false },
-{ "Link ECU", "Generic Dash", "ETHANOL %",             "3F5", 1, 32, 16, 1.0,    0,    0, false },
+/* ── Link ECU — Generic Dash (CAN ID = 0x3E8 / 1000, MULTIPLEXED) ─────
+ *
+ * The whole stream lives on ONE id. Byte 0 carries a frame index and the
+ * three 16-bit words at bytes 2-3 / 4-5 / 6-7 mean something different for
+ * each index — so every row here shares can_id 0x3E8 and is separated by
+ * mux_value, not by id.
+ *
+ * These rows previously encoded the frame index as an id offset (0x3E8 +
+ * frame), which put 13 of the 14 frames on ids the ECU never transmits.
+ * The consequences were that auto-detect could never see more than one of
+ * the preset's ids (so a Link was undetectable), and applying the preset by
+ * hand left 11 dead channels while RPM/MAP/MGP decoded from every frame
+ * indiscriminately. The tell that it was never right: no row reads bits
+ * 0-15, because those bytes were never data in the first place. */
+{ "Link ECU", "Generic Dash", "ENGINE SPEED",          "3E8", 1, 16, 16, 1.0,    0,    0, false, 0, 0, 0, 8, 0 },
+{ "Link ECU", "Generic Dash", "MAP",                   "3E8", 1, 32, 16, 1.0,    0,    0, false, 0, 0, 0, 8, 0 },
+{ "Link ECU", "Generic Dash", "MGP",                   "3E8", 1, 48, 16, 1.0,    -100, 0, false, 0, 0, 0, 8, 0 },
+{ "Link ECU", "Generic Dash", "BARO PRESSURE",         "3E8", 1, 16, 16, 0.1,    0,    1, false, 0, 0, 0, 8, 1 },
+{ "Link ECU", "Generic Dash", "TPS",                   "3E8", 1, 32, 16, 0.1,    0,    1, false, 0, 0, 0, 8, 1 },
+{ "Link ECU", "Generic Dash", "INJECTOR DC",           "3E8", 1, 48, 16, 0.1,    0,    1, false, 0, 0, 0, 8, 1 },
+{ "Link ECU", "Generic Dash", "INJECTOR DC (SEC)",     "3E8", 1, 16, 16, 0.1,    0,    1, false, 0, 0, 0, 8, 2 },
+{ "Link ECU", "Generic Dash", "INJ PULSE WIDTH",       "3E8", 1, 32, 16, 0.001,  0,    3, false, 0, 0, 0, 8, 2 },
+{ "Link ECU", "Generic Dash", "COOLANT TEMP",           "3E8", 1, 48, 16, 1.0,    -50,  0, false, 0, 0, 0, 8, 2 },
+{ "Link ECU", "Generic Dash", "IAT",                   "3E8", 1, 16, 16, 1.0,    -50,  0, false, 0, 0, 0, 8, 3 },
+{ "Link ECU", "Generic Dash", "ECU VOLTS",             "3E8", 1, 32, 16, 0.01,   0,    2, false, 0, 0, 0, 8, 3 },
+{ "Link ECU", "Generic Dash", "MAF",                   "3E8", 1, 48, 16, 0.1,    0,    1, false, 0, 0, 0, 8, 3 },
+{ "Link ECU", "Generic Dash", "GEAR POSITION",         "3E8", 1, 16, 16, 1.0,    0,    0, false, 0, 0, 0, 8, 4 },
+{ "Link ECU", "Generic Dash", "INJECTOR TIMING",       "3E8", 1, 32, 16, 1.0,    0,    0, false, 0, 0, 0, 8, 4 },
+{ "Link ECU", "Generic Dash", "IGNITION TIMING",       "3E8", 1, 48, 16, 0.1,    -100, 1, false, 0, 0, 0, 8, 4 },
+{ "Link ECU", "Generic Dash", "CAM INLET BANK 1",      "3E8", 1, 16, 16, 0.1,    0,    1, false, 0, 0, 0, 8, 5 },
+{ "Link ECU", "Generic Dash", "CAM INLET BANK 2",      "3E8", 1, 32, 16, 0.1,    0,    1, false, 0, 0, 0, 8, 5 },
+{ "Link ECU", "Generic Dash", "CAM EXHAUST BANK 1",    "3E8", 1, 48, 16, -0.1,   0,    1, false, 0, 0, 0, 8, 5 },
+{ "Link ECU", "Generic Dash", "CAM EXHAUST BANK 2",    "3E8", 1, 16, 16, -0.1,   0,    1, false, 0, 0, 0, 8, 6 },
+{ "Link ECU", "Generic Dash", "LAMBDA 1",              "3E8", 1, 32, 16, 0.001,  0,    3, false, 0, 0, 0, 8, 6 },
+{ "Link ECU", "Generic Dash", "LAMBDA 2",              "3E8", 1, 48, 16, 0.001,  0,    3, false, 0, 0, 0, 8, 6 },
+{ "Link ECU", "Generic Dash", "TRIG 1 ERROR COUNT",    "3E8", 1, 16, 16, 1.0,    0,    0, false, 0, 0, 0, 8, 7 },
+{ "Link ECU", "Generic Dash", "FAULT CODES",           "3E8", 1, 32, 16, 1.0,    0,    0, false, 0, 0, 0, 8, 7 },
+{ "Link ECU", "Generic Dash", "FUEL PRESSURE",         "3E8", 1, 48, 16, 1.0,    0,    0, false, 0, 0, 0, 8, 7 },
+{ "Link ECU", "Generic Dash", "OIL TEMP",              "3E8", 1, 16, 16, 1.0,    -50,  0, false, 0, 0, 0, 8, 8 },
+{ "Link ECU", "Generic Dash", "OIL PRESSURE",          "3E8", 1, 32, 16, 1.0,    0,    0, false, 0, 0, 0, 8, 8 },
+{ "Link ECU", "Generic Dash", "LF WHEEL SPEED",        "3E8", 1, 48, 16, 0.1,    0,    1, false, 0, 0, 0, 8, 8 },
+{ "Link ECU", "Generic Dash", "LR WHEEL SPEED",        "3E8", 1, 16, 16, 0.1,    0,    1, false, 0, 0, 0, 8, 9 },
+{ "Link ECU", "Generic Dash", "RF WHEEL SPEED",        "3E8", 1, 32, 16, 0.1,    0,    1, false, 0, 0, 0, 8, 9 },
+{ "Link ECU", "Generic Dash", "RR WHEEL SPEED",        "3E8", 1, 48, 16, 0.1,    0,    1, false, 0, 0, 0, 8, 9 },
+{ "Link ECU", "Generic Dash", "KNOCK LEVEL 1",         "3E8", 1, 16, 16, 5.0,    0,    0, false, 0, 0, 0, 8, 10 },
+{ "Link ECU", "Generic Dash", "KNOCK LEVEL 2",         "3E8", 1, 32, 16, 5.0,    0,    0, false, 0, 0, 0, 8, 10 },
+{ "Link ECU", "Generic Dash", "KNOCK LEVEL 3",         "3E8", 1, 48, 16, 5.0,    0,    0, false, 0, 0, 0, 8, 10 },
+{ "Link ECU", "Generic Dash", "KNOCK LEVEL 4",         "3E8", 1, 16, 16, 5.0,    0,    0, false, 0, 0, 0, 8, 11 },
+{ "Link ECU", "Generic Dash", "KNOCK LEVEL 5",         "3E8", 1, 32, 16, 5.0,    0,    0, false, 0, 0, 0, 8, 11 },
+{ "Link ECU", "Generic Dash", "KNOCK LEVEL 6",         "3E8", 1, 48, 16, 5.0,    0,    0, false, 0, 0, 0, 8, 11 },
+{ "Link ECU", "Generic Dash", "KNOCK LEVEL 7",         "3E8", 1, 16, 16, 5.0,    0,    0, false, 0, 0, 0, 8, 12 },
+{ "Link ECU", "Generic Dash", "KNOCK LEVEL 8",         "3E8", 1, 32, 16, 5.0,    0,    0, false, 0, 0, 0, 8, 12 },
+{ "Link ECU", "Generic Dash", "LIMITS FLAGS",          "3E8", 1, 48, 16, 1.0,    0,    0, false, 0, 0, 0, 8, 12 },
+{ "Link ECU", "Generic Dash", "APS (MAIN)",            "3E8", 1, 16, 16, 0.1,    0,    1, false, 0, 0, 0, 8, 13 },
+{ "Link ECU", "Generic Dash", "ETHANOL %",             "3E8", 1, 32, 16, 1.0,    0,    0, false, 0, 0, 0, 8, 13 },
 
 /* ── Toyota GT86 Gen 1 ──────────────────────────────────────────────────
  * Decode params published by the GT86/BRZ enthusiast community. Brake

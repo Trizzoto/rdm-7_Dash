@@ -184,6 +184,31 @@ int16_t signal_register_with_source(const char *name, uint32_t can_id,
     return idx;
 }
 
+bool signal_set_mux(int16_t signal_index, uint8_t mux_bit_start,
+                    uint8_t mux_bit_length, uint16_t mux_value)
+{
+    if (!s_signals || signal_index < 0 || signal_index >= (int16_t)s_signal_count)
+        return false;
+
+    signal_t *sig = &s_signals[signal_index];
+
+    /* Reject geometry that can't sit inside an 8-byte frame rather than
+     * storing a gate that would drop every frame forever — a silent dead
+     * signal is the worst failure mode here. */
+    if (mux_bit_length &&
+        (mux_bit_length > 16 || mux_bit_start > 63 ||
+         mux_bit_start + mux_bit_length > 64)) {
+        ESP_LOGW(TAG, "signal '%s': bad mux geometry %u+%u — gate not set",
+                 sig->name, mux_bit_start, mux_bit_length);
+        return false;
+    }
+
+    sig->mux_bit_start  = mux_bit_length ? mux_bit_start : 0;
+    sig->mux_bit_length = mux_bit_length;
+    sig->mux_value      = mux_bit_length ? mux_value : 0;
+    return true;
+}
+
 int16_t signal_find_by_name(const char *name)
 {
     if (!s_signals || !name) return -1;
@@ -379,6 +404,22 @@ void signal_dispatch_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc)
          * arrives. Cleared via signal_set_test_lock(name, false) or on
          * layout reload. */
         if (sig->test_locked) continue;
+
+        /* Multiplex gate: this ECU cycles several payloads through one CAN
+         * ID and tags each with a frame index (Link Generic Dash: byte 0 on
+         * 0x3E8). Only the frame carrying our index describes our signal —
+         * every other one is a different quantity at the same bit offset, so
+         * decoding it would produce convincing garbage rather than an
+         * obvious failure. Skipped entirely for normal single-payload IDs. */
+        if (sig->mux_bit_length) {
+            uint8_t mux_end = (uint8_t)((sig->mux_bit_start +
+                                         sig->mux_bit_length - 1) / 8);
+            if (dlc <= mux_end) continue;
+            int64_t mux = can_extract_bits(data, sig->mux_bit_start,
+                                           sig->mux_bit_length,
+                                           sig->endian, false);
+            if ((uint16_t)mux != sig->mux_value) continue;
+        }
 
         /* Guard: ensure the frame carries enough bytes for this signal.
          * can_extract_bits uses the same formula internally, so this

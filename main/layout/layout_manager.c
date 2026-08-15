@@ -465,6 +465,21 @@ static void _load_signals(const cJSON *root) {
 		if (cJSON_IsNumber(item))
 			endian = (uint8_t)item->valueint;
 
+		/* Multiplexer gate — several payloads on one CAN id, told apart by a
+		 * frame index in the message (Link Generic Dash). Absent on every
+		 * layout written before this existed, which is exactly right: those
+		 * describe single-payload frames. Applied after registration below,
+		 * including the cleared form, so a registry slot reused by a
+		 * non-multiplexed layout can't inherit a stale gate. */
+		uint8_t  mux_start = 0, mux_len = 0;
+		uint16_t mux_val = 0;
+		item = cJSON_GetObjectItemCaseSensitive(sj, "mux_bit_start");
+		if (cJSON_IsNumber(item)) mux_start = (uint8_t)item->valueint;
+		item = cJSON_GetObjectItemCaseSensitive(sj, "mux_bit_length");
+		if (cJSON_IsNumber(item)) mux_len = (uint8_t)item->valueint;
+		item = cJSON_GetObjectItemCaseSensitive(sj, "mux_value");
+		if (cJSON_IsNumber(item)) mux_val = (uint16_t)item->valueint;
+
 		const cJSON *unit_item = cJSON_GetObjectItemCaseSensitive(sj, "unit");
 		const char *unit_str = (cJSON_IsString(unit_item) && unit_item->valuestring)
 			? unit_item->valuestring : "";
@@ -498,6 +513,7 @@ static void _load_signals(const cJSON *root) {
 			offset, is_signed, endian, unit_str, src_enum);
 
 		if (idx >= 0) {
+			signal_set_mux(idx, mux_start, mux_len, mux_val);
 			ESP_LOGD(TAG, "Registered signal '%s' → index %d",
 					 name_item->valuestring, (int)idx);
 		} else {

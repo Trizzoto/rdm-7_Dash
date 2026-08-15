@@ -18,7 +18,7 @@ LDFLAGS ?= -lm
 # the two drifted apart — test_obd2_pid_table and test_widget_warning_precedence
 # existed for a while but only ever ran on Windows. If you add a test, add it
 # here as well as writing the file.
-TESTS = test_can_decode test_widget_rules test_layout_migration test_widget_arc_precedence test_obd2_freeze_frame test_obd2_one_shot_decode test_obd2_pid_table test_ota_skip_version test_calculated_gear test_web_path_safety test_ecu_preset_match test_widget_fields test_widget_warning_precedence test_hardening_fixes test_meter_display_units test_arc_display_units test_widget_decimals_follow_channel test_track_map_geo test_meter_sweep_angles test_rdm_bus_proto
+TESTS = test_can_decode test_widget_rules test_layout_migration test_widget_arc_precedence test_obd2_freeze_frame test_obd2_one_shot_decode test_obd2_pid_table test_ota_skip_version test_calculated_gear test_web_path_safety test_ecu_preset_match test_widget_fields test_widget_warning_precedence test_hardening_fixes test_meter_display_units test_arc_display_units test_widget_decimals_follow_channel test_track_map_geo test_meter_sweep_angles test_rdm_bus_proto test_can_mux
 
 BIN_DIR := build
 BINS    := $(addprefix $(BIN_DIR)/, $(TESTS))
@@ -41,6 +41,15 @@ $(BIN_DIR):
 # that override this pattern.
 $(BIN_DIR)/%: %.c unity.c | $(BIN_DIR)
 	$(CC) $(CFLAGS) $< unity.c -o $@ $(LDFLAGS)
+
+# Mux test links the REAL preconfig catalogue (preset_picker_data.c, which is
+# host-compilable by ADR-0033 with the mocks/ lvgl shim) so it asserts the
+# shipped Link rows rather than a copy of them.
+$(BIN_DIR)/test_can_mux: test_can_mux.c unity.c \
+    ../../main/ui/settings/preset_picker_data.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -Imocks -I../../main -I../../main/ui/settings \
+	    test_can_mux.c unity.c ../../main/ui/settings/preset_picker_data.c \
+	    -o $@ $(LDFLAGS)
 
 # widget_rules pulls widget_rules.c (the firmware source) plus a vendored
 # cJSON, with the mocks/ stubs first on the include path so widget_types.h

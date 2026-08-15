@@ -102,6 +102,16 @@ int main(void) {
 		printf(",\"offset\":");     jn(it->value_offset);
 		printf(",\"decimals\":%d", (int)it->decimals);
 		printf(",\"is_signed\":%s", it->is_signed ? "true" : "false");
+		/* Multiplexed rows (Link Generic Dash) need their frame gate in the
+		 * baked catalogue too, or offline setup-from-zero would bind every
+		 * Link channel to the same id with no gate — the exact breakage the
+		 * on-device path was just fixed for. Emitted only when present so
+		 * every other preset's JSON is unchanged. */
+		if (it->mux_bit_length) {
+			printf(",\"mux_bit_start\":%d",  (int)it->mux_bit_start);
+			printf(",\"mux_bit_length\":%d", (int)it->mux_bit_length);
+			printf(",\"mux_value\":%d",      (int)it->mux_value);
+		}
 		putchar('}');
 	}
 	printf("]}\n");

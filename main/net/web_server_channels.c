@@ -169,6 +169,14 @@ static cJSON *channel_to_full_json(const channel_t *c) {
 			cJSON_AddNumberToObject(d, "offset", c->decode_offset);
 			cJSON_AddBoolToObject(d, "is_signed", c->is_signed);
 			cJSON_AddNumberToObject(d, "endian", c->endian);
+			/* Multiplexer gate — emitted only when the frame is multiplexed,
+			 * so a normal channel's decode block is byte-identical to what
+			 * every existing editor build already expects. */
+			if (c->mux_bit_length) {
+				cJSON_AddNumberToObject(d, "mux_bit_start", c->mux_bit_start);
+				cJSON_AddNumberToObject(d, "mux_bit_length", c->mux_bit_length);
+				cJSON_AddNumberToObject(d, "mux_value", c->mux_value);
+			}
 			cJSON_AddStringToObject(d, "unit", c->decode_unit);
 		}
 	}
@@ -518,6 +526,20 @@ static esp_err_t channels_create_handler(httpd_req_t *req) {
 		cJSON *jen   = cJSON_GetObjectItemCaseSensitive(jd, "endian");
 		cJSON *junit = cJSON_GetObjectItemCaseSensitive(jd, "unit");
 
+		/* Frame gate, when the source is a multiplexed one (Link). Set
+		 * before set_decode so the registry push carries it. */
+		cJSON *jml = cJSON_GetObjectItemCaseSensitive(jd, "mux_bit_length");
+		if (cJSON_IsNumber(jml) && jml->valueint > 0) {
+			cJSON *jms = cJSON_GetObjectItemCaseSensitive(jd, "mux_bit_start");
+			cJSON *jmv = cJSON_GetObjectItemCaseSensitive(jd, "mux_value");
+			channel_manager_set_mux(
+			    c,
+			    cJSON_IsNumber(jms) ? (uint8_t)jms->valueint : 0,
+			    (uint8_t)jml->valueint,
+			    cJSON_IsNumber(jmv) ? (uint16_t)jmv->valueint : 0,
+			    false);
+		}
+
 		channel_manager_set_decode(
 		    c,
 		    cJSON_IsNumber(jcan) ? (uint32_t)jcan->valuedouble : 0,
@@ -682,6 +704,21 @@ static bool apply_one_field(channel_t *c, const char *key, cJSON *val) {
 		if (cJSON_IsString(it) && it->valuestring) {
 			strncpy(unit, it->valuestring, sizeof(unit) - 1);
 			unit[sizeof(unit) - 1] = '\0';
+		}
+		/* Multiplexer gate. Absent keys leave the channel's existing gate
+		 * alone — an editor that predates mux (or just doesn't send the
+		 * fields) must not silently un-gate a Link channel and start feeding
+		 * it every frame on 0x3E8. Send mux_bit_length 0 to clear it. */
+		cJSON *jml = cJSON_GetObjectItemCaseSensitive(val, "mux_bit_length");
+		if (cJSON_IsNumber(jml)) {
+			uint8_t mux_start = c->mux_bit_start;
+			uint16_t mux_val  = c->mux_value;
+			it = cJSON_GetObjectItemCaseSensitive(val, "mux_bit_start");
+			if (cJSON_IsNumber(it)) mux_start = (uint8_t)it->valueint;
+			it = cJSON_GetObjectItemCaseSensitive(val, "mux_value");
+			if (cJSON_IsNumber(it)) mux_val = (uint16_t)it->valueint;
+			channel_manager_set_mux(c, mux_start, (uint8_t)jml->valueint,
+			                        mux_val, /* persist_now */ false);
 		}
 		return channel_manager_set_decode(c, can_id, bit_start, bit_length,
 		                                  scale, offset, is_signed, endian, unit,
@@ -1189,6 +1226,13 @@ static esp_err_t channels_source_options_handler(httpd_req_t *req) {
 		cJSON_AddBoolToObject  (o, "is_signed",   it->is_signed);
 		cJSON_AddNumberToObject(o, "endian",      it->endianess);
 		cJSON_AddNumberToObject(o, "decimals",    it->decimals);
+		/* Multiplexed source rows carry their frame gate so the web/desktop
+		 * bind path installs the same decode the device would. */
+		if (it->mux_bit_length) {
+			cJSON_AddNumberToObject(o, "mux_bit_start",  it->mux_bit_start);
+			cJSON_AddNumberToObject(o, "mux_bit_length", it->mux_bit_length);
+			cJSON_AddNumberToObject(o, "mux_value",      it->mux_value);
+		}
 		cJSON_AddBoolToObject  (o, "is_current",
 			strcmp(current_signal, sname) == 0 && current_src == SIGNAL_SOURCE_CAN);
 		/* Live value only when a CAN-sourced signal of this name is registered

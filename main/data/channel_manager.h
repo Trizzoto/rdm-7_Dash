@@ -82,6 +82,11 @@ struct channel {
 	float    decode_offset;
 	bool     is_signed;
 	uint8_t  endian;                 /* 0 = Motorola (big), 1 = Intel (little) */
+	/* Multiplexed frames — see signal_t. mux_bit_length == 0 (the default for
+	 * every non-multiplexed ECU) means the frame carries one fixed payload. */
+	uint8_t  mux_bit_start;
+	uint8_t  mux_bit_length;
+	uint16_t mux_value;
 	char     decode_unit[8];
 
 	/* Format */
@@ -249,6 +254,22 @@ bool channel_manager_set_zone_color(channel_t *c, channel_zone_t zone, uint32_t 
  * already flushed via set_signal — avoids a redundant per-channel full-file
  * rewrite under the LVGL lock).
  */
+/**
+ * Set (or clear) the channel's multiplexer gate — the frame-index field that
+ * says which of several payloads sharing one CAN ID this channel decodes from
+ * (Link Generic Dash: byte 0 on 0x3E8). Pass mux_bit_length 0 to clear.
+ *
+ * Call this BEFORE channel_manager_set_decode() on a bind path: set_decode is
+ * what pushes the channel into the signal registry, and it carries whatever
+ * gate the channel holds at that moment. Calling it after is also fine — the
+ * gate is re-pushed — it just costs a second registry write.
+ *
+ * Returns false on a NULL channel or geometry that won't fit an 8-byte frame.
+ */
+bool channel_manager_set_mux(channel_t *c, uint8_t mux_bit_start,
+                             uint8_t mux_bit_length, uint16_t mux_value,
+                             bool persist_now);
+
 bool channel_manager_set_decode(channel_t *c, uint32_t can_id,
                                 uint8_t bit_start, uint8_t bit_length,
                                 float scale, float offset, bool is_signed,

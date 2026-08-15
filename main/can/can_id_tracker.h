@@ -30,6 +30,15 @@ typedef struct {
     int64_t  first_seen_us;
     int64_t  last_seen_us;
 
+    /* Bitmap of byte-0 values seen on this ID, for values 0..15 (bit N set =
+     * a frame with byte 0 == N has arrived). Multiplexed ECUs cycle several
+     * payloads through one ID and tag each with a frame index there — Link's
+     * Generic Dash sends 14 of them on 0x3E8 — so ID presence alone tells
+     * auto-detect almost nothing about such a stream. This is what lets it
+     * score those frames individually. Values above 15 are not tracked: no
+     * catalogued stream uses them, and 16 bits keeps the entry small. */
+    uint16_t mux_seen;
+
     /* Hz sliding-window: recompute_hz() reads rx_count - rx_count_at_last_sample
      * over (now - last_sample_us). UI calls recompute_hz() once per second so
      * the displayed Hz is stable but the bytes refresh at the UI cadence. */

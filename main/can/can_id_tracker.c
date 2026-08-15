@@ -50,7 +50,13 @@ void can_id_tracker_record(uint32_t can_id, bool extended,
 
     can_id_entry_t *e = &s_entries[idx];
     e->dlc = dlc;
-    if (data && dlc > 0) memcpy(e->data, data, dlc);
+    if (data && dlc > 0) {
+        memcpy(e->data, data, dlc);
+        /* Remember which frame indices this ID has carried. The stored data[]
+         * only ever holds the LAST frame, so without this a multiplexed
+         * stream is indistinguishable from a single-payload one. */
+        if (data[0] < 16) e->mux_seen |= (uint16_t)(1u << data[0]);
+    }
     e->rx_count++;
     e->last_seen_us = now;
 }

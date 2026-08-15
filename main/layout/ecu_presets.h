@@ -75,6 +75,14 @@ typedef struct {
     const char *unit;      /* metric unit string, or "" */
     uint8_t  decimals;     /* display decimal places for panel/bar/text widgets */
     const char *value_map_csv;  /* optional "v=label,v=label,…" enum map */
+    /* Multiplexed frames — several payloads share one can_id and a frame
+     * index inside the message says which is which (Link Generic Dash: byte 0
+     * on 0x3E8). mux_bit_length 0 = not multiplexed, which is what every other
+     * preset leaves these at by omitting them. Kept in lockstep with the
+     * preconfig rows in preset_picker_data.c. */
+    uint8_t  mux_bit_start;
+    uint8_t  mux_bit_length;
+    uint16_t mux_value;
 } ecu_signal_row_t;
 
 typedef struct {

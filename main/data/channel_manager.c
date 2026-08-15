@@ -500,6 +500,9 @@ bool channel_manager_set_signal(channel_t *c, const char *signal_name) {
 		c->decode_offset = 0.0f;
 		c->is_signed = false;
 		c->endian = 1;
+		c->mux_bit_start = 0;
+		c->mux_bit_length = 0;
+		c->mux_value = 0;
 		c->decode_unit[0] = '\0';
 	}
 
@@ -899,6 +902,12 @@ static void _register_channel_decode(channel_t *c) {
 		c->decode_scale, c->decode_offset, c->is_signed, c->endian,
 		c->decode_unit[0] ? c->decode_unit : "", SIGNAL_SOURCE_CAN);
 	if (idx < 0) return;
+	/* Push the mux gate unconditionally — including the cleared form. The
+	 * registry slot is shared by name and re-registration keeps whatever gate
+	 * was there, so a slot previously claimed by a multiplexed ECU would keep
+	 * dropping every frame for a channel that has since been rebound to a
+	 * plain one. */
+	signal_set_mux(idx, c->mux_bit_start, c->mux_bit_length, c->mux_value);
 	/* Bind the channel's value callback to the slot. signal_subscribe does NOT
 	 * de-dupe, so only (re)subscribe when the index actually changed; on a
 	 * change drop the stale subscription first. */
@@ -926,6 +935,35 @@ void channel_manager_register_decoded_signals(void) {
 	 * on the same paths that restore CAN decodes so a reload never strands a
 	 * calculated channel without its registry entry. */
 	channel_math_register_signals();
+}
+
+bool channel_manager_set_mux(channel_t *c, uint8_t mux_bit_start,
+                             uint8_t mux_bit_length, uint16_t mux_value,
+                             bool persist_now) {
+	if (!c) return false;
+	if (mux_bit_length &&
+	    (mux_bit_length > 16 || mux_bit_start > 63 ||
+	     mux_bit_start + mux_bit_length > 64)) {
+		ESP_LOGW(TAG, "set_mux rejected: start=%u len=%u",
+		         mux_bit_start, mux_bit_length);
+		return false;
+	}
+	c->mux_bit_start  = mux_bit_length ? mux_bit_start : 0;
+	c->mux_bit_length = mux_bit_length;
+	c->mux_value      = mux_bit_length ? mux_value : 0;
+
+	/* Only meaningful once a decode exists; on a bind path set_decode runs
+	 * next and does the registry push itself. */
+	if (c->can_id != 0) _register_channel_decode(c);
+
+	chm_notify_listeners(c);
+	if (persist_now) {
+		s_dirty = true;
+		channel_manager_flush();
+	} else {
+		channel_manager_mark_dirty();
+	}
+	return true;
 }
 
 bool channel_manager_set_decode(channel_t *c, uint32_t can_id,
@@ -1254,6 +1292,14 @@ static cJSON *channel_to_json(const channel_t *c) {
 			cJSON_AddNumberToObject(d, "offset", c->decode_offset);
 			cJSON_AddBoolToObject(d, "is_signed", c->is_signed);
 			cJSON_AddNumberToObject(d, "endian", c->endian);
+			/* Defaults-only: a non-multiplexed channel (every ECU but Link)
+			 * emits nothing, so existing channels.json files round-trip
+			 * byte-identical. */
+			if (c->mux_bit_length) {
+				cJSON_AddNumberToObject(d, "mux_bit_start", c->mux_bit_start);
+				cJSON_AddNumberToObject(d, "mux_bit_length", c->mux_bit_length);
+				cJSON_AddNumberToObject(d, "mux_value", c->mux_value);
+			}
 			if (c->decode_unit[0] != '\0')
 				cJSON_AddStringToObject(d, "unit", c->decode_unit);
 		}
@@ -1359,6 +1405,12 @@ static bool channel_from_json(channel_t *c, cJSON *j) {
 		if (cJSON_IsBool(it)) c->is_signed = cJSON_IsTrue(it);
 		it = cJSON_GetObjectItemCaseSensitive(dec, "endian");
 		if (cJSON_IsNumber(it)) c->endian = (uint8_t)it->valueint;
+		it = cJSON_GetObjectItemCaseSensitive(dec, "mux_bit_start");
+		if (cJSON_IsNumber(it)) c->mux_bit_start = (uint8_t)it->valueint;
+		it = cJSON_GetObjectItemCaseSensitive(dec, "mux_bit_length");
+		if (cJSON_IsNumber(it)) c->mux_bit_length = (uint8_t)it->valueint;
+		it = cJSON_GetObjectItemCaseSensitive(dec, "mux_value");
+		if (cJSON_IsNumber(it)) c->mux_value = (uint16_t)it->valueint;
 		it = cJSON_GetObjectItemCaseSensitive(dec, "unit");
 		if (cJSON_IsString(it) && it->valuestring)
 			safe_strcpy(c->decode_unit, it->valuestring, sizeof(c->decode_unit));

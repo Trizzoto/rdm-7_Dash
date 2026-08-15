@@ -131,6 +131,13 @@ esp_err_t channel_apply_preconfig(channel_t *c, const preconfig_item_t *item) {
     channel_manager_set_signal(c, signal_name);
     {
         uint32_t can_id = (uint32_t)strtol(item->can_id, NULL, 16);
+        /* Mux gate first: set_decode is what pushes the channel into the
+         * signal registry and it carries whatever gate the channel holds at
+         * that moment. Always set it, including the cleared form, so
+         * rebinding a channel off a multiplexed ECU (Link) onto a plain one
+         * doesn't leave a gate that drops every frame. */
+        channel_manager_set_mux(c, item->mux_bit_start, item->mux_bit_length,
+                                item->mux_value, false);
         /* persist_now=false: channel_manager_set_signal() above already flushed
          * channels.json synchronously — avoid a redundant second full-file
          * write; the decode rides the debounced save. */

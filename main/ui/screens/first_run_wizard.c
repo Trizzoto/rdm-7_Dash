@@ -184,27 +184,40 @@ static lv_obj_t  *s_detail_decimals_lbl   = NULL;
 static lv_obj_t  *s_detail_warn_lbl       = NULL;
 static lv_obj_t  *s_detail_source_lbl     = NULL;
 
-/* Step 2: ECU auto-detect — match seen CAN IDs against the preconfig
- * catalog, scored by (matched IDs) / (total IDs for that ECU). The top
+/* Step 2: ECU auto-detect — match seen CAN frames against the preconfig
+ * catalog, scored by (matched frames) / (total frames for that ECU). A frame
+ * is (can_id, mux_value): for the usual single-payload ECU that is just its
+ * id, but a multiplexed one puts every payload on one id and tags each with a
+ * frame index, so ids alone can't measure how much of it is present. The top
  * (ECU, version) wins and is offered to the user with a "Use this" CTA.
  * Per-(ECU, version) state lives in s_ecu_matches; UI handles live in
  * s_step_ecu_*. */
 #define WIZ_ECU_MAX           16
-/* Auto-pick floor — *absolute* matched IDs rather than percentage.
+/* Auto-pick floor — *absolute* matched frames rather than percentage.
  * Percentage-floor gating drops superset presets whose extra IDs aren't
  * all broadcast: MaxxECU 1.3 covers 21 IDs but a real 1.3 unit might
  * only emit 5 of them (5/21 = 24%); the narrower 1.2 preset with the
  * same 5 IDs hits 5/12 = 42%, so a pct-floor at 30% kills 1.3 before
  * the matched-count tiebreaker can run.
  *
- * Three distinct 11-bit IDs as the gate is statistically robust (CAN
+ * Three distinct 11-bit frames as the gate is statistically robust (CAN
  * ID coincidence ≈ (tracked_n/2048)^3 — under 1e-6 for typical bus
- * snapshots) and lets the tiered (matched, pct, total) comparator
- * decide the winner. WIZ_ECU_MATCH_PCT_MIN stays defined for the
- * picker chip's "strong vs weak" colouring. */
+ * snapshots; a multiplexed preset additionally needs three specific frame
+ * indices on that id, which is stricter still) and lets the tiered
+ * (matched, pct, total) comparator decide the winner.
+ * WIZ_ECU_MATCH_PCT_MIN stays defined for the picker chip's
+ * "strong vs weak" colouring. */
 #define WIZ_ECU_MIN_MATCHED    3
 #define WIZ_ECU_MATCH_PCT_MIN 30   /* Picker chip colour threshold */
 #define WIZ_ECU_PROBE_MS      4500 /* Long enough for slow 1 Hz broadcasters */
+
+/* One distinct frame a preset expects on the bus. mux_len == 0 means the id
+ * carries a single fixed payload, in which case mux_val is meaningless. */
+typedef struct {
+    uint32_t can_id;
+    uint8_t  mux_len;
+    uint16_t mux_val;
+} wiz_frame_t;
 
 typedef struct {
     char    ecu[24];
@@ -873,35 +886,62 @@ static void _compute_ecu_matches(void) {
         }
     }
 
-    /* Pass 2: for each pair, collect its distinct CAN IDs, then check
-     * how many are present in the live tracker. */
+    /* Pass 2: for each pair, collect the distinct FRAMES it expects, then
+     * check how many are present in the live tracker.
+     *
+     * A "frame" is (can_id, mux_value) rather than just can_id, because a
+     * multiplexed ECU puts its whole stream on one id and distinguishes the
+     * payloads by a frame index inside the message. Scoring such a preset by
+     * id alone caps it at 1 match no matter how much of its data is on the
+     * bus, which is exactly why a Link never got detected. For every
+     * non-multiplexed preset a frame IS its id, so the scores are unchanged. */
     uint16_t tracker_n = can_id_tracker_count();
     for (uint8_t j = 0; j < s_ecu_match_count; j++) {
         wiz_ecu_match_t *m = &s_ecu_matches[j];
-        uint32_t ids[48] = {0};
-        uint8_t ids_n = 0;
+        wiz_frame_t frames[48];
+        uint8_t frames_n = 0;
         for (int i = 0; i < preconfig_items_count; i++) {
             const preconfig_item_t *it = &preconfig_items[i];
             if (!it->ecu || !it->version || !it->can_id) continue;
             if (it->obd2_pid) continue;
             if (strcmp(it->ecu, m->ecu) != 0) continue;
             if (strcmp(it->version, m->version) != 0) continue;
-            uint32_t cid = (uint32_t)strtol(it->can_id, NULL, 16);
+            wiz_frame_t f = {
+                .can_id  = (uint32_t)strtol(it->can_id, NULL, 16),
+                .mux_len = it->mux_bit_length,
+                .mux_val = it->mux_value,
+            };
             bool dup = false;
-            for (uint8_t k = 0; k < ids_n; k++) {
-                if (ids[k] == cid) { dup = true; break; }
+            for (uint8_t k = 0; k < frames_n; k++) {
+                if (frames[k].can_id == f.can_id &&
+                    frames[k].mux_len == f.mux_len &&
+                    frames[k].mux_val == f.mux_val) { dup = true; break; }
             }
-            if (!dup && ids_n < 48) ids[ids_n++] = cid;
+            if (!dup && frames_n < 48) frames[frames_n++] = f;
         }
-        m->total = ids_n;
+        m->total = frames_n;
         m->matched = 0;
-        for (uint8_t i = 0; i < ids_n; i++) {
+        for (uint8_t i = 0; i < frames_n; i++) {
             for (uint16_t t = 0; t < tracker_n; t++) {
                 const can_id_entry_t *e = can_id_tracker_get(t);
-                if (e && e->can_id == ids[i]) {
-                    m->matched++;
-                    break;
+                /* Extended flag is part of a frame's identity: an 11-bit
+                 * 0x3E8 and a 29-bit 0x3E8 are different frames from
+                 * different devices. Every catalogued preset is 11-bit, so
+                 * comparing the id alone let a 29-bit bus score matches it
+                 * had not earned. */
+                if (!e || e->can_id != frames[i].can_id || e->extended) continue;
+                /* Multiplexed: the id being present proves nothing — require
+                 * that this specific frame index has actually been seen. The
+                 * tracker only records indices 0-15, so a higher one can't be
+                 * confirmed and doesn't count (rather than being masked down
+                 * into a false match). */
+                if (frames[i].mux_len) {
+                    if (frames[i].mux_val > 15) continue;
+                    if (!(e->mux_seen & (uint16_t)(1u << frames[i].mux_val)))
+                        continue;
                 }
+                m->matched++;
+                break;
             }
         }
     }
@@ -1040,7 +1080,10 @@ static bool _wiz_ensure_channel_for_signal(const char *sname,
                                            uint32_t can_id, uint8_t bit_start,
                                            uint8_t bit_length, float scale,
                                            float offset, bool is_signed,
-                                           uint8_t endian) {
+                                           uint8_t endian,
+                                           uint8_t mux_bit_start,
+                                           uint8_t mux_bit_length,
+                                           uint16_t mux_value) {
     if (!sname || !sname[0]) return false;
 
     const canonical_channel_def_t *def = NULL;
@@ -1085,6 +1128,7 @@ static bool _wiz_ensure_channel_for_signal(const char *sname,
      * wins" misalignment the ADR fixes) when the user re-runs the wizard with a
      * different ECU. persist_now=false: set_signal already flushed; the bulk
      * apply does one explicit flush after the loop. */
+    channel_manager_set_mux(ch, mux_bit_start, mux_bit_length, mux_value, false);
     channel_manager_set_decode(ch, can_id, bit_start, bit_length, scale, offset,
                                is_signed, endian, NULL, false);
     return true;
@@ -1209,11 +1253,18 @@ int first_run_wizard_apply_ecu(const char *ecu, const char *version,
                 s->last_update_ms = 0;
             }
         } else {
-            signal_register(sname, cid,
+            idx = signal_register(sname, cid,
                 it->bit_start, it->bit_length,
                 it->scale, it->value_offset,
                 it->is_signed, it->endianess, "");
         }
+        /* Multiplexed ECUs (Link Generic Dash) put every payload on one id and
+         * pick between them with a frame index inside the message. Set the
+         * gate on both paths — including the cleared form for normal presets,
+         * so a slot previously claimed by a Link doesn't keep dropping frames
+         * after the user re-runs the wizard for a different ECU. */
+        signal_set_mux(idx, it->mux_bit_start, it->mux_bit_length,
+                       it->mux_value);
 
         /* Guarantee this signal has a channel — canonical where it maps,
          * custom otherwise. This both activates canonical channels the preset
@@ -1222,7 +1273,9 @@ int first_run_wizard_apply_ecu(const char *ecu, const char *version,
         _wiz_ensure_channel_for_signal(sname, it->label, it->decimals,
                                        cid, it->bit_start, it->bit_length,
                                        it->scale, it->value_offset,
-                                       it->is_signed, it->endianess);
+                                       it->is_signed, it->endianess,
+                                       it->mux_bit_start, it->mux_bit_length,
+                                       it->mux_value);
 
         applied++;
     }
@@ -1637,10 +1690,46 @@ static void _render_ecu_result(void) {
         lv_obj_set_style_text_font(head, THEME_FONT_MEDIUM, 0);
         lv_obj_set_style_text_color(head, THEME_COLOR_TEXT_PRIMARY, 0);
 
+        /* Say what we actually heard. A bare "nothing matched" sends the user
+         * hunting through Device Settings for the CAN list to find out
+         * whether the problem is the wiring, the bitrate or the catalogue —
+         * the IDs and the closest preset answer that on the spot, and are
+         * what a support conversation asks for first. */
+        char heard[192];
+        int hn = snprintf(heard, sizeof(heard),
+            "Nothing on the bus matched the preset catalog.\n");
+        uint16_t seen = can_id_tracker_count();
+        if (seen == 0) {
+            hn += snprintf(heard + hn, sizeof(heard) - hn,
+                           "No CAN frames were heard at all — check wiring,\n"
+                           "ignition and bitrate.");
+        } else {
+            hn += snprintf(heard + hn, sizeof(heard) - hn, "Heard %u ID%s:",
+                           (unsigned)seen, seen == 1 ? "" : "s");
+            for (uint16_t i = 0; i < seen && i < 6 && hn < (int)sizeof(heard) - 12; i++) {
+                const can_id_entry_t *e = can_id_tracker_get(i);
+                if (!e) break;
+                hn += snprintf(heard + hn, sizeof(heard) - hn, " 0x%lX",
+                               (unsigned long)e->can_id);
+            }
+            if (seen > 6) hn += snprintf(heard + hn, sizeof(heard) - hn, " ...");
+            /* Best partial match, even though it fell under the floor — "Link
+             * ECU 1/14" tells the user (and us) far more than silence. */
+            uint8_t best = 0; const wiz_ecu_match_t *bm = NULL;
+            for (uint8_t j = 0; j < s_ecu_match_count; j++) {
+                if (s_ecu_matches[j].matched > best) {
+                    best = s_ecu_matches[j].matched; bm = &s_ecu_matches[j];
+                }
+            }
+            if (bm) {
+                snprintf(heard + hn, sizeof(heard) - hn,
+                         "\nClosest: %s %s (%u/%u frames)",
+                         bm->ecu, bm->version, bm->matched, bm->total);
+            }
+        }
+
         lv_obj_t *sub = lv_label_create(s_ecu_result_card);
-        lv_label_set_text(sub,
-            "Nothing on the bus matched the preset catalog. You can\n"
-            "pick one manually, or skip and configure later.");
+        lv_label_set_text(sub, heard);
         lv_obj_align(sub, LV_ALIGN_TOP_LEFT, 0, 28);
         lv_obj_set_style_text_font(sub, THEME_FONT_TINY, 0);
         lv_obj_set_style_text_color(sub, THEME_COLOR_TEXT_MUTED, 0);

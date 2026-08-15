@@ -111,7 +111,8 @@
             "image_picker",
             "can_id",
             "gradient_stops",
-            "anim_frames"
+            "anim_frames",
+            "track_picker"
           ]
         },
         "default": {

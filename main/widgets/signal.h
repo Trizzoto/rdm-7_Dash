@@ -117,6 +117,18 @@ typedef struct {
     uint8_t  endian;          /* 0 = Motorola (big), 1 = Intel (little) */
     uint8_t  source;          /* signal_source_t — provenance, NOT decoder */
 
+    /* Multiplexed frames. Some ECUs cycle several different payloads through
+     * ONE CAN ID and put a frame index in the message itself — Link's Generic
+     * Dash is 13 payloads on 0x3E8 selected by byte 0. Without this, every
+     * signal on that ID decodes from every frame and reads garbage.
+     *
+     * mux_bit_length == 0 means "this frame is not multiplexed" (the default,
+     * and what every non-Link preset uses), so a calloc'd signal decodes
+     * exactly as it did before this field existed. */
+    uint8_t  mux_bit_start;
+    uint8_t  mux_bit_length;
+    uint16_t mux_value;
+
     char     unit[8];           /* Display unit (e.g., "kPa", "°C") */
 
     /* Optional value→label map. NULL/empty = numeric display. */
@@ -189,6 +201,23 @@ int16_t signal_register_with_source(const char *name, uint32_t can_id,
                                     bool is_signed, uint8_t endian,
                                     const char *unit,
                                     signal_source_t source);
+
+/**
+ * Set (or clear) a signal's multiplexer gate.
+ *
+ * Kept separate from signal_register* so the registration signature — and its
+ * dozen-odd call sites — stay untouched: only the handful of paths that know
+ * about multiplexed ECUs need to say anything about mux.
+ *
+ * Pass len == 0 to clear the gate (frame is not multiplexed). Callers that
+ * re-register a signal should always follow with this call, including the
+ * clearing form, so a slot reused by a non-multiplexed layout can't inherit a
+ * stale gate and silently stop decoding.
+ *
+ * @return true if the index was valid.
+ */
+bool signal_set_mux(int16_t signal_index, uint8_t mux_bit_start,
+                    uint8_t mux_bit_length, uint16_t mux_value);
 
 /**
  * Look up a signal by name.

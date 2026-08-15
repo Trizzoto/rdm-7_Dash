@@ -31,6 +31,16 @@ typedef struct {
      * 0 → treated as Mode 01 for back-compat. Pairs with obd2_pid so
      * the apply path can disambiguate same-byte PIDs across services. */
     uint8_t obd2_service;
+    /* Multiplexed frames. Some ECUs cycle several payloads through ONE CAN ID
+     * and tag each with a frame index inside the message — Link's Generic Dash
+     * puts 13+ payloads on 0x3E8 selected by byte 0. Rows for such an ECU all
+     * share one can_id and differ by mux_value.
+     *
+     * mux_bit_length == 0 means "not multiplexed", which is what every other
+     * preset in the catalogue leaves these at by omitting them entirely. */
+    uint8_t mux_bit_start;
+    uint8_t mux_bit_length;
+    uint16_t mux_value;
 } preconfig_item_t;
 
 /* NULL-terminated array of preset CAN signal definitions */
