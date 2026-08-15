@@ -328,6 +328,24 @@ static esp_err_t _selftest_handler(httpd_req_t *req) {
 	cJSON_AddNumberToObject(heap, "psram_largest_free",
 	                        (double)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
 
+	/* INTERNAL and DMA-capable RAM, reported separately because they are the
+	 * numbers that actually run out. "free" above counts PSRAM too, so it sits
+	 * near 3 MB and looks healthy while internal RAM is nearly gone — which is
+	 * exactly how a TLS failure ("esp-aes: Failed to allocate memory", the
+	 * hardware AES driver unable to get a DMA buffer) hid behind a green
+	 * self-test. Watch internal_largest_free: TLS needs a contiguous block,
+	 * so fragmentation bites before the total does. */
+	cJSON_AddNumberToObject(heap, "internal_free",
+	                        (double)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+	cJSON_AddNumberToObject(heap, "internal_largest_free",
+	                        (double)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+	cJSON_AddNumberToObject(heap, "internal_min_free",
+	                        (double)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
+	cJSON_AddNumberToObject(heap, "dma_free",
+	                        (double)heap_caps_get_free_size(MALLOC_CAP_DMA));
+	cJSON_AddNumberToObject(heap, "dma_largest_free",
+	                        (double)heap_caps_get_largest_free_block(MALLOC_CAP_DMA));
+
 	/* Registry / signals / fonts under the LVGL lock; the acquire time doubles
 	 * as a responsiveness probe. */
 	int64_t t0 = esp_timer_get_time();

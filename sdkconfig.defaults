@@ -39,6 +39,30 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 # extra internal heap. SPIRAM_TRY_ALLOCATE_WIFI_LWIP covers higher layers.
 CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6
 
+# TLS — SOFTWARE AES, deliberately, because the hardware engine cannot reach
+# the buffers we give it. MBEDTLS_EXTERNAL_MEM_ALLOC puts TLS buffers in PSRAM
+# (the only way they fit), but the S3's AES DMA engine can't read PSRAM, so
+# esp_aes falls back to bounce-buffering each record through a heap_caps_malloc
+# of DMA-capable INTERNAL RAM sized to MBEDTLS_SSL_IN_CONTENT_LEN (16 KB).
+# This board runs with ~7 KB of internal RAM free, so that allocation fails and
+# the handshake dies immediately after the certificate validates:
+#
+#     esp-x509-crt-bundle: Certificate validated
+#     esp-aes: Failed to allocate memory
+#     esp-tls-mbedtls: read error :-0x0001:
+#
+# Measured 2026-08-15: the update check failed 0/6 on one build and 1/7 on
+# another while an older image passed 4/4 — the odds simply track whatever
+# internal RAM happens to be free, which is why it read as a flaky network.
+# It is the same starvation behind the old "OTA download dies at 1%" bug,
+# where a second concurrent TLS context was the thing that didn't fit.
+#
+# Software AES needs no DMA buffer and works on PSRAM directly. The cost is
+# throughput on a 3 MB download that already takes minutes over WiFi, against
+# an update path that otherwise needs a USB cable to recover. Revisit only if
+# internal RAM headroom grows by tens of KB.
+CONFIG_MBEDTLS_HARDWARE_AES=n
+
 # FPS: bounce buffer was TRIED 2026-06-09 and ABANDONED — it crashed on-device
 # (abort() on core 1 mid-render with single-FB+bounce) AND the flush instrumentation
 # showed NO improvement (~7.7 ms/frame at 21% dirty, same as the DOUBLE_FB baseline:

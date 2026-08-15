@@ -26,9 +26,6 @@ typedef struct {
     uint8_t  data[8];
     uint8_t  dlc;
     bool     extended;
-    uint32_t rx_count;
-    int64_t  first_seen_us;
-    int64_t  last_seen_us;
 
     /* Bitmap of byte-0 values seen on this ID, for values 0..15 (bit N set =
      * a frame with byte 0 == N has arrived). Multiplexed ECUs cycle several
@@ -36,8 +33,19 @@ typedef struct {
      * Generic Dash sends 14 of them on 0x3E8 — so ID presence alone tells
      * auto-detect almost nothing about such a stream. This is what lets it
      * score those frames individually. Values above 15 are not tracked: no
-     * catalogued stream uses them, and 16 bits keeps the entry small. */
+     * catalogued stream uses them, and 16 bits keeps the entry small.
+     *
+     * Deliberately placed here, in the two bytes of padding that already sat
+     * between `extended` and `rx_count`: this table is 64 entries of static
+     * INTERNAL .bss, and internal RAM on this board is scarce enough that
+     * TLS fails when it runs short (see the OTA notes in docs/). Sitting in
+     * the hole costs nothing; below `last_seen_us` it would have grown the
+     * struct by 8 bytes each, 512 in total. */
     uint16_t mux_seen;
+
+    uint32_t rx_count;
+    int64_t  first_seen_us;
+    int64_t  last_seen_us;
 
     /* Hz sliding-window: recompute_hz() reads rx_count - rx_count_at_last_sample
      * over (now - last_sample_us). UI calls recompute_hz() once per second so
