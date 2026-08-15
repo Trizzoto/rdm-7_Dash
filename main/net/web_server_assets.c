@@ -1231,7 +1231,13 @@ static esp_err_t track_upload_handler(httpd_req_t *req) {
 		uint32_t rev = 0;
 		if (httpd_query_key_value(query, "rev", revs, sizeof(revs)) == ESP_OK)
 			rev = (uint32_t)strtoul(revs, NULL, 10);
-		if (rev == 0) rev = rdm_bus_local_rev() + 1;
+		/* Strictly greater, always. Studio stamps minutes-since-2020 for a
+		 * global ordering, but two pushes inside one minute tie — and a tie
+		 * is invisible to the peer, which only moves on "newer". Bumping
+		 * anything not already ahead means time orders across devices while
+		 * the device guarantees each push actually counts as a change. */
+		uint32_t cur = rdm_bus_local_rev();
+		if (rev <= cur) rev = cur + 1;
 		rdm_bus_set_local_track(name, rev);
 	}
 
@@ -1360,6 +1366,10 @@ static esp_err_t track_delete_handler(httpd_req_t *req) {
 	}
 	char path[96];
 	snprintf(path, sizeof(path), "%s/%s.rdmtrk", LFS_TRACK_DIR, name);
+	/* Stop the bus advertising a circuit this dash no longer holds — it would
+	 * otherwise offer a peer a file it cannot serve. The revision is kept, so
+	 * the peer's copy does not immediately read as newer and push it back. */
+	rdm_bus_forget_local_track(name);
 	if (remove(path) != 0) {
 		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Track not found");
 		return ESP_FAIL;

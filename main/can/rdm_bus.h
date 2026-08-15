@@ -54,6 +54,10 @@ bool rdm_bus_peer_info(uint16_t *base_out, uint32_t *rev_out, uint32_t *age_ms_o
 const char *rdm_bus_state_str(void);
 const char *rdm_bus_local_track(void);
 
+/* Stop advertising a track that has just been deleted. Keeps the revision, so
+ * the peer's copy does not immediately count as newer and come back. */
+void rdm_bus_forget_local_track(const char *name);
+
 #ifdef __cplusplus
 }
 #endif

@@ -39,7 +39,8 @@
 static const char *TAG = "rdm_bus";
 
 #define BUS_TICK_MS            200u    /* announce every 5th tick = 1 Hz */
-#define BUS_ANNOUNCE_EVERY     5u
+#define BUS_ANNOUNCE_EVERY     5u      /* 1 Hz once something is out there */
+#define BUS_ANNOUNCE_EVERY_QUIET 150u  /* 30 s while nothing has ever answered */
 #define BUS_PEER_STALE_MS      5000u
 #define BUS_FRAMES_PER_TICK    24u     /* ~120 frames/s: a 3.2 KB outline in
                                         * ~4.5 s, and never a burst */
@@ -322,8 +323,12 @@ static void _announce(void) {
         .devtype   = RDM_BUS_DEV_DASH,
         .proto_ver = RDM_BUS_PROTO_VERSION,
         .base_id   = s_base,
+        /* Keyed on actually HOLDING a file, not on the revision. The two
+         * came apart the moment a track was deleted: the revision is the sync
+         * watermark and has to stay put, or the peer instantly looks newer
+         * and pushes the circuit straight back — deleting would not stick. */
         .caps      = RDM_BUS_CAP_WANTS_OUTLINE |
-                     (s_track_rev ? (RDM_BUS_CAP_HAS_OUTLINE | RDM_BUS_CAP_CAN_SEND) : 0),
+                     (s_track_name[0] ? (RDM_BUS_CAP_HAS_OUTLINE | RDM_BUS_CAP_CAN_SEND) : 0),
         .track_rev = s_track_rev,
     };
     uint8_t f[8];
@@ -349,7 +354,15 @@ static void _tick(lv_timer_t *t) {
     (void)t;
     s_tick++;
 
-    if ((s_tick % BUS_ANNOUNCE_EVERY) == 0) {
+    /* Announce rate backs off on a bus that has never said anything. A dash
+     * wired to nothing (a bench, or a single-device install) has no other node
+     * to ACK its frames, so every announce fails and retries — the bench dash
+     * reached 17.8 million bus errors in a minute doing exactly this. One
+     * received frame, from anything, is proof there is somebody out there and
+     * puts it straight back to 1 Hz. */
+    bool bus_is_alive = (can_get_rx_frame_count() > 0);
+    uint32_t every = bus_is_alive ? BUS_ANNOUNCE_EVERY : BUS_ANNOUNCE_EVERY_QUIET;
+    if ((s_tick % every) == 0) {
         _announce();
         _reconcile();
     }
@@ -412,6 +425,21 @@ const char *rdm_bus_state_str(void) {
 }
 
 const char *rdm_bus_local_track(void) { return s_track_name; }
+
+void rdm_bus_forget_local_track(const char *name) {
+    /* Only forget the one that was actually deleted. Deleting some other
+     * circuit must not stop us advertising the one we still hold. */
+    if (!name || s_track_name[0] == '\0') return;
+    if (strcmp(name, s_track_name) != 0) return;
+
+    /* Name goes, revision STAYS. The revision is the high-water mark of what
+     * this dash has seen, so holding it means the peer's copy is not "newer"
+     * and does not come flooding back the instant it is deleted. Pushing a
+     * new track from Studio bumps the revision and starts things moving
+     * again, which is the only place a delete should be undone. */
+    s_track_name[0] = '\0';
+    config_store_save_bus_track(s_track_name, s_track_rev);
+}
 
 void rdm_bus_set_base(uint16_t base) {
     if (base > 0x7F0u || (base & 0x0Fu)) return;
