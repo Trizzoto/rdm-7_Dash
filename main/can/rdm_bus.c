@@ -28,6 +28,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "lvgl.h"
+#include "ui/lvgl_helpers.h"
 
 #include <dirent.h>
 #include <stdio.h>
@@ -402,6 +403,16 @@ void rdm_bus_set_local_track(const char *name, uint32_t rev) {
 
 uint32_t rdm_bus_local_rev(void) { return s_track_rev; }
 
+const char *rdm_bus_state_str(void) {
+    switch (s_state) {
+    case ST_RECEIVING: return "receiving";
+    case ST_SENDING:   return "sending";
+    default:           return "idle";
+    }
+}
+
+const char *rdm_bus_local_track(void) { return s_track_name; }
+
 void rdm_bus_set_base(uint16_t base) {
     if (base > 0x7F0u || (base & 0x0Fu)) return;
     s_base = base;
@@ -427,7 +438,20 @@ void rdm_bus_init(void) {
     config_store_load_bus_track(s_track_name, sizeof(s_track_name), &rev);
     s_track_rev = rev & RDM_BUS_TRACK_REV_MAX;
 
-    if (!s_timer) s_timer = lv_timer_create(_tick, BUS_TICK_MS, NULL);
+    /* The LVGL task is already running lv_timer_handler() on the other core
+     * and lv_timer_create() mutates the shared global timer list, so this must
+     * hold the lock — the same reason the WiFi-on-boot timer in main.c does.
+     * Calling it before lv_init() panicked the whole dash on boot and the
+     * bootloader rolled the image back, which reads as "the flash didn't take"
+     * rather than as a crash. */
+    if (!s_timer) {
+        if (rdm_lvgl_lock(-1)) {
+            s_timer = lv_timer_create(_tick, BUS_TICK_MS, NULL);
+            rdm_lvgl_unlock();
+        } else {
+            ESP_LOGE(TAG, "could not take the LVGL lock — bus timer not started");
+        }
+    }
     ESP_LOGI(TAG, "bus up: base 0x%03X, discovery 0x%03X, track '%s' rev %lu",
              s_base, RDM_BUS_DISCOVERY_ID, s_track_name, (unsigned long)s_track_rev);
 }

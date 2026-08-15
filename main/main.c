@@ -843,11 +843,6 @@ void app_main(void) {
     ESP_LOGW(TAG, "lap_engine_init reported non-OK — lap timing unavailable");
   }
 
-  /* Device bus: announce this dash on the fixed discovery id and reconcile
-   * track outlines with whatever else is on the wire. Inert on a bench with
-   * nothing to talk to — it announces at 1 Hz and nobody answers. */
-  rdm_bus_init();
-
   // EARLY CAN DRIVER INITIALIZATION - Initialize CAN driver early but task
   // comes later
   ESP_LOGI(TAG, "Early CAN driver initialization for fast startup...");
@@ -1402,6 +1397,14 @@ void app_main(void) {
     /* Do NOT mark first_run_done here — the wizard does that on dismissal
      */
   }
+
+  /* Device bus: announce this dash on the fixed discovery id and reconcile
+   * track outlines with whatever else is on the wire. Inert on a bench with
+   * nothing to talk to — it announces at 1 Hz and nobody answers.
+   *
+   * Deliberately down here, AFTER lv_init() and the LVGL task: it owns an
+   * LVGL timer, and creating one before LVGL exists panics on boot. */
+  rdm_bus_init();
 
   if (boot_cfg.wifi_on_boot) {
     ESP_LOGI(TAG, "WiFi-on-boot enabled, starting WiFi after 4s delay...");

@@ -11,6 +11,8 @@
  */
 #include "web_server_internal.h"
 #include "cJSON.h"
+#include "can/rdm_bus.h"
+#include "can/rdm_bus_proto.h"
 #include "can/can_manager.h"
 #include "can/can_bus_test.h"
 #include "can/can_id_tracker.h"
@@ -289,6 +291,30 @@ static esp_err_t _selftest_handler(httpd_req_t *req) {
 	cJSON_AddNumberToObject(can, "bus_errors", bus_err);
 	cJSON_AddNumberToObject(can, "rx_errors", rx_err);
 	cJSON_AddNumberToObject(can, "rx_frames", can_get_rx_frame_count());
+
+	/* RDM device bus: is anything else out there, and are we in step with it.
+	 * A pairing that silently never happens looks exactly like one that works
+	 * until someone goes looking for the track, so this says plainly whether a
+	 * peer has been heard, where, and whose revision is ahead. */
+	cJSON *bus = cJSON_AddObjectToObject(root, "bus");
+	cJSON_AddNumberToObject(bus, "discovery_id", RDM_BUS_DISCOVERY_ID);
+	cJSON_AddNumberToObject(bus, "base", rdm_bus_get_base());
+	cJSON_AddStringToObject(bus, "state", rdm_bus_state_str());
+	cJSON_AddStringToObject(bus, "track", rdm_bus_local_track());
+	cJSON_AddNumberToObject(bus, "rev", rdm_bus_local_rev());
+	uint16_t pbase = 0; uint32_t prev = 0, page = 0;
+	if (rdm_bus_peer_info(&pbase, &prev, &page)) {
+		cJSON_AddBoolToObject(bus, "peer_seen", true);
+		cJSON_AddNumberToObject(bus, "peer_base", pbase);
+		cJSON_AddNumberToObject(bus, "peer_rev", prev);
+		cJSON_AddNumberToObject(bus, "peer_age_ms", page);
+		cJSON_AddStringToObject(bus, "sync",
+		                        prev == rdm_bus_local_rev() ? "in-sync"
+		                        : (prev > rdm_bus_local_rev() ? "peer-ahead"
+		                                                      : "dash-ahead"));
+	} else {
+		cJSON_AddBoolToObject(bus, "peer_seen", false);
+	}
 
 	/* Heap. */
 	cJSON *heap = cJSON_AddObjectToObject(root, "heap");

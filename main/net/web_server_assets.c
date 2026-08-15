@@ -17,6 +17,7 @@
 #include "web_server_internal.h"
 #include "sd_file_ops.h"
 #include "cJSON.h"
+#include "can/rdm_bus.h"
 #include "esp_heap_caps.h"
 #include "esp_littlefs.h"
 #include "storage/sd_manager.h"
@@ -1216,6 +1217,24 @@ static esp_err_t track_upload_handler(httpd_req_t *req) {
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 	char resp[192];
+	/* Tell the device bus what this dash now holds. Without this a track
+	 * pushed over WiFi is invisible on CAN — the dash keeps announcing rev 0,
+	 * the puck never sees anything newer, and "push to whichever device you can
+	 * reach" quietly only works in one direction.
+	 *
+	 * `rev` is Studio's stamp and decides who wins. When it is absent (a plain
+	 * curl, or an older Studio) the revision still has to move forward or the
+	 * peer would ignore the new track as not-newer, so fall back to bumping
+	 * what we had. */
+	{
+		char revs[16] = {0};
+		uint32_t rev = 0;
+		if (httpd_query_key_value(query, "rev", revs, sizeof(revs)) == ESP_OK)
+			rev = (uint32_t)strtoul(revs, NULL, 10);
+		if (rev == 0) rev = rdm_bus_local_rev() + 1;
+		rdm_bus_set_local_track(name, rev);
+	}
+
 	snprintf(resp, sizeof(resp),
 	         "{\"status\":\"ok\",\"name\":\"%s\",\"points\":%u,\"bytes\":%u}",
 	         name, (unsigned)parsed.n_points, (unsigned)received);

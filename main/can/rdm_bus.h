@@ -48,6 +48,12 @@ uint16_t rdm_bus_get_base(void);
  * what does it hold. Returns false when nothing has announced. */
 bool rdm_bus_peer_info(uint16_t *base_out, uint32_t *rev_out, uint32_t *age_ms_out);
 
+/* What this dash is doing right now: "idle", "receiving" or "sending", plus
+ * the track it holds. For /api/selftest — without a readout, a pairing that
+ * silently never happens is indistinguishable from one that works. */
+const char *rdm_bus_state_str(void);
+const char *rdm_bus_local_track(void);
+
 #ifdef __cplusplus
 }
 #endif
