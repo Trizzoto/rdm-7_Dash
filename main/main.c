@@ -46,6 +46,7 @@
 #include "system/remote_touch.h"
 #include "data/channel_manager.h"
 #include "lap/lap_engine.h"
+#include "can/rdm_bus.h"
 #include "ui/screens/ui_wifi.h"
 
 
@@ -841,6 +842,11 @@ void app_main(void) {
   if (lap_engine_init() != ESP_OK) {
     ESP_LOGW(TAG, "lap_engine_init reported non-OK — lap timing unavailable");
   }
+
+  /* Device bus: announce this dash on the fixed discovery id and reconcile
+   * track outlines with whatever else is on the wire. Inert on a bench with
+   * nothing to talk to — it announces at 1 Hz and nobody answers. */
+  rdm_bus_init();
 
   // EARLY CAN DRIVER INITIALIZATION - Initialize CAN driver early but task
   // comes later

@@ -294,6 +294,12 @@ esp_err_t config_store_load_widget_latch(uint32_t tx_can_id, uint8_t tx_bit, boo
 /* ── Factory reset (erases all NVS + LittleFS user content) ────────────── */
 void config_store_factory_reset(void);
 
+/* ── RDM device bus ─────────────────────────────────────────────────────── */
+esp_err_t config_store_save_bus_base(uint16_t base);
+esp_err_t config_store_load_bus_base(uint16_t *base);
+esp_err_t config_store_save_bus_track(const char *name, uint32_t rev);
+esp_err_t config_store_load_bus_track(char *name, size_t cap, uint32_t *rev);
+
 #ifdef __cplusplus
 }
 #endif

@@ -45,6 +45,45 @@ static esp_err_t chs_save_u16(const char *ns, const char *key, uint16_t val) {
     return err;
 }
 
+static esp_err_t chs_save_u32(const char *ns, const char *key, uint32_t val) {
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(ns, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u32(h, key, val);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
+static esp_err_t chs_load_u32(const char *ns, const char *key, uint32_t *out) {
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(ns, NVS_READONLY, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_get_u32(h, key, out);
+    nvs_close(h);
+    return err;
+}
+
+static esp_err_t chs_save_str(const char *ns, const char *key, const char *val) {
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(ns, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_str(h, key, val ? val : "");
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
+static esp_err_t chs_load_str(const char *ns, const char *key, char *out, size_t cap) {
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(ns, NVS_READONLY, &h);
+    if (err != ESP_OK) return err;
+    size_t len = cap;
+    err = nvs_get_str(h, key, out, &len);
+    nvs_close(h);
+    return err;
+}
+
 static esp_err_t chs_save_i8(const char *ns, const char *key, int8_t val) {
     nvs_handle_t h;
     esp_err_t err = nvs_open(ns, NVS_READWRITE, &h);
@@ -1067,4 +1106,34 @@ void config_store_factory_reset(void)
     }
 
     ESP_LOGW(TAG, "Factory reset complete — rebooting to apply");
+}
+
+
+/* ── RDM device bus ────────────────────────────────────────────────────────
+ * The block base this dash answers on, plus which track it holds and at what
+ * revision. The revision is what decides who sends when the dash and the puck
+ * disagree, so it has to survive a power cycle — otherwise every ignition
+ * cycle would look like "the dash has nothing" and re-pull a track it already
+ * has. */
+#define NS_BUS "rdm_bus"
+
+esp_err_t config_store_save_bus_base(uint16_t base) {
+    return chs_save_u16(NS_BUS, "base", base);
+}
+
+esp_err_t config_store_load_bus_base(uint16_t *base) {
+    if (!base) return ESP_ERR_INVALID_ARG;
+    return chs_load_u16(NS_BUS, "base", base);
+}
+
+esp_err_t config_store_save_bus_track(const char *name, uint32_t rev) {
+    esp_err_t e = chs_save_str(NS_BUS, "trk", name);
+    if (e != ESP_OK) return e;
+    return chs_save_u32(NS_BUS, "rev", rev);
+}
+
+esp_err_t config_store_load_bus_track(char *name, size_t cap, uint32_t *rev) {
+    if (rev) { *rev = 0; chs_load_u32(NS_BUS, "rev", rev); }
+    if (name && cap) { name[0] = '\0'; chs_load_str(NS_BUS, "trk", name, cap); }
+    return ESP_OK;
 }

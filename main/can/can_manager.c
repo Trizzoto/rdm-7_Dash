@@ -6,6 +6,7 @@
  * process via signal_dispatch_frame().
  */
 #include "can_manager.h"
+#include "rdm_bus.h"
 #include "can_id_tracker.h"
 #include "obd2.h"
 #include "signal.h"
@@ -943,6 +944,12 @@ void can_process_queued_frames(void) {
 			 * resolves ~1.1 m at 200 km/h. See ADR-0008. */
 			lap_engine_on_can_frame(msg.identifier, msg.extd != 0, msg.data,
 			                        msg.data_length_code);
+			/* Device bus (discovery + track transfer) also needs EVERY frame
+			 * in arrival order: an asset transfer is hundreds of frames that
+			 * all share one id, and the coalescer keeps only the last per id
+			 * per batch — it would silently eat the payload. */
+			rdm_bus_on_can_frame(msg.identifier, msg.extd != 0, msg.data,
+			                     msg.data_length_code);
 		}
 		processed++;
 	}

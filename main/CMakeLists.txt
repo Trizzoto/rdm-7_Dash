@@ -3,6 +3,8 @@ idf_component_register(
         "main.c"
         "can/can_decode.c"
         "can/can_manager.c"
+        "can/rdm_bus.c"
+        "can/rdm_bus_proto.c"
         "can/can_bus_test.c"
         "can/can_id_tracker.c"
         "can/obd2.c"
