@@ -13,11 +13,16 @@
  *     never sends, while RPM/MAP/MGP decoded from EVERY frame index and
  *     produced confident garbage rather than an obvious failure.
  *
- * Two halves here. The first exercises the decode gate itself against the
+ * Three halves here. The first exercises the decode gate itself against the
  * real can_extract_bits(). The second links the REAL catalogue table and
  * asserts the shape, including a guard against the whole bug class: a run of
  * consecutive ids where no row ever reads byte 0-1 is the fingerprint of a
  * multiplexed stream that has been mis-modelled as separate ids.
+ *
+ * The third covers the drain coalescer, which gets a multiplexed id wrong in
+ * its own way: gating the decode correctly is worthless if the batching step
+ * upstream threw 13 of every 14 frames away before the gate ever saw them.
+ * That one starved every Link channel to ~2 Hz and read as a slow ECU.
  */
 #include "unity.h"
 #include "../../main/can/can_decode.c"
@@ -226,6 +231,117 @@ static void test_no_preset_looks_like_a_mismodelled_mux(void) {
 	}
 }
 
+/* ── Half 3: the drain coalescer ─────────────────────────────────────────
+ *
+ * Gating the decode was only half the job. can_process_queued_frames()
+ * batches a drain and collapses it to the freshest frame per key before
+ * calling signal_dispatch_frame(), so widgets repaint once per render cycle
+ * instead of once per intermediate value. That is lossless when an id always
+ * carries the same quantity — and lossy when it doesn't. Keyed on the id
+ * alone, all 14 Link payloads in a batch collapsed to whichever arrived last
+ * and the other 13 never reached the gate above at all, so every Link channel
+ * updated at render_rate/14 (~2 Hz) while the raw trace showed full rate.
+ *
+ * Like the gate, the real coalescer can't be linked here (TWAI, FreeRTOS,
+ * the PSRAM registry), so the keying is reproduced verbatim over the real
+ * can_extract_bits(). Keep the two in lockstep.
+ */
+typedef struct { uint32_t id; uint8_t data[8]; uint8_t dlc; bool extd; uint32_t mux; } coal_t;
+
+/* mux_aware=false reproduces the pre-fix key, so the regression this guards
+ * is asserted rather than described. */
+static int coalesce(const coal_t *in, int n, bool mux_aware, coal_t *out) {
+	int n_out = 0;
+	for (int i = 0; i < n; i++) {
+		uint32_t mux = 0;
+		if (mux_aware && in[i].id == 0x3E8 && in[i].dlc > 0)
+			mux = (uint32_t)can_extract_bits(in[i].data, 0, 8, 1, false);
+		int k;
+		for (k = 0; k < n_out; k++)
+			if (out[k].id == in[i].id && out[k].extd == in[i].extd &&
+			    out[k].mux == mux) break;
+		if (k < 32) {
+			out[k] = in[i];
+			out[k].mux = mux;
+			if (k == n_out) n_out++;
+		}
+	}
+	return n_out;
+}
+
+/* One full Link cycle, indices 0..13, each tagged in byte 2 so we can tell
+ * which payload survived. Plus two frames on an unrelated id. */
+static int build_link_batch(coal_t *b) {
+	int n = 0;
+	for (int f = 0; f < 14; f++) {
+		b[n].id = 0x3E8; b[n].extd = false; b[n].dlc = 8; b[n].mux = 0;
+		memset(b[n].data, 0, 8);
+		b[n].data[0] = (uint8_t)f;
+		b[n].data[2] = (uint8_t)(0xA0 + f);
+		n++;
+	}
+	for (int r = 0; r < 2; r++) {
+		b[n].id = 0x360; b[n].extd = false; b[n].dlc = 8; b[n].mux = 0;
+		memset(b[n].data, 0, 8);
+		b[n].data[2] = (uint8_t)(0x10 + r);
+		n++;
+	}
+	return n;
+}
+
+static void test_old_key_collapsed_the_whole_link_cycle(void) {
+	coal_t in[32], out[32];
+	int n = build_link_batch(in);
+	int got = coalesce(in, n, false, out);
+
+	/* 0x3E8 and 0x360 — two entries for sixteen frames. */
+	TEST_ASSERT_EQUAL_INT(2, got);
+	TEST_ASSERT_EQUAL_HEX(0x3E8, out[0].id);
+	/* Only the LAST index survived; payloads 0..12 were discarded. */
+	TEST_ASSERT_EQUAL_INT(13,   out[0].data[0]);
+	TEST_ASSERT_EQUAL_INT(0xA0 + 13, out[0].data[2]);
+}
+
+static void test_mux_key_preserves_every_frame_index(void) {
+	coal_t in[32], out[32];
+	int n = build_link_batch(in);
+	int got = coalesce(in, n, true, out);
+
+	/* 14 Link payloads + 1 collapsed entry for the ordinary id. */
+	TEST_ASSERT_EQUAL_INT(15, got);
+
+	for (int f = 0; f < 14; f++) {
+		TEST_ASSERT_EQUAL_HEX(0x3E8, out[f].id);
+		TEST_ASSERT_EQUAL_HEX((uint32_t)f, out[f].mux);
+		TEST_ASSERT_EQUAL_INT((uint8_t)f, out[f].data[0]);
+		TEST_ASSERT_EQUAL_INT((uint8_t)(0xA0 + f), out[f].data[2]);
+	}
+	/* The non-multiplexed id must still coalesce — last-value-wins is what
+	 * keeps the dirty-rect flood away for every normal ECU. */
+	TEST_ASSERT_EQUAL_HEX(0x360, out[14].id);
+	TEST_ASSERT_EQUAL_INT(0x11,   out[14].data[2]);
+}
+
+static void test_mux_key_survives_multiple_cycles_in_one_batch(void) {
+	/* Two cycles of the first eight indices: each index must appear once,
+	 * holding the FRESHER of its two payloads. */
+	coal_t in[32], out[32];
+	int n = 0;
+	for (int pass = 0; pass < 2; pass++) {
+		for (int f = 0; f < 8; f++) {
+			in[n].id = 0x3E8; in[n].extd = false; in[n].dlc = 8; in[n].mux = 0;
+			memset(in[n].data, 0, 8);
+			in[n].data[0] = (uint8_t)f;
+			in[n].data[2] = (uint8_t)(pass ? 0xB0 + f : 0xA0 + f);
+			n++;
+		}
+	}
+	int got = coalesce(in, n, true, out);
+	TEST_ASSERT_EQUAL_INT(8, got);
+	for (int f = 0; f < 8; f++)
+		TEST_ASSERT_EQUAL_INT((uint8_t)(0xB0 + f), out[f].data[2]);
+}
+
 /* ── Runner ─────────────────────────────────────────────────────────────── */
 
 int main(void) {
@@ -242,6 +358,10 @@ int main(void) {
 	RUN_TEST(test_link_rows_are_all_gated_on_byte_zero);
 	RUN_TEST(test_link_covers_many_distinct_frames);
 	RUN_TEST(test_no_preset_looks_like_a_mismodelled_mux);
+
+	RUN_TEST(test_old_key_collapsed_the_whole_link_cycle);
+	RUN_TEST(test_mux_key_preserves_every_frame_index);
+	RUN_TEST(test_mux_key_survives_multiple_cycles_in_one_batch);
 
 	return UNITY_END();
 }

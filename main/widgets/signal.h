@@ -220,6 +220,26 @@ bool signal_set_mux(int16_t signal_index, uint8_t mux_bit_start,
                     uint8_t mux_bit_length, uint16_t mux_value);
 
 /**
+ * Report the multiplex geometry in use on a CAN id, if any.
+ *
+ * Exists for callers that BATCH frames before dispatch and must know whether
+ * two frames sharing an id can be collapsed into one. They can't: a
+ * multiplexed id carries a different quantity per frame index, so keeping
+ * only the newest silently discards the rest (see can_process_queued_frames).
+ *
+ * Only the geometry is returned, not a mux_value — the caller wants to tell
+ * frame indices APART, not decide which one is "correct". Every signal on a
+ * given id shares one geometry in practice; the first match wins.
+ *
+ * Cheap to call per frame: returns immediately when no multiplexed signal is
+ * registered at all, which is every setup except a Link Generic Dash.
+ *
+ * @return true if @p can_id is multiplexed, with the geometry written out.
+ */
+bool signal_mux_geometry_for_id(uint32_t can_id, uint8_t *bit_start,
+                                uint8_t *bit_length);
+
+/**
  * Look up a signal by name.
  *
  * @return Signal index (>= 0) if found, -1 otherwise.

@@ -29,6 +29,13 @@ static const char *TAG = "signal";
 static signal_t *s_signals     = NULL;
 static uint16_t  s_signal_count = 0;
 
+/* How many registered signals currently carry a mux gate. Lets
+ * signal_mux_geometry_for_id() — called once per received frame — return
+ * without touching the registry on every non-multiplexed setup, which is all
+ * of them but Link. Maintained only by signal_set_mux(); zeroed by
+ * signal_registry_reset() along with the gates themselves. */
+static uint16_t  s_mux_signal_count = 0;
+
 /* ── Registry lifecycle ─────────────────────────────────────────────────── */
 
 void signal_registry_init(void)
@@ -61,6 +68,7 @@ void signal_registry_reset(void)
     }
     memset(s_signals, 0, MAX_SIGNALS * sizeof(signal_t));
     s_signal_count = 0;
+    s_mux_signal_count = 0;   /* the memset cleared every gate */
 }
 
 /* ── Registration ───────────────────────────────────────────────────────── */
@@ -203,10 +211,34 @@ bool signal_set_mux(int16_t signal_index, uint8_t mux_bit_start,
         return false;
     }
 
+    /* Keep the population count in step BEFORE overwriting the old gate —
+     * this is a set-or-clear call, and re-setting a gate that already exists
+     * must not double-count it. */
+    bool had_gate = (sig->mux_bit_length != 0);
+    bool has_gate = (mux_bit_length != 0);
+    if (had_gate && !has_gate)      s_mux_signal_count--;
+    else if (!had_gate && has_gate) s_mux_signal_count++;
+
     sig->mux_bit_start  = mux_bit_length ? mux_bit_start : 0;
     sig->mux_bit_length = mux_bit_length;
     sig->mux_value      = mux_bit_length ? mux_value : 0;
     return true;
+}
+
+bool signal_mux_geometry_for_id(uint32_t can_id, uint8_t *bit_start,
+                                uint8_t *bit_length)
+{
+    if (!s_signals || s_mux_signal_count == 0) return false;
+
+    for (uint16_t i = 0; i < s_signal_count; i++) {
+        const signal_t *sig = &s_signals[i];
+        if (sig->mux_bit_length == 0) continue;
+        if (sig->can_id != can_id)    continue;
+        if (bit_start)  *bit_start  = sig->mux_bit_start;
+        if (bit_length) *bit_length = sig->mux_bit_length;
+        return true;
+    }
+    return false;
 }
 
 int16_t signal_find_by_name(const char *name)

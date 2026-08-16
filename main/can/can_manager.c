@@ -7,6 +7,7 @@
  */
 #include "can_manager.h"
 #include "rdm_bus.h"
+#include "can_decode.h"
 #include "can_id_tracker.h"
 #include "obd2.h"
 #include "signal.h"
@@ -884,13 +885,23 @@ void can_process_queued_frames(void) {
 	 * backtrace (meter rear-inv × N intermediate needle positions).
 	 * Gauges are pure value-state, so last-value-wins is lossless for
 	 * them; the OBD2 decoder (ISO-TP is sequential!), the per-id tracker,
-	 * and the raw trace logger still see EVERY frame below. */
+	 * and the raw trace logger still see EVERY frame below.
+	 *
+	 * ...lossless for them EXCEPT on a multiplexed id, which carries a
+	 * different quantity per frame index rather than a fresher copy of the
+	 * same one. Link's Generic Dash runs 14 payloads through 0x3E8, so
+	 * keying on the id alone kept one frame per drain and dropped the other
+	 * 13 before dispatch ever saw them — every Link channel updated at
+	 * render_rate/14 (~2 Hz), which reads as "the ECU is slow" even though
+	 * the tracker and raw log below showed the full rate. The mux index is
+	 * therefore part of the key. */
 	static struct {
 		uint32_t id;
 		uint8_t  data[8];
 		uint8_t  dlc;
 		bool     extd; /* the lap engine must not confuse a 29-bit id that is
 		                * numerically inside the GPS block with a real puck */
+		uint32_t mux;  /* frame index on a multiplexed id; 0 when not muxed */
 	} coal[32];   /* static: LVGL task only; max_batch bounds the count */
 	int n_coal = 0;
 
@@ -899,16 +910,38 @@ void can_process_queued_frames(void) {
 		/* When simulator is active, drain queue but skip dispatch */
 		if (!signal_sim_is_active()) {
 			int k;
-			/* Key on (id, extd): an 11-bit gauge id and a 29-bit frame that
-			 * share low bits are different frames and must not collapse into
-			 * one slot — last-writer-wins would dispatch the wrong payload
-			 * and flip extd, and could hide a GPS frame from the lap engine. */
+			uint8_t cdlc = msg.data_length_code > 8 ? 8 : msg.data_length_code;
+
+			/* Frame index on a multiplexed id, else 0. The endian passed to
+			 * can_extract_bits is fixed rather than the signal's, because
+			 * this value is only ever compared against other frames on the
+			 * same id — it groups payloads, it never gets decoded. Any
+			 * deterministic extraction of those bits separates the indices
+			 * correctly. A frame too short to hold the mux field falls back
+			 * to 0 and coalesces as before; it can't decode anyway. */
+			uint32_t mux = 0;
+			uint8_t  mstart = 0, mlen = 0;
+			if (signal_mux_geometry_for_id(msg.identifier, &mstart, &mlen)) {
+				uint8_t mend = (uint8_t)((mstart + mlen - 1) / 8);
+				if (cdlc > mend)
+					mux = (uint32_t)can_extract_bits(msg.data, mstart, mlen,
+					                                 1 /* LE */, false);
+			}
+
+			/* Key on (id, extd, mux): an 11-bit gauge id and a 29-bit frame
+			 * that share low bits are different frames and must not collapse
+			 * into one slot — last-writer-wins would dispatch the wrong
+			 * payload and flip extd, and could hide a GPS frame from the lap
+			 * engine. Same reasoning applies to two mux indices on one id. */
 			for (k = 0; k < n_coal; k++)
-				if (coal[k].id == msg.identifier && coal[k].extd == (msg.extd != 0)) break;
+				if (coal[k].id == msg.identifier &&
+				    coal[k].extd == (msg.extd != 0) &&
+				    coal[k].mux == mux) break;
 			if (k < (int)(sizeof(coal) / sizeof(coal[0]))) {
 				coal[k].id  = msg.identifier;
-				coal[k].dlc = msg.data_length_code > 8 ? 8 : msg.data_length_code;
+				coal[k].dlc = cdlc;
 				coal[k].extd = msg.extd != 0;
+				coal[k].mux = mux;
 				memcpy(coal[k].data, msg.data, coal[k].dlc);
 				if (k == n_coal) n_coal++;
 			}
@@ -954,8 +987,11 @@ void can_process_queued_frames(void) {
 		processed++;
 	}
 
-	/* Dispatch once per unique id, in first-seen order, with the freshest
-	 * payload. Widgets repaint at most once per id per render cycle. */
+	/* Dispatch once per unique (id, mux index), in first-seen order, with the
+	 * freshest payload. Still at most one repaint per widget per render cycle
+	 * — the extra entries a multiplexed id contributes carry DIFFERENT
+	 * signals, so no widget is invalidated twice and the dirty-rect flood
+	 * this coalescer was written to stop cannot come back. */
 	for (int k = 0; k < n_coal; k++)
 		signal_dispatch_frame(coal[k].id, coal[k].data, coal[k].dlc);
 }
