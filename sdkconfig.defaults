@@ -39,6 +39,26 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 # extra internal heap. SPIRAM_TRY_ALLOCATE_WIFI_LWIP covers higher layers.
 CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6
 
+# WiFi — static TX buffers are DMA-capable INTERNAL RAM (~1.6 KB each), so
+# SPIRAM_TRY_ALLOCATE_WIFI_LWIP cannot move them: 16 of them pin ~25 KB of the
+# 72 KB of DIRAM the link leaves free. That is what starved OTA.
+#
+# Measured 2026-08-16 across four dashes, internal_largest_free vs the 6144 B
+# contiguous stack an OTA task needs:
+#
+#     RDM-1CDB-D444  5632      RDM-DCB4-D936  5120
+#     RDM-DCB4-D926  5376      RDM-E806-90A2  2304   (43 min uptime)
+#
+# Every one short, including 29 s after a cold boot, so xTaskCreate failed and
+# the update died before opening a socket — reported as a flaky network for
+# months. Confirmed NOT a leak: 90A2 held 2651/2304/2459 dead flat over 3 min.
+# The spread is per-device configuration (layout, signal count), not uptime.
+#
+# 8 still covers a 3 MB OTA, which is RX-heavy; TX depth only bounds how many
+# frames can be in flight upstream, and the dash's uplink is HTTP requests and
+# the CONTROL preview. Revisit if throughput regresses under the web editor.
+CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=8
+
 # TLS — SOFTWARE AES, deliberately, because the hardware engine cannot reach
 # the buffers we give it. MBEDTLS_EXTERNAL_MEM_ALLOC puts TLS buffers in PSRAM
 # (the only way they fit), but the S3's AES DMA engine can't read PSRAM, so
