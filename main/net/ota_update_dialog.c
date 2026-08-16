@@ -70,8 +70,36 @@ static void install_btn_event_cb(lv_event_t *e) {
     }
     progress_timer = lv_timer_create(progress_timer_cb, 500, NULL); // Update every 500ms
     
-    // Start the OTA update task
-    start_ota_update_task();
+    /* Start the OTA update task. A spawn failure means the install never
+     * began (no contiguous internal RAM for the 6 KB stack) — say so on the
+     * dash instead of leaving a progress bar parked at 0% forever. */
+    if (start_ota_update_task() != ESP_OK) {
+        if (progress_timer) {
+            lv_timer_del(progress_timer);
+            progress_timer = NULL;
+        }
+        if (progress_bar && lv_obj_is_valid(progress_bar)) {
+            lv_obj_add_flag(progress_bar, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (progress_label && lv_obj_is_valid(progress_label)) {
+            lv_obj_add_flag(progress_label, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (status_label && lv_obj_is_valid(status_label)) {
+            lv_label_set_text(status_label,
+                              "Not enough memory to update.\nReboot and try again.");
+            lv_obj_set_style_text_color(status_label, lv_color_hex(0xFF6060),
+                                        LV_PART_MAIN | LV_STATE_DEFAULT);
+        }
+        /* Restore the dismiss/retry buttons hidden above — nothing is
+         * flashing, so leaving them hidden would strand the dialog. */
+        if (install_btn && lv_obj_is_valid(install_btn))
+            lv_obj_clear_flag(install_btn, LV_OBJ_FLAG_HIDDEN);
+        if (cancel_btn && lv_obj_is_valid(cancel_btn))
+            lv_obj_clear_flag(cancel_btn, LV_OBJ_FLAG_HIDDEN);
+        if (skip_btn && lv_obj_is_valid(skip_btn))
+            lv_obj_clear_flag(skip_btn, LV_OBJ_FLAG_HIDDEN);
+        update_in_progress = false;
+    }
 }
 
 // "Later" button event handler — closes the dialog. The auto-OTA-check

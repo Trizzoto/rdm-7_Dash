@@ -763,14 +763,18 @@ static void ota_update_task(void *pvParameter) {
     vTaskDelete(NULL);
 }
 
-void start_ota_update_task(void) {
+size_t ota_internal_largest_free(void) {
+    return heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+}
+
+esp_err_t start_ota_update_task(void) {
     /* Claim the shared OTA slot. If a check (or another install) is already
      * running, refuse rather than launch a second esp_https_ota against the
      * same partition. The slot is released by ota_update_task on failure and
      * held through the reboot on success. */
     if (atomic_flag_test_and_set(&s_ota_op_busy)) {
         ESP_LOGW(TAG, "OTA op already in flight — refusing update start");
-        return;
+        return ESP_ERR_INVALID_STATE;
     }
 
     ESP_LOGI(TAG, "Creating OTA update task");
@@ -787,28 +791,55 @@ void start_ota_update_task(void) {
 
     /* 6 KB is enough for esp_https_ota begin/perform/finish — the deep paths
        are TLS handshake (~4-5 KB peak) and HTTP parsing. Was 8 KB; reduced
-       because internal heap can be tightly fragmented at OTA time. */
+       because internal heap can be tightly fragmented at OTA time.
+
+       A FreeRTOS stack must be ONE contiguous INTERNAL allocation, so this
+       6 KB is the whole update's single point of failure. Field failure
+       2026-08-16 (firmware 1.3.9, serial RDM-DCB4-D936): internal_free was
+       10627 bytes but internal_largest_free only 5376 — the heap had
+       fragmented into two ~5 KB pieces, xTaskCreate failed, and the install
+       reported "failed" having never opened a socket. Not the 1.4.2
+       software-AES bug, which dies mid-transfer instead.
+
+       Deliberately NOT solved with a static BSS stack: BSS is carved from the
+       same internal SRAM, so permanently reserving 6 KB out of the ~10 KB free
+       would starve WiFi/lwIP to fix OTA. The escape hatch for a dash in this
+       state is POST /api/ota/upload, which runs on the httpd task and spawns
+       only a 2 KB reboot task. */
     const uint32_t OTA_STACK = 6 * 1024;
     const uint32_t OTA_PRIORITY = 2;
 
     BaseType_t ret = xTaskCreatePinnedToCore(
-        ota_update_task,
-        "ota_update",
-        OTA_STACK,
-        NULL,
-        OTA_PRIORITY,
-        NULL,
+        ota_update_task, "ota_update", OTA_STACK, NULL, OTA_PRIORITY, NULL,
         0  /* core 0 — opposite of LVGL on core 1 */
     );
 
+    /* One retry: ota_free_internal_ram() above may have dropped the SoftAP,
+       and lwIP/WiFi release those buffers asynchronously. A short wait can be
+       the difference between 5376 and 6144 bytes contiguous. */
     if (ret != pdPASS) {
-        ESP_LOGE(TAG, "Failed to create OTA task");
-        ota_status = OTA_UPDATE_FAILED;
-        atomic_flag_clear(&s_ota_op_busy);  /* task never started — release */
-    } else {
-        ESP_LOGI(TAG, "OTA task created successfully");
-        ota_status = OTA_UPDATE_IN_PROGRESS;
+        ESP_LOGW(TAG, "OTA task create failed (largest internal block %u B, "
+                 "need %u B) — reclaiming and retrying",
+                 (unsigned)ota_internal_largest_free(), (unsigned)OTA_STACK);
+        vTaskDelay(pdMS_TO_TICKS(750));
+        ret = xTaskCreatePinnedToCore(
+            ota_update_task, "ota_update", OTA_STACK, NULL, OTA_PRIORITY, NULL, 0);
     }
+
+    if (ret != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create OTA task — only %u B contiguous "
+                 "internal RAM, need %u B. Install did NOT start; use "
+                 "POST /api/ota/upload instead.",
+                 (unsigned)ota_internal_largest_free(), (unsigned)OTA_STACK);
+        ota_status = OTA_UPDATE_FAILED;
+        ota_progress = -1;
+        atomic_flag_clear(&s_ota_op_busy);  /* task never started — release */
+        return ESP_ERR_NO_MEM;
+    }
+
+    ESP_LOGI(TAG, "OTA task created successfully");
+    ota_status = OTA_UPDATE_IN_PROGRESS;
+    return ESP_OK;
 }
 
 // Getter functions for additional update information

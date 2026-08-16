@@ -296,19 +296,20 @@ static const httpd_uri_t system_health_uri = {
 
 /* ── System Reboot ───────────────────────────────────────────────────────── */
 
-static void _deferred_reboot(void *arg) {
-	(void)arg;
-	vTaskDelay(pdMS_TO_TICKS(500));
-	esp_restart();
-}
-
 static esp_err_t _system_reboot_handler(httpd_req_t *req) {
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 	httpd_resp_set_type(req, "application/json");
-	httpd_resp_sendstr(req, "{\"status\":\"rebooting\"}");
 
-	/* Schedule reboot after response is sent */
-	xTaskCreate((TaskFunction_t)_deferred_reboot, "reboot", 2048, NULL, 1, NULL);
+	/* Arm the reboot BEFORE replying, so the reply can tell the truth. This
+	 * used to xTaskCreate a 2 KB task and answer "rebooting" without checking
+	 * — on a starved dash the spawn failed and the dash just kept running. */
+	if (!web_server_schedule_reboot(500)) {
+		httpd_resp_set_status(req, "503 Service Unavailable");
+		httpd_resp_sendstr(req,
+			"{\"error\":\"could not schedule a reboot — power-cycle the dash\"}");
+		return ESP_OK;
+	}
+	httpd_resp_sendstr(req, "{\"status\":\"rebooting\"}");
 	return ESP_OK;
 }
 

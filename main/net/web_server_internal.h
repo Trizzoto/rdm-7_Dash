@@ -58,6 +58,19 @@ void web_server_drain_body(httpd_req_t *req, size_t max_drain);
 struct cJSON;
 esp_err_t web_server_send_json(httpd_req_t *req, struct cJSON *root);
 
+// Reboot the dash after delay_ms, giving the HTTP response time to flush.
+//
+// Uses an esp_timer one-shot, which runs on the existing esp_timer task and
+// needs no new stack. The obvious xTaskCreate(..., 2048, ...) does NOT work on
+// a memory-starved dash: measured 2026-08-16 on RDM-E806-90A2 with 2304 bytes
+// contiguous internal RAM, both /api/system/reboot and the /api/ota/upload
+// reboot silently failed to spawn, so an upload that had already written and
+// validated the image and set the boot partition never restarted into it —
+// while both endpoints still reported success. Returns false only if even the
+// timer could not be armed, in which case the caller should say so rather than
+// claim a reboot is coming.
+bool web_server_schedule_reboot(uint32_t delay_ms);
+
 // Path-traversal guards for user-supplied file/layout names.
 // web_server_name_is_safe: no dots, no slashes, no control chars.
 // web_server_filename_is_safe: allows one dot (extension); rejects "..".

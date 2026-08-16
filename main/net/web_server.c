@@ -1,6 +1,8 @@
 #include "web_server.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "esp_system.h"
+#include "esp_timer.h"
 #include "cJSON.h"
 #include <stdbool.h>
 #include <string.h>
@@ -107,6 +109,31 @@ esp_err_t web_server_send_layout_too_large(httpd_req_t *req, size_t actual) {
  * calling (the established per-handler pattern), and httpd_resp_set_hdr appends
  * rather than replaces, so setting it here too would emit a duplicate
  * Access-Control-Allow-Origin that strict browsers reject. */
+static void _reboot_timer_cb(void *arg) {
+	(void)arg;
+	esp_restart();
+}
+
+bool web_server_schedule_reboot(uint32_t delay_ms) {
+	static esp_timer_handle_t s_reboot_timer = NULL;
+
+	if (!s_reboot_timer) {
+		const esp_timer_create_args_t args = {
+			.callback = _reboot_timer_cb,
+			.name     = "reboot",
+		};
+		if (esp_timer_create(&args, &s_reboot_timer) != ESP_OK) {
+			s_reboot_timer = NULL;
+			return false;
+		}
+	}
+	/* Already armed by an earlier request — that reboot is coming, so this
+	 * one is satisfied too. Re-arming a running one-shot would error. */
+	if (esp_timer_is_active(s_reboot_timer)) return true;
+
+	return esp_timer_start_once(s_reboot_timer, (uint64_t)delay_ms * 1000) == ESP_OK;
+}
+
 esp_err_t web_server_send_json(httpd_req_t *req, cJSON *root) {
 	char *json = root ? cJSON_PrintUnformatted(root) : NULL;
 	cJSON_Delete(root);

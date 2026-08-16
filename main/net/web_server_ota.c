@@ -19,6 +19,7 @@
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -78,11 +79,23 @@ static esp_err_t _ota_check_handler(httpd_req_t *req) {
 		return ESP_OK;
 	}
 
+	/* Same 6 KB contiguous-internal-RAM constraint as the install task — see
+	 * the OTA_STACK note in ota_handler.c. Name the real cause: "failed to
+	 * start check task" sent us hunting the network for an hour. */
 	BaseType_t ok = xTaskCreate(_ota_check_task, "ota_check", 6144,
 	                            NULL, 5, NULL);
 	if (ok != pdPASS) {
+		char msg[224];
+		snprintf(msg, sizeof(msg),
+			"{\"error\":\"not enough contiguous internal RAM to start the "
+			"update check (%u bytes free, 6144 needed) \xe2\x80\x94 reboot the "
+			"dash and retry\",\"internal_largest_free\":%u}",
+			(unsigned)ota_internal_largest_free(),
+			(unsigned)ota_internal_largest_free());
+		ESP_LOGE(TAG, "check task create failed — %u B contiguous internal, need 6144",
+		         (unsigned)ota_internal_largest_free());
 		httpd_resp_set_status(req, "503 Service Unavailable");
-		httpd_resp_sendstr(req, "{\"error\":\"failed to start check task\"}");
+		httpd_resp_sendstr(req, msg);
 		return ESP_OK;
 	}
 	httpd_resp_set_status(req, "202 Accepted");
@@ -101,7 +114,29 @@ static esp_err_t _ota_start_handler(httpd_req_t *req) {
 		return ESP_OK;
 	}
 
-	start_ota_update_task();
+	/* Report what actually happened. This used to return "installing"
+	 * unconditionally, so a spawn failure — the install never opening a
+	 * socket — surfaced in the UI as a download stuck at 0%. */
+	esp_err_t err = start_ota_update_task();
+	if (err == ESP_ERR_NO_MEM) {
+		char msg[224];
+		snprintf(msg, sizeof(msg),
+			"{\"error\":\"not enough contiguous internal RAM to start the "
+			"update (%u bytes free, 6144 needed) \xe2\x80\x94 reboot the dash "
+			"and retry, or push the build over the LAN with "
+			"POST /api/ota/upload\",\"internal_largest_free\":%u}",
+			(unsigned)ota_internal_largest_free(),
+			(unsigned)ota_internal_largest_free());
+		httpd_resp_set_status(req, "503 Service Unavailable");
+		httpd_resp_sendstr(req, msg);
+		return ESP_OK;
+	}
+	if (err != ESP_OK) {
+		httpd_resp_set_status(req, "409 Conflict");
+		httpd_resp_sendstr(req, "{\"error\":\"another OTA operation is already running\"}");
+		return ESP_OK;
+	}
+
 	httpd_resp_set_status(req, "202 Accepted");
 	httpd_resp_sendstr(req, "{\"status\":\"installing\"}");
 	return ESP_OK;
@@ -142,13 +177,6 @@ static esp_err_t _ota_start_handler(httpd_req_t *req) {
  * 90 s window of total silence, far longer than any real stall on a LAN, and
  * bounded. */
 #define OTA_UPLOAD_MAX_STALLS 3
-
-static void _ota_reboot_task(void *arg) {
-	(void)arg;
-	/* Let the HTTP response flush before the stack goes away. */
-	vTaskDelay(pdMS_TO_TICKS(700));
-	esp_restart();
-}
 
 static esp_err_t _ota_upload_handler(httpd_req_t *req) {
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -292,16 +320,28 @@ static esp_err_t _ota_upload_handler(httpd_req_t *req) {
 		return ESP_OK;
 	}
 
-	ESP_LOGW(TAG, "OTA upload complete (%d bytes) — rebooting into '%s'",
-	         received, part->label);
+	/* Arm the reboot BEFORE answering, so "rebooting" is a fact rather than an
+	 * intention. The image is written, validated and set bootable by this
+	 * point, so a failure here is recoverable by a power cycle — but ONLY if
+	 * we say so. This previously spawned a 2 KB task and reported
+	 * "rebooting":true unconditionally; on RDM-E806-90A2 (2304 B contiguous
+	 * internal) the spawn failed, the dash carried on running the old image,
+	 * and rdm_ota_push.py reported a successful flash. */
+	bool rebooting = web_server_schedule_reboot(700);
 
-	char resp[160];
+	ESP_LOGW(TAG, "OTA upload complete (%d bytes) into '%s' — %s",
+	         received, part->label,
+	         rebooting ? "rebooting" : "REBOOT NOT SCHEDULED, power-cycle to apply");
+
+	char resp[240];
 	snprintf(resp, sizeof(resp),
-	         "{\"ok\":true,\"bytes\":%d,\"partition\":\"%s\",\"rebooting\":true}",
-	         received, part->label);
+	         "{\"ok\":true,\"bytes\":%d,\"partition\":\"%s\",\"rebooting\":%s%s}",
+	         received, part->label, rebooting ? "true" : "false",
+	         rebooting ? ""
+	                   : ",\"warning\":\"image installed and set bootable, but the "
+	                     "dash could not schedule its own reboot \\u2014 power-cycle "
+	                     "it to finish the update\"");
 	httpd_resp_sendstr(req, resp);
-
-	xTaskCreate(_ota_reboot_task, "ota_reboot", 2048, NULL, 5, NULL);
 	return ESP_OK;
 }
 

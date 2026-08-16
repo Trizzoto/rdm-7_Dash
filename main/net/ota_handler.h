@@ -22,7 +22,17 @@ typedef enum {
 void init_ota(void);
 void check_for_update(void);
 esp_err_t start_ota_update(void);
-void start_ota_update_task(void);
+/* Spawn the download+install task.
+ *
+ * ESP_OK            task created, install is running
+ * ESP_ERR_INVALID_STATE  another OTA op already holds the slot
+ * ESP_ERR_NO_MEM    no contiguous internal RAM for the task stack — the
+ *                   install never began. See the note on OTA_STACK. */
+esp_err_t start_ota_update_task(void);
+
+/* Largest contiguous internal block a 6 KB OTA task needs to be creatable.
+ * Exposed so endpoints can explain a spawn failure instead of guessing. */
+size_t ota_internal_largest_free(void);
 ota_status_t get_ota_status(void);
 const char* get_latest_version(void);
 int get_ota_progress(void);
