@@ -73,6 +73,15 @@ void wire_inputs_task(void *pvParam)
         return;
     }
 
+    /* Report the deepest stack use once the paint path has actually run a few
+     * times. indicator_apply_analog_state() rasterises a polygon into an
+     * lv_canvas, and LVGL v8 keeps the draw descriptor and its blend scratch
+     * on the CALLER's stack — that overflowed this task's original 2 KB and
+     * panicked the device. The number below is the evidence for the 8 KB it
+     * is created with now; if a future indicator change pushes it toward
+     * zero, this is where it will show up before it becomes a boot loop. */
+    int paints = 0;
+
     for (;;) {
         bool left_on  = (gpio_get_level(s_left_gpio)  == 1);
         bool right_on = (gpio_get_level(s_right_gpio) == 1);
@@ -80,6 +89,11 @@ void wire_inputs_task(void *pvParam)
         if (rdm_lvgl_lock(20)) {
             indicator_apply_analog_state(left_on, right_on);
             rdm_lvgl_unlock();
+
+            if (paints < 5 && ++paints == 5) {
+                ESP_LOGI(TAG, "indicator paint stack headroom: %u bytes free "
+                              "of 8192", (unsigned)(uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t)));
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(50)); /* 20 Hz poll rate */
     }

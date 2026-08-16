@@ -1312,7 +1312,15 @@ void app_main(void) {
 
   /* Start indicator wire task: reads GPIO 43/44 and drives indicators when
    * source is Wire */
-  xTaskCreatePinnedToCore(wire_inputs_task, "ind_wire", 2048, NULL, 3, NULL, 0);
+  /* 8 KB, not 2 KB: this task paints the indicators, and since the v18
+   * indicator rewrite that means rasterising a polygon into an lv_canvas
+   * rather than swapping an image. lv_canvas_draw_polygon / draw_rect put a
+   * draw descriptor and LVGL's blend scratch on the CALLER's stack, which
+   * overflowed 2 KB and panicked the dash on the first indicator paint —
+   * boot-looping any unit with wire-input mode enabled until the OTA rolled
+   * back. Wire mode is off by default, so this only ever hit units wired for
+   * analog turn signals, which is why it survived bench testing. */
+  xTaskCreatePinnedToCore(wire_inputs_task, "ind_wire", 8192, NULL, 3, NULL, 0);
   ESP_LOGI(TAG, "Indicator wire task started");
 
   /* Fuel sender – ADC on GPIO 6, exposed as FUEL_SENDER_V signal */
