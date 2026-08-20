@@ -46,6 +46,10 @@ static lv_obj_t *wifi_list         = NULL;
 static lv_obj_t *password_modal    = NULL;
 static lv_obj_t *password_input    = NULL;
 static lv_obj_t *wifi_keyboard     = NULL;
+/* Hotspot-password keyboard. Built on first tap of ap_pass_input rather than
+ * with the row, because the row is on the always-present WiFi screen and a
+ * permanently parented 200 px keyboard would sit over the network list. */
+static lv_obj_t *ap_keyboard       = NULL;
 static lv_obj_t *connection_spinner = NULL;
 static lv_obj_t *scan_btn          = NULL;
 
@@ -72,6 +76,8 @@ static void _close_password_modal(void);
 static void _update_visibility(void);
 static void _style_section_card(lv_obj_t *card);
 static void _style_section_title(lv_obj_t *label);
+static void _style_keyboard(lv_obj_t *kb);
+static lv_obj_t *_add_password_eye(lv_obj_t *parent, lv_obj_t *ta);
 static lv_obj_t *_create_info_row(lv_obj_t *parent, const char *label_text,
                                   lv_obj_t **value_out);
 
@@ -87,6 +93,9 @@ static void _password_connect_cb(lv_event_t *e);
 static void _password_cancel_cb(lv_event_t *e);
 static void _forget_cb(lv_event_t *e);
 static void _ap_pass_set_cb(lv_event_t *e);
+static void _ap_pass_tap_cb(lv_event_t *e);
+static void _ap_keyboard_cb(lv_event_t *e);
+static void _password_eye_cb(lv_event_t *e);
 static void _connect_timeout_cb(lv_timer_t *t);
 
 /* wifi_manager event callback (may run off LVGL task) */
@@ -339,6 +348,10 @@ static void _create_screen(void)
     lv_obj_set_style_radius(ap_pass_input, THEME_RADIUS_SMALL, 0);
     lv_obj_set_style_text_color(ap_pass_input, THEME_COLOR_TEXT_GHOST,
                                 LV_PART_TEXTAREA_PLACEHOLDER);
+    /* CLICKED, not FOCUSED: with a touchscreen and no input group there is
+     * nothing to move focus, so FOCUSED never fires and the field looked
+     * dead — tapping it did nothing at all. */
+    lv_obj_add_event_cb(ap_pass_input, _ap_pass_tap_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *set_btn = lv_btn_create(pass_row);
     lv_obj_set_size(set_btn, 60, 28);
@@ -503,6 +516,7 @@ static void _destroy_screen(void)
     password_modal = NULL;
     password_input = NULL;
     wifi_keyboard  = NULL;
+    ap_keyboard    = NULL;
     if (wifi_screen) {
         lv_obj_del(wifi_screen);
         wifi_screen = NULL;
@@ -542,6 +556,69 @@ static void _style_section_title(lv_obj_t *label)
     lv_obj_set_style_text_font(label, THEME_FONT_TINY, 0);
     lv_obj_set_style_text_color(label, THEME_COLOR_TEXT_MUTED, 0);
     lv_obj_set_style_text_letter_space(label, 1, 0);
+}
+
+/* Shared look for both on-screen keyboards (join-network modal and the
+ * hotspot-password row), so the second one can never drift from the first. */
+static void _style_keyboard(lv_obj_t *kb)
+{
+    lv_obj_set_style_bg_color(kb, THEME_COLOR_SURFACE, 0);
+    lv_obj_set_style_bg_opa(kb, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(kb, 0, 0);
+    lv_obj_set_style_pad_all(kb, 4, 0);
+    lv_obj_set_style_pad_gap(kb, 4, 0);
+
+    lv_obj_set_style_bg_color(kb, THEME_COLOR_SECTION_BG, LV_PART_ITEMS);
+    lv_obj_set_style_bg_opa(kb, LV_OPA_COVER, LV_PART_ITEMS);
+    lv_obj_set_style_text_color(kb, THEME_COLOR_TEXT_PRIMARY, LV_PART_ITEMS);
+    lv_obj_set_style_text_font(kb, THEME_FONT_BODY, LV_PART_ITEMS);
+    lv_obj_set_style_border_width(kb, 1, LV_PART_ITEMS);
+    lv_obj_set_style_border_color(kb, THEME_COLOR_BORDER, LV_PART_ITEMS);
+    lv_obj_set_style_radius(kb, THEME_RADIUS_NORMAL, LV_PART_ITEMS);
+    lv_obj_set_style_bg_color(kb, THEME_COLOR_ACCENT_BLUE,
+                              LV_PART_ITEMS | LV_STATE_PRESSED);
+}
+
+/* Show/hide toggle for a masked password field. LVGL v8 has no built-in
+ * reveal, so this flips lv_textarea_set_password_mode() and swaps the icon.
+ * The button carries the textarea as user data — there are two password
+ * fields on this screen and a static would tie the toggle to whichever
+ * was built last. */
+static lv_obj_t *_add_password_eye(lv_obj_t *parent, lv_obj_t *ta)
+{
+    lv_obj_t *eye = lv_btn_create(parent);
+    lv_obj_set_size(eye, 40, 40);
+    lv_obj_set_style_bg_opa(eye, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(eye, 0, 0);
+    lv_obj_set_style_shadow_width(eye, 0, 0);
+    lv_obj_add_event_cb(eye, _password_eye_cb, LV_EVENT_CLICKED, ta);
+
+    lv_obj_t *icon = lv_label_create(eye);
+    lv_label_set_text(icon, LV_SYMBOL_EYE_OPEN);
+    lv_obj_set_style_text_font(icon, THEME_FONT_BODY, 0);
+    lv_obj_set_style_text_color(icon, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_center(icon);
+    return eye;
+}
+
+static void _password_eye_cb(lv_event_t *e)
+{
+    lv_obj_t *btn = lv_event_get_target(e);
+    lv_obj_t *ta  = (lv_obj_t *)lv_event_get_user_data(e);
+    if (!btn || !ta) return;
+
+    bool masked = lv_textarea_get_password_mode(ta);
+    lv_textarea_set_password_mode(ta, !masked);
+
+    lv_obj_t *icon = lv_obj_get_child(btn, 0);
+    if (icon) {
+        /* Now unmasked -> offer "hide"; still masked -> offer "show". */
+        lv_label_set_text(icon, masked ? LV_SYMBOL_EYE_CLOSE
+                                       : LV_SYMBOL_EYE_OPEN);
+        lv_obj_set_style_text_color(icon,
+                                    masked ? THEME_COLOR_ACCENT_BLUE
+                                           : THEME_COLOR_TEXT_MUTED, 0);
+    }
 }
 
 static lv_obj_t *_create_info_row(lv_obj_t *parent, const char *label_text,
@@ -1053,8 +1130,9 @@ static void _show_password_modal(const char *ssid)
 
     /* Password text area */
     password_input = lv_textarea_create(dialog);
-    lv_obj_set_size(password_input, 390, 40);
-    lv_obj_align(password_input, LV_ALIGN_TOP_MID, 0, 55);
+    /* 344 not 390: the reveal toggle takes the right-hand 46 px of the row. */
+    lv_obj_set_size(password_input, 344, 40);
+    lv_obj_align(password_input, LV_ALIGN_TOP_LEFT, 0, 55);
     lv_textarea_set_placeholder_text(password_input, "Enter password...");
     lv_textarea_set_password_mode(password_input, true);
     lv_textarea_set_one_line(password_input, true);
@@ -1070,6 +1148,11 @@ static void _show_password_modal(const char *ssid)
     lv_obj_set_style_radius(password_input, THEME_RADIUS_SMALL, 0);
     lv_obj_set_style_text_color(password_input, THEME_COLOR_TEXT_GHOST,
                                 LV_PART_TEXTAREA_PLACEHOLDER);
+
+    /* Reveal toggle — typing a long WPA key blind on a touchscreen is the
+     * single most common way to end up "connecting" forever. */
+    lv_obj_t *pw_eye = _add_password_eye(dialog, password_input);
+    lv_obj_align(pw_eye, LV_ALIGN_TOP_RIGHT, 0, 55);
 
     /* Buttons row */
     lv_obj_t *cancel_btn = lv_btn_create(dialog);
@@ -1112,26 +1195,7 @@ static void _show_password_modal(const char *ssid)
     lv_obj_set_size(wifi_keyboard, SCREEN_W, 200);
     lv_obj_align(wifi_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_keyboard_set_textarea(wifi_keyboard, password_input);
-
-    lv_obj_set_style_bg_color(wifi_keyboard, THEME_COLOR_SURFACE, 0);
-    lv_obj_set_style_bg_opa(wifi_keyboard, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(wifi_keyboard, 0, 0);
-    lv_obj_set_style_pad_all(wifi_keyboard, 4, 0);
-    lv_obj_set_style_pad_gap(wifi_keyboard, 4, 0);
-
-    lv_obj_set_style_bg_color(wifi_keyboard, THEME_COLOR_SECTION_BG,
-                              LV_PART_ITEMS);
-    lv_obj_set_style_bg_opa(wifi_keyboard, LV_OPA_COVER, LV_PART_ITEMS);
-    lv_obj_set_style_text_color(wifi_keyboard, THEME_COLOR_TEXT_PRIMARY,
-                                LV_PART_ITEMS);
-    lv_obj_set_style_text_font(wifi_keyboard, THEME_FONT_BODY, LV_PART_ITEMS);
-    lv_obj_set_style_border_width(wifi_keyboard, 1, LV_PART_ITEMS);
-    lv_obj_set_style_border_color(wifi_keyboard, THEME_COLOR_BORDER,
-                                  LV_PART_ITEMS);
-    lv_obj_set_style_radius(wifi_keyboard, THEME_RADIUS_NORMAL, LV_PART_ITEMS);
-
-    lv_obj_set_style_bg_color(wifi_keyboard, THEME_COLOR_ACCENT_BLUE,
-                              LV_PART_ITEMS | LV_STATE_PRESSED);
+    _style_keyboard(wifi_keyboard);
 }
 
 static void _close_password_modal(void)
@@ -1228,6 +1292,50 @@ static void _boot_dropdown_cb(lv_event_t *e)
              sel == WIFI_UI_MODE_STA ? "WiFi" : "Hotspot");
 }
 
+
+/* Tap the hotspot-password field -> raise a keyboard bound to it. Built on
+ * demand and parented to the screen (not the row) so it can span the full
+ * width at the bottom, the same place the join-network keyboard appears. */
+static void _ap_pass_tap_cb(lv_event_t *e)
+{
+    (void)e;
+    if (!ap_pass_input || !wifi_screen) return;
+
+    if (!ap_keyboard) {
+        ap_keyboard = lv_keyboard_create(wifi_screen);
+        lv_obj_set_size(ap_keyboard, SCREEN_W, 200);
+        /* FLOATING pins it to the viewport. Without it the keyboard is laid
+         * out in the screen's scrollable content and slides away the moment
+         * the user scrolls the network list underneath it. */
+        lv_obj_add_flag(ap_keyboard, LV_OBJ_FLAG_FLOATING);
+        lv_obj_align(ap_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+        _style_keyboard(ap_keyboard);
+        lv_obj_add_event_cb(ap_keyboard, _ap_keyboard_cb, LV_EVENT_READY, NULL);
+        lv_obj_add_event_cb(ap_keyboard, _ap_keyboard_cb, LV_EVENT_CANCEL, NULL);
+    }
+
+    lv_keyboard_set_textarea(ap_keyboard, ap_pass_input);
+    lv_obj_clear_flag(ap_keyboard, LV_OBJ_FLAG_HIDDEN);
+    /* The cards are created after this point on a rebuild, so make sure the
+     * keyboard is not painted underneath them. */
+    lv_obj_move_foreground(ap_keyboard);
+}
+
+/* Keyboard tick (READY) saves, X (CANCEL) just dismisses. Saving on the
+ * tick means the keyboard's own confirm does the same thing as the Set
+ * button, instead of dropping what was typed the moment it closes. */
+static void _ap_keyboard_cb(lv_event_t *e)
+{
+    lv_event_code_t code = lv_event_get_code(e);
+
+    if (code == LV_EVENT_READY)
+        _ap_pass_set_cb(NULL);
+
+    if (ap_keyboard) {
+        lv_keyboard_set_textarea(ap_keyboard, NULL);
+        lv_obj_add_flag(ap_keyboard, LV_OBJ_FLAG_HIDDEN);
+    }
+}
 
 static void _ap_pass_set_cb(lv_event_t *e)
 {
