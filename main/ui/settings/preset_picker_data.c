@@ -382,6 +382,34 @@ const preconfig_item_t preconfig_items[] = {
 { "Link ECU", "Generic Dash", "APS (MAIN)",            "3E8", 1, 16, 16, 0.1,    0,    1, false, 0, 0, 0, 8, 13 },
 { "Link ECU", "Generic Dash", "ETHANOL %",             "3E8", 1, 32, 16, 1.0,    0,    0, false, 0, 0, 0, 8, 13 },
 
+/* ── Link ECU — AiM stream (CAN ids 0x5F0-0x5FF, NOT multiplexed) ─────
+ *
+ * Sixteen plain consecutive ids, four 16-bit Intel words per frame at fixed
+ * byte offsets — no frame index, so no mux fields on these rows. That is the
+ * whole difference from the Generic Dash block above.
+ *
+ * Full-scale 16-bit protocol: each channel spends all 65536 counts on its
+ * span, hence the odd divisors (TPS is raw/650, not raw/10). See the matching
+ * block in ecu_presets.c for the AiM MULT/DIV derivation — these two tables
+ * are kept in lockstep and tools/check_preset_signedness.py enforces it.
+ *
+ * Pressures land in kPa to match the rest of the dash (AiM sends MAP in mBar,
+ * oil/fuel/boost in bar). Only GEAR and IGNITION TIMING are signed. */
+{ "Link ECU", "AiM Stream", "ENGINE SPEED",     "5F0", 1,  0, 16, 1.0,        0,   0, false },
+{ "Link ECU", "AiM Stream", "TPS",              "5F0", 1, 16, 16, 0.00153846, 0,   1, false },
+{ "Link ECU", "AiM Stream", "VEHICLE SPEED",    "5F0", 1, 48, 16, 0.01,       0,   0, false },
+{ "Link ECU", "AiM Stream", "IAT",              "5F2", 1,  0, 16, 0.00526316, -45, 0, false },
+{ "Link ECU", "AiM Stream", "COOLANT TEMP",     "5F2", 1, 16, 16, 0.00526316, -45, 0, false },
+{ "Link ECU", "AiM Stream", "OIL TEMP",         "5F2", 1, 48, 16, 0.00526316, -45, 0, false },
+{ "Link ECU", "AiM Stream", "MAP",              "5F3", 1,  0, 16, 0.01,       0,   0, false },
+{ "Link ECU", "AiM Stream", "OIL PRESSURE",     "5F3", 1, 32, 16, 0.1,        0,   0, false },
+{ "Link ECU", "AiM Stream", "FUEL PRESSURE",    "5F3", 1, 48, 16, 5.0,        0,   0, false },
+{ "Link ECU", "AiM Stream", "BOOST",            "5F4", 1,  0, 16, 0.01,       0,   0, false },
+{ "Link ECU", "AiM Stream", "BATTERY VOLTAGE",  "5F4", 1, 16, 16, 0.0003125,  0,   1, false },
+{ "Link ECU", "AiM Stream", "GEAR POSITION",    "5F4", 1, 48, 16, 1.0,        0,   0, true  },
+{ "Link ECU", "AiM Stream", "LAMBDA 1",         "5F6", 1,  0, 16, 0.0005,     0,   2, false },
+{ "Link ECU", "AiM Stream", "IGNITION TIMING",  "5FB", 1, 32, 16, 0.00333333, 0,   1, true  },
+
 /* ── Toyota GT86 Gen 1 ──────────────────────────────────────────────────
  * Decode params published by the GT86/BRZ enthusiast community. Brake
  * pressure shares an 8-bit slot with Brake %; pick whichever is more

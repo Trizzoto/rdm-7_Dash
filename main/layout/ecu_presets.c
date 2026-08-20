@@ -675,6 +675,65 @@ const ecu_preset_t ECU_PRESETS[] = {
     },
 
     /* ══════════════════════════════════════════════════════════════════
+     * Link ECU — AiM stream. CAN ids 0x5F0-0x5FF, Intel LE, NOT multiplexed.
+     * Source: "AiM Infotech — AiM CAN protocol, Release 1.01" (the template
+     * an ECU transmits so an AiM MXS/MXL/MXG can read it). Select it in
+     * PCLink as the AiM/CAN dash stream; AiM's own end is configured as
+     * manufacturer "AIM", model "CAN_500kbits" or "CAN_1Mbit".
+     *
+     * NOT a mux, unlike the Generic Dash above — no frame index, no bit
+     * shuffling. Sixteen plain consecutive ids, each 8 bytes carrying four
+     * 16-bit little-endian words at fixed byte offsets, so a row is
+     * addressed by (id, bit_start) alone and mux_bit_length stays 0.
+     *
+     * The protocol is full-scale 16-bit: every channel spends the whole
+     * 0-65535 range on its stated span, which is why the divisors look
+     * unusual (TPS is raw/650 for 0-100.8 %, not raw/10). AiM states them
+     * as MULT/DIV plus a "x10"/"x100"/"x1000" tag on the unit; the scales
+     * below fold both together, e.g. TPS = 1/65 then /10 = raw/650.
+     * Temperatures are (raw/19 - 450) tenths of °C, so raw/190 - 45.
+     * Offsets are applied AFTER scaling here, which is why -45 and not -450.
+     *
+     * Pressures are converted to the dash's metric convention on the way in:
+     * AiM sends MAP/baro in mBar and oil/fuel/boost in bar, the dash wants
+     * kPa everywhere (1 mBar = 0.1 kPa, 1 bar = 100 kPa).
+     *
+     * FUEL LEVEL is deliberately absent: AiM sends litres (ECU_FUEL_LEV,
+     * 0x5F5 bytes 6-7) and this slot is a percentage everywhere else, so
+     * binding it would put litres on a % gauge. Same reasoning for the
+     * IMU channels on 0x5FA — AiM's "gyro" is degrees, not deg/s.
+     *
+     * DECODE NOT YET CONFIRMED AGAINST A CAR. The Generic Dash rows above
+     * are backed by docs/research/can-captures — these are from the AiM
+     * spec only. Capture a car running the AiM stream and check before
+     * treating them as proven.
+     * ══════════════════════════════════════════════════════════════════ */
+    {
+        .make = "Link ECU",
+        .version = "AiM Stream",
+        .display = "Link ECU (G4+ / G4X AiM Stream)",
+        .rows = {
+            [ECU_SIG_RPM]             = { 0x5F0,  0, 16, 1.0f,        0.0f,   false, 1, "rpm",    0 },
+            [ECU_SIG_THROTTLE]        = { 0x5F0, 16, 16, 0.00153846f, 0.0f,   false, 1, "%",      1 },
+            [ECU_SIG_VEHICLE_SPEED]   = { 0x5F0, 48, 16, 0.01f,       0.0f,   false, 1, "km/h",   0 },
+            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x5F2,  0, 16, 0.00526316f, -45.0f, false, 1, "degC",   0 },
+            [ECU_SIG_COOLANT_TEMP]    = { 0x5F2, 16, 16, 0.00526316f, -45.0f, false, 1, "degC",   0 },
+            [ECU_SIG_OIL_TEMP]        = { 0x5F2, 48, 16, 0.00526316f, -45.0f, false, 1, "degC",   0 },
+            [ECU_SIG_MAP]             = { 0x5F3,  0, 16, 0.01f,       0.0f,   false, 1, "kPa",    0 },
+            [ECU_SIG_OIL_PRESSURE]    = { 0x5F3, 32, 16, 0.1f,        0.0f,   false, 1, "kPa",    0 },
+            [ECU_SIG_FUEL_PRESSURE]   = { 0x5F3, 48, 16, 5.0f,        0.0f,   false, 1, "kPa",    0 },
+            [ECU_SIG_BOOST]           = { 0x5F4,  0, 16, 0.01f,       0.0f,   false, 1, "kPa",    0 },
+            [ECU_SIG_BATTERY_VOLTAGE] = { 0x5F4, 16, 16, 0.0003125f,  0.0f,   false, 1, "V",      1 },
+            /* Gear and ignition are the only signed rows in the template. */
+            [ECU_SIG_GEAR]            = { 0x5F4, 48, 16, 1.0f,        0.0f,   true,  1, "",       0 },
+            [ECU_SIG_LAMBDA]          = { 0x5F6,  0, 16, 0.0005f,     0.0f,   false, 1, "lambda", 2 },
+            [ECU_SIG_IGNITION]        = { 0x5FB, 32, 16, 0.00333333f, 0.0f,   true,  1, "deg",    1 },
+            [ECU_SIG_FUEL_TRIM]       = SIG_UNSUPPORTED,  /* not in the AiM template */
+            [ECU_SIG_EGT]             = SIG_UNSUPPORTED,  /* not in the AiM template */
+        },
+    },
+
+    /* ══════════════════════════════════════════════════════════════════
      * Toyota 86 / Subaru BRZ / Scion FR-S (2012-2020) — HS-CAN @ 500 kbps.
      *
      * VERIFIED ON HARDWARE 2026-07-25 against two Australian-market cars
