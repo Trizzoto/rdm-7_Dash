@@ -138,7 +138,14 @@ static void test_gate_distinguishes_all_fourteen_frames(void) {
  * web catalogue is generated from it), so these assert the shipped data
  * rather than a copy of it.
  */
-#define IS_LINK(it) ((it)->ecu && strcmp((it)->ecu, "Link ECU") == 0)
+/* Link ships two presets with deliberately OPPOSITE shapes, so these have to
+ * be scoped by version. Generic Dash is one id muxed on byte 0; the AiM stream
+ * is sixteen plain ids that use byte 0 as data. Matching on the make alone
+ * asserted the mux invariants against the AiM rows and failed the moment the
+ * second preset landed. */
+#define IS_LINK_OF(it, ver) ((it)->ecu && (it)->version &&                              strcmp((it)->ecu, "Link ECU") == 0 &&                              strcmp((it)->version, (ver)) == 0)
+#define IS_LINK(it)     IS_LINK_OF(it, "Generic Dash")
+#define IS_LINK_AIM(it) IS_LINK_OF(it, "AiM Stream")
 
 static void test_link_rows_all_share_one_can_id(void) {
 	int seen = 0;
@@ -159,6 +166,42 @@ static void test_link_rows_are_all_gated_on_byte_zero(void) {
 		TEST_ASSERT_EQUAL_INT(0, it->mux_bit_start);
 		/* Payload never overlaps the frame index or the reserved byte 1. */
 		TEST_ASSERT_TRUE(it->bit_start >= 16);
+	}
+}
+
+/* The mirror of the three tests above: the AiM rows must NOT drift into the
+ * mux shape, and must stay inside the block the spec defines. Without this the
+ * scoping above would just be a hole — any future Link version would silently
+ * escape every invariant in this file. */
+static void test_link_aim_rows_are_plain_consecutive_ids(void) {
+	int seen = 0;
+	for (int i = 0; i < preconfig_items_count; i++) {
+		const preconfig_item_t *it = &preconfig_items[i];
+		if (!IS_LINK_AIM(it)) continue;
+		seen++;
+		unsigned long id = strtoul(it->can_id, NULL, 16);
+		/* AiM defines exactly 0x5F0-0x5FF; anything outside is a typo. */
+		TEST_ASSERT_TRUE(id >= 0x5F0UL && id <= 0x5FFUL);
+		/* Not a mux — no frame index, no gating. */
+		TEST_ASSERT_EQUAL_INT(0, it->mux_bit_length);
+		TEST_ASSERT_EQUAL_INT(0, it->mux_value);
+		/* Four 16-bit words per frame, so byte 0 IS data here. */
+		TEST_ASSERT_EQUAL_INT(16, it->bit_length);
+		TEST_ASSERT_TRUE(it->bit_start == 0 || it->bit_start == 16 ||
+		                 it->bit_start == 32 || it->bit_start == 48);
+		TEST_ASSERT_EQUAL_INT(1, it->endianess);   /* little endian */
+	}
+	TEST_ASSERT_TRUE(seen >= 10);
+}
+
+static void test_link_aim_and_generic_dash_do_not_share_ids(void) {
+	for (int i = 0; i < preconfig_items_count; i++) {
+		if (!IS_LINK_AIM(&preconfig_items[i])) continue;
+		for (int k = 0; k < preconfig_items_count; k++) {
+			if (!IS_LINK(&preconfig_items[k])) continue;
+			TEST_ASSERT_TRUE(strcmp(preconfig_items[i].can_id,
+			                        preconfig_items[k].can_id) != 0);
+		}
 	}
 }
 
@@ -357,6 +400,8 @@ int main(void) {
 	RUN_TEST(test_link_rows_all_share_one_can_id);
 	RUN_TEST(test_link_rows_are_all_gated_on_byte_zero);
 	RUN_TEST(test_link_covers_many_distinct_frames);
+	RUN_TEST(test_link_aim_rows_are_plain_consecutive_ids);
+	RUN_TEST(test_link_aim_and_generic_dash_do_not_share_ids);
 	RUN_TEST(test_no_preset_looks_like_a_mismodelled_mux);
 
 	RUN_TEST(test_old_key_collapsed_the_whole_link_cycle);
