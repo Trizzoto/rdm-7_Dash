@@ -298,15 +298,25 @@ void channel_format_display_value(const channel_t *c, int16_t signal_index,
                                   float native_value, uint8_t decimals,
                                   char *buf, size_t cap) {
 	if (!buf || cap == 0) return;
-	/* Lap/sector times a minute or longer read as M:SS.sss — "1:23.456", not
-	 * "83.456". Guarded three ways so nothing else changes behaviour:
-	 * group (only Lap Timing & Race), unit (seconds), and magnitude (>= 60 —
-	 * which also keeps lap_delta_best, range ±60 s and signed, on the plain
-	 * numeric path where "-1.24" is the right rendering). This makes the
-	 * long-standing note on lap_time_current ("Formatted M:SS.sss in UI")
-	 * actually true. */
+	/* Lap and sector times read as M:SS.sss ALWAYS — "0:45.230", not "45.230".
+	 * A lap time is a lap time at 45 seconds the same as at 1:45, and a driver
+	 * reading a column of them should not have to notice that the format
+	 * changed halfway down. This used to be gated on `native_value >= 60`,
+	 * which made a sub-minute sector render as a bare number.
+	 *
+	 * That magnitude test was doing double duty, though: it was also what kept
+	 * lap_delta_best (±60 s, signed) on the plain numeric path, where "-1.24"
+	 * is the right rendering and "0:-1.240" would be nonsense. So the
+	 * discriminator moves to what the channel IS rather than what its value
+	 * happens to be: a duration cannot be negative and declares min == 0,
+	 * while a difference declares min == -60. native_value is checked too, so
+	 * a duration channel carrying a stray negative falls through and shows it
+	 * honestly instead of being clamped to "0:00.000".
+	 *
+	 * Still gated on group and unit, so nothing outside Lap Timing & Race in
+	 * seconds can be caught by it. */
 	if (c && c->group == CHGRP_LAP_TIMING && strcmp(c->units_native, "s") == 0 &&
-	    native_value >= 60.0f) {
+	    c->min >= 0.0f && native_value >= 0.0f) {
 		/* Round to display precision BEFORE splitting. Otherwise 119.9997 s
 		 * splits to 1 min + 59.9997 s and the seconds field rounds up to
 		 * "60.000" → "1:60.000" instead of "2:00.000". */
