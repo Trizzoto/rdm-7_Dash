@@ -26,6 +26,10 @@ static const char *TAG = "lap_engine";
 #define GPS_OFF_LAP      0x7u
 #define GPS_OFF_SECTOR   0x8u
 #define GPS_OFF_DELTA    0x9u
+/* Best and theoretical live here since the times went to u24 milliseconds —
+ * three of them no longer fit one 8-byte frame. 0xA/0xB are the device bus's
+ * asset transfer, hence 0xC. */
+#define GPS_OFF_REFERENCE 0xCu
 
 #define GPS_FLAG_FIX_OK 0x01u
 
@@ -37,7 +41,7 @@ static const char *TAG = "lap_engine";
 /* The no-time-yet sentinel. Times otherwise saturate at 0xFFFE, which is a
  * real (if implausible) 655.34 s lap — only the exact sentinel means "none
  * yet", never a merely huge value. */
-#define LAP_TIME_NONE 0xFFFFu
+#define LAP_TIME_NONE_MS 0xFFFFFFu
 
 /* Byte 0 of the status frame. 0x400 is only a CONVENTION — nothing stops a
  * customer's other ECU broadcasting there. The device type byte is what makes
@@ -65,6 +69,29 @@ static float    s_sector_time_current = 0.0f;
 static uint8_t  s_sector_number = 0;
 static float    s_lap_delta = 0.0f;
 
+/* When the last lap/sector frame landed, and the flags it carried.
+ *
+ * The puck times the lap, but it can only TELL us once per GNSS fix — 40 ms
+ * apart at 25 Hz. A clock that only moves every 40 ms advances in steps of
+ * exactly 40 ms, so its final millisecond digit is whatever the run started
+ * on and never changes: a driver watching 0:12.344 → 0:12.384 → 0:12.424
+ * reasonably concludes the last digit is broken. It is not; it is the sample
+ * grid showing through.
+ *
+ * So the running clock is carried locally between frames and snapped back to
+ * the puck's number the instant one arrives. The puck stays the authority for
+ * every time that gets RECORDED — this only affects the digits ticking over
+ * while a run is in progress. */
+static int64_t  s_lap_rx_us = 0;
+static int64_t  s_sector_rx_us = 0;
+static uint8_t  s_lap_flags = 0;
+
+/* Never carry the clock further than this past the last frame. At 25 Hz the
+ * real gap is 40 ms; anything approaching this means the puck has gone quiet,
+ * and a clock that keeps running on a dead feed invents lap time. Freezing is
+ * the honest failure — the driver sees it stop, which is true. */
+#define LAP_EXTRAPOLATE_MAX_US 500000
+
 /* Auto-bind: the first time a puck announces itself we wire up the Position &
  * GPS channels, so plugging one in is genuinely all a customer has to do. The
  * CAN handler only raises a flag — the actual binding activates channels,
@@ -73,6 +100,7 @@ static float    s_lap_delta = 0.0f;
 static bool s_gps_channels_bound = false;
 static volatile bool s_bind_requested = false;
 static lv_timer_t *s_housekeeping_timer = NULL;
+static lv_timer_t *s_running_clock_timer = NULL;
 
 /* Channels the engine feeds, with the internal signal that carries each one.
  * Same two-step as channel_math.c: register a synthetic signal, bind the
@@ -223,6 +251,29 @@ static void housekeeping_cb(lv_timer_t *t) {
 	}
 }
 
+/* Carries the running clock between frames — see s_lap_rx_us. 25 ms so the
+ * digits turn over faster than the eye resolves; the puck's own number wins
+ * the moment it lands. */
+static void running_clock_cb(lv_timer_t *t) {
+	(void)t;
+	/* Only while a run is actually being timed. Parked, these values are
+	 * static results and adding elapsed time to them would be a lie that
+	 * grows. */
+	if (!(s_lap_flags & LAP_FLAG_ARMED))
+		return;
+
+	int64_t now = esp_timer_get_time();
+	int64_t lap_gap = now - s_lap_rx_us;
+	if (s_lap_rx_us != 0 && lap_gap > 0 && lap_gap < LAP_EXTRAPOLATE_MAX_US)
+		signal_set_external_value("LAP_TIME_CUR",
+		                          s_lap_time_current + (float)lap_gap / 1000000.0f);
+
+	int64_t sect_gap = now - s_sector_rx_us;
+	if (s_sector_rx_us != 0 && sect_gap > 0 && sect_gap < LAP_EXTRAPOLATE_MAX_US)
+		signal_set_external_value("LAP_SECT_TIME",
+		                          s_sector_time_current + (float)sect_gap / 1000000.0f);
+}
+
 void lap_engine_start(void) {
 	/* NOT guarded by s_started: the re-assert must run on every layout load
 	 * because an ECU switch or fallback load wipes the signal registry. */
@@ -235,6 +286,8 @@ void lap_engine_start(void) {
 	 * bind its channels once. Everything time-critical is driven by CAN. */
 	if (!s_housekeeping_timer)
 		s_housekeeping_timer = lv_timer_create(housekeeping_cb, 1000, NULL);
+	if (!s_running_clock_timer)
+		s_running_clock_timer = lv_timer_create(running_clock_cb, 25, NULL);
 	ESP_LOGI(TAG, "lap engine started");
 }
 
@@ -266,11 +319,16 @@ int lap_engine_bind_gps_channels(void) {
 
 /* ── CAN ingest ────────────────────────────────────────────────────────── */
 
-/* A u16 lap/sector time field: the sentinel means "no time yet", anything
- * else (including the 0xFFFE saturation cap) is a real value in seconds. */
+/* A u24 lap/sector time field, milliseconds: the sentinel means "no time yet",
+ * anything else (including the 0xFFFFFE saturation cap) is a real value, and
+ * the result is seconds because that is the channels' native unit.
+ *
+ * u24 milliseconds replaced u16 centiseconds: 10 ms could not separate two
+ * runs a few thousandths apart, and a dash rendering three decimals was
+ * printing a trailing zero of its own invention. */
 static float decode_lap_time(const uint8_t *data, uint8_t bit_start) {
-	int64_t raw = can_extract_bits(data, bit_start, 16, 1, false);
-	return (raw == LAP_TIME_NONE) ? 0.0f : (float)raw * 0.01f;
+	int64_t raw = can_extract_bits(data, bit_start, 24, 1, false);
+	return (raw == LAP_TIME_NONE_MS) ? 0.0f : (float)raw * 0.001f;
 }
 
 void lap_engine_on_can_frame(uint32_t can_id, bool extd, const uint8_t *data, uint8_t dlc) {
@@ -312,9 +370,10 @@ void lap_engine_on_can_frame(uint32_t can_id, bool extd, const uint8_t *data, ui
 		if (!(flags & LAP_FLAG_HAVE_TRACK))
 			return;
 		s_lap_time_current = decode_lap_time(data, 0);
-		s_lap_time_last    = decode_lap_time(data, 16);
-		s_lap_time_best    = decode_lap_time(data, 32);
+		s_lap_time_last    = decode_lap_time(data, 24);
 		s_lap_number       = data[6];
+		s_lap_rx_us        = esp_timer_get_time();
+		s_lap_flags        = flags;
 		publish();
 		return;
 	}
@@ -324,8 +383,25 @@ void lap_engine_on_can_frame(uint32_t can_id, bool extd, const uint8_t *data, ui
 		if (!(flags & LAP_FLAG_HAVE_TRACK))
 			return;
 		s_sector_time_current = decode_lap_time(data, 0);
-		s_lap_time_theoretical = decode_lap_time(data, 32);
+		/* The frame also carries the last sector time at bit 24. Nothing on
+		 * the dash consumes it — there is no sector_time_last channel — so it
+		 * is left on the wire for loggers rather than decoded into a variable
+		 * that would only ever be written. */
 		s_sector_number = data[6];
+		s_sector_rx_us  = esp_timer_get_time();
+		publish();
+		return;
+	}
+
+	/* Best and theoretical: their own frame since the times went to u24 ms.
+	 * Sent on the slow cadence even mid-run — they only move when a lap or a
+	 * sector completes, so there is nothing to gain from arriving faster. */
+	if (offset == GPS_OFF_REFERENCE && dlc >= 8) {
+		uint8_t flags = data[7];
+		if (!(flags & LAP_FLAG_HAVE_TRACK))
+			return;
+		s_lap_time_best        = decode_lap_time(data, 0);
+		s_lap_time_theoretical = decode_lap_time(data, 24);
 		publish();
 		return;
 	}
@@ -338,8 +414,8 @@ void lap_engine_on_can_frame(uint32_t can_id, bool extd, const uint8_t *data, ui
 		 * than shown as a bogus number sourced from an undefined byte. */
 		if (!(flags & LAP_FLAG_HAVE_TRACK) || !(flags & LAP_FLAG_DELTA_VALID))
 			return;
-		int64_t raw = can_extract_bits(data, 0, 16, 1, true);
-		s_lap_delta = (float)raw * 0.01f;
+		int64_t raw = can_extract_bits(data, 0, 24, 1, true);
+		s_lap_delta = (float)raw * 0.001f;
 		publish();
 		return;
 	}

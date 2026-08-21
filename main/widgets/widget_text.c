@@ -249,10 +249,30 @@ static void _text_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsString(ch_item) && ch_item->valuestring && ch_item->valuestring[0] != '\0')
 		safe_strncpy(td->channel_id, ch_item->valuestring, sizeof(td->channel_id));
 	channel_t *bound_c = td->channel_id[0] ? channel_manager_get(td->channel_id) : NULL;
-	if (bound_c && bound_c->signal_index >= 0) {
+	/* Adopt the channel whenever it EXISTS, not only once its signal is live.
+	 *
+	 * This used to require signal_index >= 0, which made the binding depend on
+	 * boot order. A layout applied before lap_engine_start() registers the lap
+	 * signals found the channels without a signal yet, rejected them, and fell
+	 * through to the legacy signal-name path — so after every reboot
+	 * lap_time_current, sector_time_current and lap_time_theoretical rendered
+	 * as bare seconds while lap_time_best and lap_time_last, which happened to
+	 * be registered by then, rendered as M:SS.sss. Same layout, same widget
+	 * type, formatting that disagreed with itself down one column.
+	 *
+	 * The channel is what the formatter needs — group, units, min — and none
+	 * of that depends on a signal being bound yet. The signal is a separate
+	 * question, answered below and re-answered by _text_on_channel_changed
+	 * when the binding does arrive. */
+	if (bound_c) {
 		td->channel = bound_c;
-		safe_strncpy(td->signal_name, bound_c->signal_name, sizeof(td->signal_name));
-		td->signal_index = bound_c->signal_index;
+		/* Only take the channel's signal when it HAS one: overwriting a good
+		 * index from signal_find_by_name above with -1 would unbind a widget
+		 * that was about to work. */
+		if (bound_c->signal_index >= 0) {
+			safe_strncpy(td->signal_name, bound_c->signal_name, sizeof(td->signal_name));
+			td->signal_index = bound_c->signal_index;
+		}
 		/* Decimals default to the channel; a per-widget override in the layout
 		 * wins. Same rule as widget_panel / widget_bar — a text readout bound to
 		 * a channel should follow that channel's precision unless the user said
