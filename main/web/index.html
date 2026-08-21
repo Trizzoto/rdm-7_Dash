@@ -4552,7 +4552,13 @@
         <div style="background:var(--panel-elevated); border:1px solid var(--border); box-shadow:var(--shadow-md); border-radius:var(--radius-lg); padding:24px; min-width:280px; max-width:min(420px, 90vw); max-height:90vh; overflow-y:auto;">
             <div style="font-size:13px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:hsl(0,0%,100%); margin-bottom:16px;">Select ECU / Vehicle</div>
             <div id="ecuModalList" style="max-height:min(300px, 60vh); overflow-y:auto; display:flex; flex-direction:column; gap:4px;"></div>
-            <div style="margin-top:16px; text-align:right;">
+            <div style="margin-top:16px; display:flex; justify-content:space-between; gap:8px;">
+                <!-- Every exit from here used to record a decision: the only
+                     button committed "Custom (No ECU)", the backdrop had no
+                     onclick and there was no Escape handler. Having typed a
+                     name for the new layout you were obliged to create it and
+                     then delete it again if you had changed your mind. -->
+                <button class="btn btn-secondary" onclick="ecuModalCancel()">Cancel</button>
                 <button class="btn btn-secondary" onclick="ecuModalSelect('','')">Custom (No ECU)</button>
             </div>
         </div>
@@ -19300,6 +19306,17 @@
             }
         }
 
+        /* Backing out. Resolves null rather than a choice, and every caller
+           has to treat that as "make nothing" — see layoutEditorNew, which
+           returns before it touches currentLayout. */
+        function ecuModalCancel() {
+            document.getElementById('ecuModal').style.display = 'none';
+            if (_ecuModalResolve) {
+                _ecuModalResolve(null);
+                _ecuModalResolve = null;
+            }
+        }
+
         /* Override layoutEditorNew to show ECU modal and save immediately.
          *
          * The empty layout is saved with just the chosen ECU's metadata
@@ -19315,6 +19332,7 @@
             const safeName = name.trim().replace(/[^a-zA-Z0-9_-]/g, '_');
             if (safeName === 'default') { showToast('Cannot use name "default"', 'error'); return; }
             const ecuChoice = await showEcuModal();
+            if (!ecuChoice) return;      /* Cancel — nothing has been made yet */
             pushHistory();
             currentLayout = { name: safeName, widgets: [], signals: [] };
             if (ecuChoice.ecu) {
