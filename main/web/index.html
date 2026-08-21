@@ -4308,6 +4308,18 @@
             <div style="font-size:11px; color:var(--text-muted); line-height:1.5;">
                 The dash will reboot automatically when the flash finishes. Don't power-cycle until you see the splash screen.
             </div>
+            <!-- Appears only once the flash has finished, failed, or never
+                 started. Deliberately absent WHILE the write is running: there
+                 is nothing useful to do with the editor until the dash comes
+                 back, and a Close on a live flash invites exactly the
+                 power-cycle the line above warns against.
+                 Without it this modal had no way out at all — no button, no
+                 backdrop click, no Escape — and all three of its terminal
+                 states simply returned with it still up. A successful update
+                 left an opaque full-window overlay reading "Complete — dash is
+                 rebooting…" forever, and the only recovery was relaunching. -->
+            <button class="btn btn-secondary" id="otaInstallClose" style="display:none; align-self:flex-end;"
+                    onclick="document.getElementById('otaInstallModal').style.display='none'">Close</button>
         </div>
     </div>
     <!-- Signal Manager Modal (includes Preset Picker as second view) -->
@@ -19874,10 +19886,22 @@
                 _otaDoInstall);
         }
 
+        /* The install modal has no way out while the flash is running, on
+           purpose. This is what gives it one once there is nothing left to
+           wait for — called from every branch that stops polling, so a state
+           that stops can never be a state that traps. */
+        function _otaInstallOver() {
+            const b = document.getElementById('otaInstallClose');
+            if (b) b.style.display = '';
+        }
+
         async function _otaDoInstall() {
             document.getElementById('updateBanner').style.display = 'none';
             const modal = document.getElementById('otaInstallModal');
             modal.style.display = 'flex';
+            const closeBtn = document.getElementById('otaInstallClose');
+            if (closeBtn) closeBtn.style.display = 'none';   /* a re-run starts sealed again */
+            _otaPollFails = 0;
             const summary = document.getElementById('otaInstallSummary');
             const bar     = document.getElementById('otaInstallBar');
             const status  = document.getElementById('otaInstallStatus');
@@ -19892,10 +19916,19 @@
                 if (!resp.ok && resp.status !== 202) throw new Error('start failed');
             } catch (e) {
                 status.textContent = 'Could not start — check network and try again.';
+                _otaInstallOver();
                 return;
             }
             _otaPollInstall();
         }
+
+        /* Consecutive status polls that got no answer. A dash mid-flash can go
+           quiet for a while and that is normal, so this is not an error on its
+           own — but a dash that never answers again used to leave the poll
+           looping every two seconds behind a modal that could not be closed,
+           silently, for as long as the editor stayed open. */
+        let _otaPollFails = 0;
+        const OTA_POLL_GIVE_UP = 45;      /* × 2 s ≈ 90 s of silence */
 
         async function _otaPollInstall() {
             const bar    = document.getElementById('otaInstallBar');
@@ -19903,20 +19936,38 @@
             try {
                 const r = await fetch('/api/ota/status');
                 if (r.ok) {
+                    _otaPollFails = 0;
                     const d = await r.json();
                     const pct = Math.max(0, Math.min(100, d.progress || 0));
                     bar.style.width = pct + '%';
                     status.textContent = `${d.status || 'installing'} — ${pct}%`;
                     if (d.status === 'completed') {
                         status.textContent = 'Complete — dash is rebooting…';
+                        _otaInstallOver();
                         return;
                     }
                     if (d.status === 'failed') {
                         status.textContent = 'Update failed. Reboot the dash and try again.';
+                        _otaInstallOver();
                         return;
                     }
+                } else {
+                    _otaPollFails++;
                 }
-            } catch (e) { /* silent */ }
+            } catch (e) {
+                _otaPollFails++;
+            }
+            /* Silence for long enough that we are no longer reporting on
+               anything. Say so and hand the editor back, rather than polling a
+               dash that is not there behind a modal that cannot be dismissed.
+               The flash itself is not cancelled — it is on the dash, and it
+               finishes or does not on its own. */
+            if (_otaPollFails >= OTA_POLL_GIVE_UP) {
+                status.textContent = 'Lost contact with the dash. It may still be flashing — ' +
+                                     'check its screen before power-cycling.';
+                _otaInstallOver();
+                return;
+            }
             setTimeout(_otaPollInstall, 2000);
         }
 
