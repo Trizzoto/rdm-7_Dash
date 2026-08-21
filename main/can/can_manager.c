@@ -72,6 +72,27 @@ static volatile bool     s_suspended = false;
 
 #define CAN_TASK_PRIORITY 7
 
+/* Depth of the TWAI driver's own RX queue, overriding the IDF default of 5.
+ *
+ * Five frames is under 8 ms of buffering on a busy bus (~650 frames/s on a
+ * GT86 with the GPS puck attached), and this task is priority 7 pinned to
+ * core 0 — the same core as the WiFi task (23) and the lwIP task (18), both
+ * of which preempt it. Stalls of tens of milliseconds are therefore routine,
+ * and every one of them silently drops frames the bus already delivered.
+ *
+ * Those losses surface as twai_status_info_t.rx_missed, NOT as a bus error,
+ * which makes them very easy to misread as an electrical fault. Measured on
+ * a live car before this change: ~116 dropped frames/s with the network
+ * idle, ~327/s while the HTTP API was being polled — 15% of the bus.
+ *
+ * 64 matches the downstream s_can_queue depth so neither stage is the odd
+ * bottleneck; the cost is ~1 KB of internal SRAM. */
+#define CAN_RX_QUEUE_LEN 64
+
+/* Poll interval for the RX loop's TWAI state instrumentation. See the
+ * comment at its call site: this used to run once per received frame. */
+#define CAN_STATE_POLL_INTERVAL_US (250LL * 1000)
+
 /* Queue used to hand CAN frames from the TWAI RX task to the LVGL thread.
  * The LVGL thread drains this via can_process_queued_frames(), ensuring
  * that all widget/UI work happens on a single thread while the RX loop
@@ -183,10 +204,12 @@ static void can_receive_task(void *pvParameter) {
 	int64_t last_busoff_attempt_us = 0;
 
 	/* INSTRUMENTATION (D) — low-rate state log. Track the last-logged TWAI
-	 * state so we emit on every transition, plus a heartbeat every ~5 s so
+	 * state so we emit on every transition, plus a heartbeat every 60 s so
 	 * we can see bus-off / error-counter climb on-device without spamming.*/
 	twai_state_t last_logged_state = (twai_state_t)0xFF; /* impossible → forces first log */
 	int64_t last_state_log_us = 0;
+	/* Negative so the first iteration always polls, whatever the boot time. */
+	int64_t last_state_poll_us = -CAN_STATE_POLL_INTERVAL_US;
 
 	s_can_task_running = true;
 
@@ -194,13 +217,26 @@ static void can_receive_task(void *pvParameter) {
 		twai_message_t message;
 		esp_err_t ret = twai_receive(&message, pdMS_TO_TICKS(5));
 
-		/* INSTRUMENTATION (D): cheap state snapshot. Log on state change OR
-		 * every ~5 s. twai_get_status_info() is a lightweight register read;
-		 * we only call the logger when something is worth printing. */
-		{
+		/* INSTRUMENTATION (D): low-rate state snapshot. Log on state change
+		 * OR every 60 s.
+		 *
+		 * This block used to run on EVERY loop iteration. twai_get_status_info()
+		 * is not as cheap as "a register read" implies — it takes the driver's
+		 * critical section — and at ~650 frames/s that was ~650 of them per
+		 * second, plus an esp_timer_get_time(), spent on a log line that emits
+		 * on a state change or once a minute. On the hot path of a task that
+		 * was already dropping 15% of the bus, that is real budget.
+		 *
+		 * Poll at 250 ms instead. A TWAI state transition shorter than that is
+		 * not something a log line can usefully describe, and nothing else
+		 * depends on this block: bus-off detection reads status itself in the
+		 * ESP_ERR_TIMEOUT branch below. */
+		int64_t now_us = esp_timer_get_time();
+		if (now_us - last_state_poll_us >= CAN_STATE_POLL_INTERVAL_US) {
+			last_state_poll_us = now_us;
+
 			twai_status_info_t dbg;
 			if (twai_get_status_info(&dbg) == ESP_OK) {
-				int64_t now_us = esp_timer_get_time();
 				bool changed = (dbg.state != last_logged_state);
 				/* State transitions are worth seeing at INFO; the periodic
 				 * heartbeat is steady-state noise once a unit is known healthy,
@@ -254,7 +290,8 @@ static void can_receive_task(void *pvParameter) {
 			twai_status_info_t info;
 			if (twai_get_status_info(&info) == ESP_OK &&
 			    info.state == TWAI_STATE_BUS_OFF) {
-				int64_t now_us = esp_timer_get_time();
+				/* Reuses now_us from the top of this iteration — read
+				 * microseconds ago, against a one-second throttle. */
 				if (now_us - last_busoff_attempt_us >= 1LL * 1000 * 1000) {
 					last_busoff_attempt_us = now_us;
 					_recover_from_bus_off(&info);
@@ -479,6 +516,13 @@ static void _stop_can_task(void) {
  * @return     ESP_OK on success, last error code if all attempts fail.
  */
 static esp_err_t _install_twai_with_retry(const char *ctx) {
+	/* Applied here rather than at g_config's definition because the
+	 * TWAI_GENERAL_CONFIG_DEFAULT macro is a braced initializer with no room
+	 * to append, and because this is the single choke point every install
+	 * path routes through (init, filter rebuild, promiscuous toggle, bitrate
+	 * change) — so no path can end up back on the IDF default of 5. */
+	g_config.rx_queue_len = CAN_RX_QUEUE_LEN;
+
 	esp_err_t err = ESP_FAIL;
 	for (int attempt = 0; attempt < 3; attempt++) {
 		err = twai_driver_install(&g_config, &g_t_config, &f_config);
