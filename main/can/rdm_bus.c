@@ -333,7 +333,12 @@ static void _announce(void) {
     };
     uint8_t f[8];
     rdm_bus_announce_pack(&a, f);
-    can_transmit_frame(RDM_BUS_DISCOVERY_ID, f, 8);
+    /* Non-blocking: _tick is an lv_timer, so this runs on the RENDER thread.
+     * The blocking form waits up to 5 ms for a TX slot, and at 1 Hz that made
+     * a metronomic visible stutter once the bus began refusing transmissions.
+     * The announce repeats every second and is idempotent, so a skipped one
+     * costs a second of discovery latency and nothing else. */
+    can_try_transmit_frame(RDM_BUS_DISCOVERY_ID, f, 8);
 }
 
 static void _reconcile(void) {

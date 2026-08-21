@@ -871,6 +871,29 @@ esp_err_t can_transmit_frame_ext(uint32_t can_id, bool extd,
 	return ret;
 }
 
+esp_err_t can_try_transmit_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc) {
+	/* Non-blocking twin of can_transmit_frame, for callers that run on the
+	 * LVGL thread.
+	 *
+	 * can_transmit_frame_ext waits up to 5 ms for a TX slot. That is nothing
+	 * on a CAN task and a lot on the render thread: at ~41 fps a frame is
+	 * 24 ms, so a 5 ms stall is a fifth of the budget and shows up as a visible
+	 * hitch. rdm_bus's announce runs from an lv_timer at exactly 1 Hz, which
+	 * made the hitch periodic and metronomic — reported as "a twitch every
+	 * second, like it is on a timer" — once the bus started refusing
+	 * transmissions often enough for the wait to actually elapse.
+	 *
+	 * A 1 Hz heartbeat has no business blocking a repaint: it is idempotent
+	 * and repeats a second later, so failing to send one is free. Callers that
+	 * genuinely need delivery keep using can_transmit_frame. */
+	twai_message_t msg = {0};
+	msg.identifier = can_id & 0x7FFu;
+	msg.data_length_code = dlc > 8 ? 8 : dlc;
+	if (data && msg.data_length_code)
+		memcpy(msg.data, data, msg.data_length_code);
+	return twai_transmit(&msg, 0);
+}
+
 esp_err_t can_transmit_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc) {
 	return can_transmit_frame_ext(can_id, false, data, dlc);
 }

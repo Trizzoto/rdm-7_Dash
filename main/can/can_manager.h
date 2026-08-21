@@ -90,6 +90,19 @@ void can_process_queued_frames(void);
 esp_err_t can_transmit_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc);
 
 /**
+ * Transmit if a TX slot is free RIGHT NOW, otherwise give up immediately.
+ *
+ * For callers on the LVGL thread. can_transmit_frame waits up to 5 ms for a
+ * slot, which is a fifth of a 24 ms render frame — periodic senders on an
+ * lv_timer turn that into a metronomic visible hitch as soon as the bus starts
+ * refusing transmissions. Use this for anything idempotent and repeating (a
+ * heartbeat, an announce); use can_transmit_frame when delivery matters.
+ *
+ * @return ESP_OK if queued, ESP_ERR_TIMEOUT if no slot was free.
+ */
+esp_err_t can_try_transmit_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc);
+
+/**
  * Transmit a single CAN frame with explicit frame format.
  * Same semantics as can_transmit_frame but supports extended (29-bit)
  * identifiers — required for 29-bit ISO 15765-4 OBD2 addressing
