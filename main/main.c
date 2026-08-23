@@ -79,6 +79,28 @@ SemaphoreHandle_t lvgl_mux = NULL;
 #define I2C_MASTER_RX_BUF_DISABLE 0 /*!< I2C master doesn't need buffer */
 #define I2C_MASTER_TIMEOUT_MS 1000
 
+/* ── CH422G I/O expander (boot-critical bits) ─────────────────────────
+ *
+ * The expander has a mode register at I2C 0x24 and an output register at
+ * 0x38. Bit 5 of the output register is USB_SEL, which drives the U9 2:1
+ * analog mux: it routes ESP GPIO19/20 either to the USB-C data pins or to
+ * the CAN transceiver U7 (TXD = U7.1, RXD = U7.4). USB_SEL HIGH selects
+ * the CAN side.
+ *
+ * 0x0A was the historical output value written at LCD bring-up time. It
+ * leaves bit 5 CLEAR, which parks the mux on USB — see
+ * can_bus_park_recessive() for why that was actively harmful. Every write
+ * to 0x38 during boot must keep USB_SEL set. */
+#define CH422G_MODE_ADDR    0x24
+#define CH422G_OUT_ADDR     0x38
+#define CH422G_MODE_DEFAULT 0x01
+#define CH422G_OUT_USB_SEL  (1 << 5) /* HIGH = GPIO19/20 -> CAN transceiver */
+#define CH422G_OUT_BASE     (0x0A | CH422G_OUT_USB_SEL) /* 0x2A */
+
+/* TWAI TX pin. Must match the TX GPIO in can_manager.c's
+ * TWAI_GENERAL_CONFIG_DEFAULT(20, 19, ...). */
+#define CAN_TX_GPIO GPIO_NUM_20
+
 #define GPIO_INPUT_IO_4 4
 #define GPIO_INPUT_PIN_SEL (1ULL << GPIO_INPUT_IO_4)
 static const char *TAG = "main";
@@ -175,6 +197,68 @@ static esp_err_t i2c_master_init(void) {
   return i2c_driver_install(i2c_master_port, conf.mode,
                             I2C_MASTER_RX_BUF_DISABLE,
                             I2C_MASTER_TX_BUF_DISABLE, 0);
+}
+
+/**
+ * Park the CAN transceiver in the recessive state before anything else in
+ * boot runs. Must be the FIRST thing app_main() does.
+ *
+ * Why this exists: on this board the CAN_TX net has exactly two nodes —
+ * U7.1 (transceiver TXD) and U9.7 (the USB/CAN mux) — and carries no
+ * pull-up. Until USB_SEL selects the CAN side of the mux, TXD is floating,
+ * and a floating TXD on a TJA1051-class transceiver drifts below V_IL and
+ * clamps CANH/CANL dominant. A node holding the bus dominant means no
+ * other node can transmit a single frame.
+ *
+ * The mux used to be switched to CAN only at the GT911 touch reset, well
+ * after LCD panel init and framebuffer allocation — one to two seconds
+ * into boot. Powering the dash up alongside an ECU therefore jammed the
+ * bus right through the ECU's own CAN startup and drove it bus-off, with
+ * no recovery. Plugging the dash into an already-running bus looked fine,
+ * because a healthy running node rides out the jam and recovers; that
+ * asymmetry is what gave the bug away.
+ *
+ * Order matters. Drive GPIO20 recessive FIRST, then switch the mux, so the
+ * transceiver never sees a floating or dominant TXD. Runs before the TWAI
+ * driver is installed — can_init() re-routes the pin through the TWAI
+ * matrix later, which also idles recessive, so there is no gap.
+ *
+ * i2c_master_init() is called here rather than at LCD bring-up because the
+ * mux write needs the bus. It is not re-installed later.
+ */
+static void can_bus_park_recessive(void) {
+  /* 1. Drive TXD recessive so the transceiver cannot see a dominant level
+   *    once the mux connects it. */
+  gpio_reset_pin(CAN_TX_GPIO);
+  gpio_set_direction(CAN_TX_GPIO, GPIO_MODE_OUTPUT);
+  gpio_set_level(CAN_TX_GPIO, 1);
+
+  /* 2. Bring up I2C and point the mux at the CAN transceiver. */
+  esp_err_t err = i2c_master_init();
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "Early I2C init failed (%s) — CAN mux left at POR default",
+             esp_err_to_name(err));
+    return;
+  }
+
+  uint8_t b = CH422G_MODE_DEFAULT;
+  esp_err_t m = i2c_master_write_to_device(I2C_MASTER_NUM, CH422G_MODE_ADDR,
+                                           &b, 1,
+                                           I2C_MASTER_TIMEOUT_MS /
+                                               portTICK_PERIOD_MS);
+  b = CH422G_OUT_BASE;
+  esp_err_t o = i2c_master_write_to_device(I2C_MASTER_NUM, CH422G_OUT_ADDR,
+                                           &b, 1,
+                                           I2C_MASTER_TIMEOUT_MS /
+                                               portTICK_PERIOD_MS);
+  if (m != ESP_OK || o != ESP_OK) {
+    ESP_LOGE(TAG, "CH422G early write failed (mode=%s out=%s) — CAN TXD may "
+                  "float and jam the bus",
+             esp_err_to_name(m), esp_err_to_name(o));
+    return;
+  }
+
+  ESP_LOGI(TAG, "CAN TXD parked recessive, USB/CAN mux -> transceiver");
 }
 
 static bool
@@ -791,6 +875,11 @@ static void _deferred_wifi_boot_cb(lv_timer_t *timer) {
 }
 
 void app_main(void) {
+  /* FIRST. Stops the dash holding a shared CAN bus dominant while it
+   * boots, which was driving co-powered ECUs bus-off. See the function
+   * comment for the full mechanism. */
+  can_bus_park_recessive();
+
   // Initialize PWM for GPIO16
   init_pwm();
 
@@ -931,20 +1020,17 @@ void app_main(void) {
            "LCD backlight pin configured (will turn on after display setup)");
 #endif
   gpio_install_isr_service(ESP_INTR_FLAG_LEVEL1);
-  // Initialize I2C
-  ESP_ERROR_CHECK(i2c_master_init());
-  ESP_LOGI(TAG, "I2C initialized successfully");
-  // gpio_init();
-  // Set initial configuration for I2C device at 0x24 (CH422G mode register)
-  // 0x24 = mode config, 0x38 = output register (pins 0-7)
-  // USB_SEL (EXIO5) is set via 0x38 writes below (bit 5 in 0x2C = HIGH)
-  uint8_t write_buf = 0x01;
-  i2c_master_write_to_device(I2C_MASTER_NUM, 0x24, &write_buf, 1,
-                             I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
 
-  // Additional configuration for SD card CS pin at address 0x38
-  write_buf = 0x0A;
-  i2c_master_write_to_device(I2C_MASTER_NUM, 0x38, &write_buf, 1,
+  /* I2C and the CH422G mode register are already up — can_bus_park_recessive()
+   * needed them at the very top of boot to switch the USB/CAN mux. */
+
+  /* SD card CS pin state. CH422G_OUT_BASE is the historical 0x0A with
+   * USB_SEL added: writing a bare 0x0A here would clear bit 5 and swing the
+   * mux back to USB mid-boot, unhooking the CAN transceiver and leaving its
+   * TXD floating (i.e. dominant) until the GT911 reset below happened to set
+   * bit 5 again. Every 0x38 write during boot keeps USB_SEL set. */
+  uint8_t write_buf = CH422G_OUT_BASE;
+  i2c_master_write_to_device(I2C_MASTER_NUM, CH422G_OUT_ADDR, &write_buf, 1,
                              I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
   vTaskDelay(pdMS_TO_TICKS(10));
 
@@ -985,13 +1071,13 @@ void app_main(void) {
 #define GT911_RESET_SEQ()                                                      \
   do {                                                                         \
     uint8_t _b;                                                                \
-    _b = 0x2C; /* assert RST low via CH422G */                                 \
+    _b = (0x0C | CH422G_OUT_USB_SEL); /* RST low, keep mux on CAN */      \
     i2c_master_write_to_device(I2C_MASTER_NUM, 0x38, &_b, 1,                   \
                                I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);    \
     vTaskDelay(pdMS_TO_TICKS(10));                                             \
     gpio_set_level(GPIO_INPUT_IO_4, 0); /* INT low → addr 0x5D */            \
     vTaskDelay(pdMS_TO_TICKS(10));                                             \
-    _b = 0x2E; /* release RST */                                               \
+    _b = (0x0E | CH422G_OUT_USB_SEL); /* release RST, keep mux on CAN */  \
     i2c_master_write_to_device(I2C_MASTER_NUM, 0x38, &_b, 1,                   \
                                I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);    \
     vTaskDelay(pdMS_TO_TICKS(GT911_POST_RST_DELAY_MS));                        \

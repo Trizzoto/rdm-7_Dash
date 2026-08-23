@@ -59,3 +59,14 @@ CONFIG_LITTLEFS_READ_SIZE=128
 CONFIG_LITTLEFS_WRITE_SIZE=128
 CONFIG_LITTLEFS_LOOKAHEAD_SIZE=128
 CONFIG_LITTLEFS_BLOCK_CYCLES=512
+
+# ── USB-Serial-JTAG off ───────────────────────────────────────────────
+# The USJ peripheral is hard-wired to GPIO19/20 on the ESP32-S3, and on
+# this board those are the CAN pins: they feed the U9 mux whose CAN-side
+# output is the transceiver's TXD/RXD. With USJ enabled the USB PHY can
+# drive D+ (GPIO20 = TXD) low, which is a dominant bit — one node holding
+# the bus dominant stops every other node transmitting. It is only a
+# SECONDARY console here; the primary is UART0 and the dev path is the
+# on-board CH343 bridge, so nothing is lost except flashing over the
+# native USB port.
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
