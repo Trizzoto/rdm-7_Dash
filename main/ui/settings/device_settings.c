@@ -2381,7 +2381,8 @@ static void _layout_reset_confirm_cb(lv_event_t *e) {
             if (config_store_load_ecu(make, sizeof(make), ver, sizeof(ver)) == ESP_OK &&
                 make[0] && ver[0]) {
                 const ecu_preset_t *p = ecu_preset_find(make, ver);
-                if (p) ecu_preset_apply_to_layout("default", p);
+                if (p) ecu_preset_apply_to_layout_rebased(
+                           "default", p, config_store_load_ecu_base_id());
             }
             layout_manager_bump_version();
 

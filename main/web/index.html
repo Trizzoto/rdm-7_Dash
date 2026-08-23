@@ -6875,7 +6875,14 @@
                 </div>`;
             document.body.appendChild(overlay);
             const inp = document.getElementById('_promptInput');
-            const cancel = () => { overlay.remove(); };
+            /* Every exit that isn't OK — Cancel, backdrop, Escape — comes
+             * through here, so an opts.onCancel caller can't be left hanging
+             * on a promise that only the OK path would have settled. */
+            const cancel = () => {
+                if (!overlay.parentNode) return;
+                overlay.remove();
+                if (_opts.onCancel) _opts.onCancel();
+            };
             document.getElementById('_promptCancel').onclick = cancel;
             overlay.addEventListener('click', e => { if (e.target === overlay) cancel(); });
             document.getElementById('_promptOk').onclick = () => {
@@ -18430,6 +18437,35 @@
             }
         }
 
+        /* Ask for the stream's base CAN ID. Only reached for presets that
+         * report a non-zero base_id — an ECU whose dash stream is a
+         * contiguous run of frames it can retransmit from another id. Useful
+         * when the stock base is already taken by a second dash on the bus.
+         * Resolves to a number, or null if the user cancelled. */
+        function _promptEcuBaseId(stockBase) {
+            const cur = (currentLayout && currentLayout.ecu_base_id) || stockBase;
+            const hex = n => '0x' + n.toString(16).toUpperCase();
+            return new Promise(resolve => {
+                _showPromptOverlay('Base CAN ID', String(cur), (val) => {
+                    /* Accept decimal (1300) or hex (0x514) — tuning software
+                     * shows one or the other depending on the page you're on. */
+                    const n = /^0[xX]/.test(val) ? parseInt(val, 16) : parseInt(val, 10);
+                    if (!Number.isFinite(n) || n < 1 || n > 0x7FF) {
+                        updateStatus('Base CAN ID must be 1-2047 (0x001-0x7FF)');
+                        resolve(null);
+                        return;
+                    }
+                    resolve(n);
+                }, {
+                    raw: true,
+                    onCancel: () => resolve(null),
+                    subtitle: `Stock base is ${stockBase} (${hex(stockBase)}). The whole stream `
+                        + `shifts with it — every frame keeps its order and bit layout, `
+                        + `just starting from the id you enter.\nDecimal or 0x hex.`
+                });
+            });
+        }
+
         async function _ecuPresetPick(el) {
             const make = el.dataset.make;
             const version = el.dataset.version;
@@ -18438,15 +18474,30 @@
                 ? 'Switch to RDM-7 Internal? Your existing signals are preserved; the Gear Setup will open so you can configure ratios.'
                 : `Apply ${make} ${version}? This overwrites your layout's signals with the ECU's default decode.`;
             if (!(await confirmAsync(isRdmInternal ? 'Switch to RDM-7 Internal' : 'Apply ECU Preset', confirmMsg, isRdmInternal ? 'Switch' : 'Apply'))) return;
+
+            /* Rebasable presets get a follow-up asking where the stream starts. */
+            const meta = (_ecuPresetState && _ecuPresetState.presets || [])
+                .find(x => x.make === make && x.version === version);
+            const stockBase = (meta && meta.base_id) || 0;
+            let baseId = 0;
+            if (stockBase) {
+                baseId = await _promptEcuBaseId(stockBase);
+                if (baseId === null) return;   /* cancelled */
+            }
+
             try {
+                const body = { make, version };
+                if (baseId) body.base_id = baseId;
                 const r = await fetch('/api/ecu/set', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ make, version })
+                    body: JSON.stringify(body)
                 });
                 if (!r.ok) throw new Error(await r.text());
                 closeEcuPreset();
-                updateStatus(`ECU preset applied: ${make} ${version} — reloading layout...`);
+                updateStatus(`ECU preset applied: ${make} ${version}`
+                    + (baseId && baseId !== stockBase ? ` @ base ${baseId}` : '')
+                    + ' — reloading layout...');
                 setTimeout(() => {
                     fetchLayouts();
                     loadLayout();

@@ -442,11 +442,19 @@ static esp_err_t layout_save_handler(httpd_req_t *req) {
 	esp_err_t err = layout_manager_save_raw(layout_name, root);
 	/* Capture ecu identity before freeing root for the deferred apply call. */
 	char preset_make[32] = {0}, preset_ver[32] = {0};
+	uint32_t preset_base = 0;
 	if (preset_applied) {
 		const cJSON *ei = cJSON_GetObjectItemCaseSensitive(root, "ecu");
 		const cJSON *vi = cJSON_GetObjectItemCaseSensitive(root, "ecu_version");
 		if (cJSON_IsString(ei)) snprintf(preset_make, sizeof(preset_make), "%s", ei->valuestring);
 		if (cJSON_IsString(vi)) snprintf(preset_ver,  sizeof(preset_ver),  "%s", vi->valuestring);
+		/* Carry the layout's own rebased base through the re-apply, so a
+		 * save doesn't rewrite a relocated stream back to the stock ids. */
+		const cJSON *bi = cJSON_GetObjectItemCaseSensitive(root, "ecu_base_id");
+		if (cJSON_IsNumber(bi) && bi->valuedouble > 0 &&
+		    bi->valuedouble <= ECU_PRESET_MAX_STD_CAN_ID) {
+			preset_base = (uint32_t)bi->valuedouble;
+		}
 	}
 	cJSON_Delete(root);
 	if (err != ESP_OK) {
@@ -460,7 +468,8 @@ static esp_err_t layout_save_handler(httpd_req_t *req) {
 	 * double write only happens on this auto-apply path, not on every save. */
 	if (preset_applied && preset_make[0] && preset_ver[0]) {
 		const ecu_preset_t *p = ecu_preset_find(preset_make, preset_ver);
-		if (p && ecu_preset_apply_to_layout(layout_name, p) != ESP_OK) {
+		if (p && ecu_preset_apply_to_layout_rebased(
+		             layout_name, p, preset_base) != ESP_OK) {
 			ESP_LOGW(TAG, "auto-apply of preset %s/%s to '%s' failed; "
 			              "layout saved without signal bindings",
 			         preset_make, preset_ver, layout_name);
@@ -703,6 +712,9 @@ static esp_err_t ecu_list_handler(httpd_req_t *req) {
 		cJSON_AddStringToObject(item, "display", ECU_PRESETS[i].display);
 		cJSON_AddNumberToObject(item, "match_score",
 		                        ecu_preset_match_score(&ECU_PRESETS[i]));
+		/* Non-zero = the stream is a contiguous block the user can relocate;
+		 * the picker shows a Base CAN ID box pre-filled with this. */
+		cJSON_AddNumberToObject(item, "base_id", ECU_PRESETS[i].base_id);
 		cJSON_AddItemToArray(arr, item);
 	}
 	cJSON_AddNumberToObject(root, "match_threshold", ECU_PRESET_MATCH_THRESHOLD);
@@ -755,7 +767,11 @@ static esp_err_t ecu_current_handler(httpd_req_t *req) {
 	return web_server_send_json(req, root);
 }
 
-/* POST /api/ecu/set  body: {"make":"...","version":"..."} - empty strings clear */
+/* POST /api/ecu/set  body: {"make":"...","version":"...","base_id":1000}
+ * Empty make/version clears the ECU. base_id is optional and only meaningful
+ * for presets that report a non-zero base_id in /api/ecu/list — it relocates
+ * the whole contiguous stream so the dash decodes an ECU retransmitting it
+ * from a different id. Omitted or 0 = stock ids. */
 static esp_err_t ecu_set_handler(httpd_req_t *req) {
 	char buf[128];
 	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
@@ -772,6 +788,17 @@ static esp_err_t ecu_set_handler(httpd_req_t *req) {
 	const char *make = jm->valuestring;
 	const char *ver  = jv->valuestring;
 
+	const cJSON *jb = cJSON_GetObjectItemCaseSensitive(root, "base_id");
+	uint32_t base_id = 0;
+	if (cJSON_IsNumber(jb)) {
+		if (jb->valuedouble < 0 || jb->valuedouble > ECU_PRESET_MAX_STD_CAN_ID) {
+			cJSON_Delete(root);
+			httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "base_id out of range");
+			return ESP_FAIL;
+		}
+		base_id = (uint32_t)jb->valuedouble;
+	}
+
 	if (make[0] && ver[0]) {
 		const ecu_preset_t *p = ecu_preset_find(make, ver);
 		if (!p) {
@@ -782,15 +809,30 @@ static esp_err_t ecu_set_handler(httpd_req_t *req) {
 		char active[LAYOUT_MAX_NAME] = {0};
 		layout_manager_get_active(active, sizeof(active));
 		if (active[0] == '\0') strcpy(active, "default");
-		if (ecu_preset_apply_to_layout(active, p) != ESP_OK) {
+		if (base_id != 0 && p->base_id == 0) {
+			cJSON_Delete(root);
+			httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+			                    "Preset has fixed CAN ids");
+			return ESP_FAIL;
+		}
+		esp_err_t aerr = ecu_preset_apply_to_layout_rebased(active, p, base_id);
+		if (aerr == ESP_ERR_INVALID_ARG) {
+			cJSON_Delete(root);
+			httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+			                    "base_id would move a frame out of range");
+			return ESP_FAIL;
+		}
+		if (aerr != ESP_OK) {
 			cJSON_Delete(root);
 			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Apply failed");
 			return ESP_FAIL;
 		}
 		config_store_save_ecu(make, ver);
+		config_store_save_ecu_base_id(base_id);
 		rdm_async_call(_deferred_screen_reload, NULL);
 	} else {
 		config_store_save_ecu("", "");
+		config_store_save_ecu_base_id(0);
 	}
 	cJSON_Delete(root);
 
@@ -1327,7 +1369,8 @@ static esp_err_t layout_reset_default_handler(httpd_req_t *req) {
 	if (config_store_load_ecu(make, sizeof(make), ver, sizeof(ver)) == ESP_OK &&
 	    make[0] && ver[0]) {
 		const ecu_preset_t *p = ecu_preset_find(make, ver);
-		if (p && ecu_preset_apply_to_layout("default", p) != ESP_OK)
+		if (p && ecu_preset_apply_to_layout_rebased(
+		             "default", p, config_store_load_ecu_base_id()) != ESP_OK)
 			ESP_LOGW(TAG, "reset_default: ECU preset re-apply failed (%s %s)",
 					 make, ver);
 	}

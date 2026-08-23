@@ -645,6 +645,10 @@ const ecu_preset_t ECU_PRESETS[] = {
         .make = "Link ECU",
         .version = "Generic Dash",
         .display = "Link ECU (G4+ / G4X Generic Dash)",
+        /* Contiguous 0x3E8..0x3F0 block, and PCLink lets you retransmit the
+         * same stream from another id — so the picker offers a Base CAN ID
+         * box for cars where 0x3E8 is already taken by another dash. */
+        .base_id = 0x3E8,
         .rows = {
             [ECU_SIG_RPM]             = { 0x3E8, 16, 16, 1.0f,  0.0f,    false, 1, "rpm",    0 },
             [ECU_SIG_MAP]             = { 0x3E8, 32, 16, 1.0f,  0.0f,    false, 1, "kPa",    0 },
@@ -971,6 +975,71 @@ int ecu_preset_match_score(const ecu_preset_t *preset) {
     return score;
 }
 
+esp_err_t ecu_preset_rebase(const ecu_preset_t *src, uint32_t new_base,
+                            ecu_preset_t *out) {
+    if (!src || !out) return ESP_ERR_INVALID_ARG;
+    if (src->base_id == 0) {
+        ESP_LOGW(TAG, "preset '%s %s' is not rebasable", src->make, src->version);
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (new_base == 0 || new_base > ECU_PRESET_MAX_STD_CAN_ID) {
+        ESP_LOGW(TAG, "rebase target 0x%03lX out of range",
+                 (unsigned long)new_base);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    /* Signed delta — the user may move the stream down as well as up. */
+    int32_t delta = (int32_t)new_base - (int32_t)src->base_id;
+
+    /* Validate every row before mutating anything, so a rejected rebase
+     * leaves the caller's preset untouched. */
+    for (int i = 0; i < ECU_SIG__COUNT; i++) {
+        uint32_t id = src->rows[i].can_id;
+        if (id == 0) continue;  /* SIG_UNSUPPORTED */
+        int64_t shifted = (int64_t)id + delta;
+        if (shifted < 1 || shifted > ECU_PRESET_MAX_STD_CAN_ID) {
+            ESP_LOGW(TAG, "rebase to 0x%03lX would push 0x%03lX out of range",
+                     (unsigned long)new_base, (unsigned long)id);
+            return ESP_ERR_INVALID_ARG;
+        }
+    }
+
+    *out = *src;  /* strings are static literals — shallow copy is fine */
+    out->base_id = new_base;
+    for (int i = 0; i < ECU_SIG__COUNT; i++) {
+        if (out->rows[i].can_id == 0) continue;
+        out->rows[i].can_id = (uint32_t)((int32_t)out->rows[i].can_id + delta);
+    }
+    return ESP_OK;
+}
+
+esp_err_t ecu_preset_apply_to_layout_rebased(const char *layout_name,
+                                             const ecu_preset_t *preset,
+                                             uint32_t base_id) {
+    if (!layout_name || !preset) return ESP_ERR_INVALID_ARG;
+
+    /* No rebase asked for, or the stock base was chosen — plain apply. */
+    if (base_id == 0 || base_id == preset->base_id) {
+        return ecu_preset_apply_to_layout(layout_name, preset);
+    }
+
+    /* ecu_preset_t is ~600 bytes; keep it off the web server's stack. */
+    ecu_preset_t *shifted = malloc(sizeof(*shifted));
+    if (!shifted) return ESP_ERR_NO_MEM;
+
+    esp_err_t err = ecu_preset_rebase(preset, base_id, shifted);
+    if (err == ESP_OK) {
+        err = ecu_preset_apply_to_layout(layout_name, shifted);
+        if (err == ESP_OK) {
+            ESP_LOGI(TAG, "applied '%s %s' rebased 0x%03lX -> 0x%03lX",
+                     preset->make, preset->version,
+                     (unsigned long)preset->base_id, (unsigned long)base_id);
+        }
+    }
+    free(shifted);
+    return err;
+}
+
 esp_err_t ecu_preset_apply_to_layout(const char *layout_name,
                                      const ecu_preset_t *preset) {
     if (!layout_name || !preset) return ESP_ERR_INVALID_ARG;
@@ -1057,6 +1126,15 @@ esp_err_t ecu_preset_apply_to_layout(const char *layout_name,
     cJSON_DeleteItemFromObject(root, "ecu_version");
     cJSON_AddStringToObject(root, "ecu", preset->make);
     cJSON_AddStringToObject(root, "ecu_version", preset->version);
+
+    /* Record which base the stream was decoded at, so the picker can show
+     * the value in effect and a re-apply doesn't snap back to stock ids.
+     * Rides along with the make/version write — no second file pass. Absent
+     * for the fixed-id presets, which is what old layouts already look like. */
+    cJSON_DeleteItemFromObject(root, "ecu_base_id");
+    if (preset->base_id != 0) {
+        cJSON_AddNumberToObject(root, "ecu_base_id", (double)preset->base_id);
+    }
 
     /* Stamp decimals onto widgets whose signal_name matches a preset slot.
      * Applies to panel, bar, and text widgets which all read "decimals"

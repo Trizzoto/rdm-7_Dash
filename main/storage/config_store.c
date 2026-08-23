@@ -638,6 +638,39 @@ esp_err_t config_store_save_ecu(const char *make, const char *version)
     return err;
 }
 
+/* Base CAN id the active ECU preset's stream was rebased to, or 0 for
+ * stock ids. Lives beside make/version because the three "regenerate the
+ * default layout and re-apply the stored ECU" paths need it: without it a
+ * reset silently drops the user back to the stock base and every widget
+ * reads "--". */
+esp_err_t config_store_save_ecu_base_id(uint32_t base_id)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_ECU, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    if (base_id == 0) {
+        /* Absent means stock — erase rather than store a sentinel so an
+         * older firmware reading this namespace sees what it expects. */
+        err = nvs_erase_key(handle, "base_id");
+        if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
+    } else {
+        err = nvs_set_u32(handle, "base_id", base_id);
+    }
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
+    return err;
+}
+
+uint32_t config_store_load_ecu_base_id(void)
+{
+    nvs_handle_t handle;
+    if (nvs_open(NS_ECU, NVS_READONLY, &handle) != ESP_OK) return 0;
+    uint32_t v = 0;
+    if (nvs_get_u32(handle, "base_id", &v) != ESP_OK) v = 0;
+    nvs_close(handle);
+    return v;
+}
+
 esp_err_t config_store_load_ecu(char *make, size_t m_len,
                                 char *version, size_t v_len)
 {

@@ -81,8 +81,54 @@ typedef struct {
     const char *make;      /* e.g. "ECU Master" */
     const char *version;   /* e.g. "Black/Classic" */
     const char *display;   /* picker label, e.g. "ECU Master Black / Classic" */
+    /* Base CAN id for presets whose stream is a contiguous block the user can
+     * relocate — the ECU transmits frames at base+0, base+1, base+2, ... and
+     * the transmit id is configurable in the tuning software. Set it to the
+     * stream's stock base (Link Generic Dash: 0x3E8) to let the picker offer
+     * a "Base CAN ID" box; 0 (the default for every other preset) means the
+     * ids are fixed and rebasing is not offered.
+     *
+     * Every non-zero can_id in rows[] must lie at or above this value — the
+     * rebase shifts them all by the same delta, so a row below the base would
+     * underflow. ecu_preset_rebase() checks. */
+    uint32_t base_id;
     ecu_signal_row_t rows[ECU_SIG__COUNT];
 } ecu_preset_t;
+
+/* Widest 11-bit standard CAN id. Rebasing may not push a row past this. */
+#define ECU_PRESET_MAX_STD_CAN_ID 0x7FFU
+
+/**
+ * Copy `src` into `out` with every non-zero can_id shifted so the stream
+ * starts at `new_base` instead of src->base_id.
+ *
+ * Presets like the Link Generic Dash lay their signals out as a contiguous
+ * run of frames (0x3E8 RPM/MAP, 0x3E9 TPS, 0x3EA coolant, ...) and nothing
+ * in the decode depends on the absolute id. When a car already has another
+ * device using the stock ids, the ECU can retransmit the same stream from a
+ * different base and this reproduces that mapping — same order, same bit
+ * layout, new starting id.
+ *
+ * @param src       Preset to rebase. Must have base_id != 0.
+ * @param new_base  Desired base id (1 .. 0x7FF).
+ * @param out       Destination, filled only on success.
+ * @return ESP_OK, or ESP_ERR_INVALID_ARG when the preset isn't rebasable,
+ *         new_base is out of range, or the shift would push a row past
+ *         ECU_PRESET_MAX_STD_CAN_ID / below 1.
+ */
+esp_err_t ecu_preset_rebase(const ecu_preset_t *src, uint32_t new_base,
+                            ecu_preset_t *out);
+
+/**
+ * ecu_preset_apply_to_layout() with the preset rebased to `base_id` first.
+ * Passing base_id == 0, or a value equal to the preset's stock base, is the
+ * same as calling ecu_preset_apply_to_layout() directly. Also records the
+ * chosen base in the layout's "ecu_base_id" field so the picker can show
+ * what's in effect and a re-apply doesn't silently revert to stock.
+ */
+esp_err_t ecu_preset_apply_to_layout_rebased(const char *layout_name,
+                                             const ecu_preset_t *preset,
+                                             uint32_t base_id);
 
 /* NULL-name sentinel terminated. */
 extern const ecu_preset_t ECU_PRESETS[];

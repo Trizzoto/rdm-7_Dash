@@ -18,7 +18,7 @@ LDFLAGS ?= -lm
 # the two drifted apart — test_obd2_pid_table and test_widget_warning_precedence
 # existed for a while but only ever ran on Windows. If you add a test, add it
 # here as well as writing the file.
-TESTS = test_can_decode test_widget_rules test_layout_migration test_widget_arc_precedence test_obd2_freeze_frame test_obd2_one_shot_decode test_obd2_pid_table test_ota_skip_version test_calculated_gear test_web_path_safety test_ecu_preset_match test_widget_fields test_widget_warning_precedence test_hardening_fixes test_meter_display_units test_arc_display_units test_widget_decimals_follow_channel test_track_map_geo
+TESTS = test_can_decode test_widget_rules test_layout_migration test_widget_arc_precedence test_obd2_freeze_frame test_obd2_one_shot_decode test_obd2_pid_table test_ota_skip_version test_calculated_gear test_web_path_safety test_ecu_preset_match test_widget_fields test_widget_warning_precedence test_hardening_fixes test_meter_display_units test_arc_display_units test_widget_decimals_follow_channel test_track_map_geo test_ecu_preset_rebase
 
 BIN_DIR := build
 BINS    := $(addprefix $(BIN_DIR)/, $(TESTS))
