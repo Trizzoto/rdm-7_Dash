@@ -4292,6 +4292,61 @@
                 padding:2px 8px; opacity:0.8; flex:0 0 auto;">×</button>
     </div>
 
+    <!-- Finish-update banner. The CAN boot-window fix lives in the bootloader
+         (ADR-0047) and an OTA cannot carry it, so after the firmware update
+         lands there is one more step. Amber rather than blue: this one has a
+         consequence if it is interrupted, and should not read as routine. -->
+    <div id="blFinishBanner" style="display:none; position:sticky; top:0; z-index:1499;
+         background:linear-gradient(90deg, hsl(35,85%,40%), hsl(35,85%,50%));
+         color:white; padding:10px 16px; font-size:12px; font-family:'Sora',sans-serif;
+         align-items:center; gap:12px; box-shadow:0 2px 12px rgba(0,0,0,0.3);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;">
+            <path d="M12 9v4"/><path d="M12 17h.01"/>
+            <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+        </svg>
+        <span style="flex:1 1 auto; line-height:1.35;">
+            <strong>One more step to finish the update</strong>
+            <span style="opacity:0.85; margin-left:4px;">Applies the CAN bus startup fix.</span>
+        </span>
+        <button onclick="_blShowFinish()" style="background:white; color:hsl(35,85%,35%); border:none;
+                font-weight:600; padding:6px 14px; border-radius:4px; cursor:pointer; font-size:12px; flex:0 0 auto;">
+            Finish Update
+        </button>
+    </div>
+
+    <!-- Confirm + result modal for the bootloader write. -->
+    <div id="blFinishModal" style="display:none; position:fixed; inset:0; z-index:10201;
+         background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;">
+        <div style="background:var(--panel-elevated); border:1px solid var(--border);
+             border-radius:var(--radius-lg); padding:24px; width:min(460px, 92vw);
+             display:flex; flex-direction:column; gap:14px; box-shadow:var(--shadow-md);">
+            <div style="font-weight:600; font-size:14px;">Finish the update</div>
+            <div id="blFinishBody" style="font-size:12px; color:var(--text-muted); line-height:1.6;">
+                This replaces the small piece of startup code that was holding the CAN bus
+                down while the dash boots. The normal firmware update cannot reach it.
+                <br><br>
+                <b style="color:var(--text);">Keep the dash powered.</b> It takes about half a
+                second. If power is lost during it, the dash will not start again until it is
+                reconnected to a computer &mdash; so do this with the engine running, or on a charger.
+            </div>
+            <div id="blFinishStatus" style="display:none; font-size:11px; color:var(--text-muted);
+                 font-family:'JetBrains Mono',monospace; line-height:1.5;"></div>
+            <div id="blFinishActions" style="display:flex; gap:8px; justify-content:flex-end;">
+                <button id="blFinishCancel" onclick="_blCloseFinish()"
+                        style="padding:7px 16px; cursor:pointer; background:transparent;
+                        border:1px solid var(--border); border-radius:6px; color:var(--text-muted); font-size:12px;">
+                    Not now
+                </button>
+                <button id="blFinishGo" onclick="_blDoFinish()"
+                        style="padding:7px 16px; cursor:pointer; background:hsl(35,85%,45%); border:none;
+                        border-radius:6px; color:#fff; font-size:12px; font-weight:600;">
+                    Apply now
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Install-progress modal for the OTA flow: opened by _otaShowInstall(),
          updated by _otaPollInstall() until completion. -->
     <div id="otaInstallModal" style="display:none; position:fixed; inset:0; z-index:10200;
@@ -19939,6 +19994,7 @@
         async function populateEcuSelect() { /* deprecated */ }
 
         /* Start */
+        _blCheckFinish();
         initScreenSizeSelector();
         initPalette();
         fetchDeviceInfo().then(() => {
@@ -19982,6 +20038,102 @@
             });
             ro.observe(vp);
         })();
+
+        /* Finish-update (bootloader).
+         *
+         * The CAN boot-window park has to run before the app exists, so it
+         * lives in the bootloader, and esp_ota_* writes app partitions only
+         * (ADR-0047). The dash therefore writes its own bootloader, and this
+         * banner is the one deliberate action that triggers it. Never
+         * automatic, and never shown unless the dash says one is pending. */
+        async function _blCheckFinish() {
+            try {
+                const r = await fetch('/api/bootloader/status');
+                if (!r.ok) return;
+                const s = await r.json();
+                const el = document.getElementById('blFinishBanner');
+                if (el && s.update_available) el.style.display = 'flex';
+            } catch (e) { /* offline, or firmware older than this endpoint */ }
+        }
+
+        function _blShowFinish() {
+            const m = document.getElementById('blFinishModal');
+            if (m) m.style.display = 'flex';
+        }
+
+        function _blCloseFinish() {
+            const m = document.getElementById('blFinishModal');
+            if (m) m.style.display = 'none';
+        }
+
+        async function _blDoFinish() {
+            const go     = document.getElementById('blFinishGo');
+            const cancel = document.getElementById('blFinishCancel');
+            const status = document.getElementById('blFinishStatus');
+            const body   = document.getElementById('blFinishBody');
+            go.disabled = true; cancel.disabled = true;
+            go.textContent = 'Applying...';
+            go.style.opacity = '0.6';
+            status.style.display = 'block';
+            status.textContent = 'Writing - do not remove power.';
+
+            let res = null;
+            try {
+                const r = await fetch('/api/bootloader/update', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ confirm: 'write-bootloader' })
+                });
+                res = await r.json();
+            } catch (e) {
+                /* The write disables the cache and halts the other core, so a
+                 * dropped connection here does NOT mean the write failed.
+                 * Saying so matters: the wrong instinct at this exact moment
+                 * is to reach for the power. */
+                body.innerHTML = '<b style="color:var(--text);">Lost contact while applying.</b><br><br>' +
+                    'This can happen normally - the dash goes quiet for a moment while it writes. ' +
+                    '<b style="color:var(--text);">Do not power-cycle it.</b> Wait a few seconds, ' +
+                    'reload this page, and check whether the banner is gone.';
+                status.textContent = 'no response - reload to check';
+                go.style.display = 'none';
+                cancel.disabled = false; cancel.textContent = 'Close';
+                return;
+            }
+
+            if (res && res.ok) {
+                body.innerHTML = '<b style="color:var(--text);">Done - the update is applied.</b><br><br>' +
+                    'The dash needs one restart to start using it.';
+                status.textContent = res.detail || 'written and verified';
+                go.disabled = false; go.style.opacity = '1';
+                go.textContent = 'Restart now';
+                go.onclick = async () => {
+                    go.disabled = true; go.textContent = 'Restarting...';
+                    try {
+                        await fetch('/api/system/reboot', { method: 'POST',
+                            headers: { 'Content-Type': 'application/json' }, body: '{}' });
+                    } catch (e) { /* connection drops as it goes down - expected */ }
+                    status.textContent = 'restarting - this page will reconnect shortly';
+                    setTimeout(() => location.reload(), 12000);
+                };
+                cancel.disabled = false; cancel.textContent = 'Later';
+                const b = document.getElementById('blFinishBanner');
+                if (b) b.style.display = 'none';
+            } else {
+                /* The distinction that matters on failure: is the old
+                 * bootloader still intact, or does this dash now need a cable. */
+                const modified = res && res.flash_modified;
+                body.innerHTML = modified
+                    ? '<b style="color:#f88;">The update did not verify.</b><br><br>' +
+                      '<b style="color:var(--text);">Do not power-cycle the dash.</b> ' +
+                      'Get in touch - it needs to be reconnected to a computer to recover.'
+                    : '<b style="color:var(--text);">Nothing was changed.</b><br><br>' +
+                      'The dash refused the update before touching anything, so it is exactly ' +
+                      'as it was. Safe to close and try again later.';
+                status.textContent = (res && res.detail) ? res.detail : 'failed';
+                go.style.display = 'none';
+                cancel.disabled = false; cancel.textContent = 'Close';
+            }
+        }
 
         /* ── Auto firmware update check ──────────────────────────────────────
          * Fires once per page load, throttled to one real network check per
