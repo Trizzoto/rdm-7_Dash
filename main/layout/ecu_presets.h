@@ -99,6 +99,17 @@ typedef struct {
      * a multi-id stream keeps its internal spacing and a multiplexed
      * single-id stream (Link Generic Dash) simply moves. */
     uint32_t base_id;
+    /* How many ids above base_id the STREAM occupies, when that is wider than
+     * the rows we happen to bind. The AiM template is sixteen consecutive ids
+     * but the useful channels stop at base+0x0B, so a row-derived span would
+     * under-report it by four.
+     *
+     * That matters for the reason the base is configurable in the first place:
+     * someone moving this stream is fitting it alongside another one on the
+     * same bus, and needs to be told the real width or they will park it on
+     * top of something. 0 = derive from the rows (correct for a single-id
+     * stream like the Generic Dash). */
+    uint8_t  stream_span;
     ecu_signal_row_t rows[ECU_SIG__COUNT];
 } ecu_preset_t;
 

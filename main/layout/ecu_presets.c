@@ -718,6 +718,14 @@ const ecu_preset_t ECU_PRESETS[] = {
         .make = "Link ECU",
         .version = "AiM Stream",
         .display = "Link ECU (G4+ / G4X AiM Stream)",
+        /* The AiM stream's base is whatever the tuner sets in PCLink; 0x5F0 is
+         * the AiM default. A car running two dashes off one bus moves one of
+         * the two streams, and it can just as easily be this one — a Link
+         * feeding an AiM dash on the generic stream at 0x3E8 while the RDM
+         * reads the AiM stream somewhere else. Sixteen consecutive ids, even
+         * though the bound rows stop at base+0x0B. */
+        .base_id = 0x5F0,
+        .stream_span = 0x0F,
         .rows = {
             [ECU_SIG_RPM]             = { 0x5F0,  0, 16, 1.0f,        0.0f,   false, 1, "rpm",    0 },
             [ECU_SIG_THROTTLE]        = { 0x5F0, 16, 16, 0.00153846f, 0.0f,   false, 1, "%",      1 },
@@ -1067,6 +1075,9 @@ int ecu_preset_match_score(const ecu_preset_t *preset) {
 
 uint32_t ecu_preset_id_span(const ecu_preset_t *preset) {
     if (!preset || preset->base_id == 0) return 0;
+    /* A declared stream width wins over what the rows happen to reach — see
+     * ecu_preset_t.stream_span. */
+    if (preset->stream_span) return preset->stream_span;
     uint32_t span = 0;
     for (int i = 0; i < ECU_SIG__COUNT; i++) {
         uint32_t id = preset->rows[i].can_id;

@@ -43,12 +43,14 @@
 
 typedef struct {
     uint32_t base_id;              /* 0 = ids are fixed */
+    uint8_t  stream_span;          /* 0 = derive from rows */
     uint32_t can_id[ROWS_MAX];     /* 0 = slot unsupported */
     int      n;
 } mirror_preset_t;
 
 static uint32_t mirror_id_span(const mirror_preset_t *p) {
     if (!p || p->base_id == 0) return 0;
+    if (p->stream_span) return p->stream_span;
     uint32_t span = 0;
     for (int i = 0; i < p->n; i++) {
         uint32_t id = p->can_id[i];
@@ -95,6 +97,18 @@ static mirror_preset_t multi_id(void) {
     p.can_id[1] = 0x5F3;
     p.can_id[2] = 0;
     p.can_id[3] = 0x5FF;
+    return p;
+}
+
+/* The AiM stream as shipped: sixteen consecutive ids declared, but the bound
+ * rows stop at base+0x0B. */
+static mirror_preset_t aim_stream(void) {
+    mirror_preset_t p = { .base_id = 0x5F0, .stream_span = 0x0F, .n = 5 };
+    p.can_id[0] = 0x5F0;   /* RPM      */
+    p.can_id[1] = 0x5F3;   /* MAP      */
+    p.can_id[2] = 0;       /* FUEL_TRIM — not in the AiM template */
+    p.can_id[3] = 0x5F6;   /* LAMBDA   */
+    p.can_id[4] = 0x5FB;   /* IGNITION — the highest bound row */
     return p;
 }
 
@@ -202,6 +216,41 @@ static void test_span_must_also_fit_under_the_ceiling(void) {
     TEST_ASSERT_EQUAL_HEX(0x7FF, out[3]);
 }
 
+/* A declared width outranks the rows. Deriving from rows would say 0x0B and
+ * under-report the stream by four ids — which is exactly the mistake that puts
+ * a re-based stream on top of something else on a shared bus. */
+static void test_declared_stream_width_beats_rows(void) {
+    mirror_preset_t p = aim_stream();
+    TEST_ASSERT_EQUAL_HEX(0x0F, mirror_id_span(&p));
+    p.stream_span = 0;
+    TEST_ASSERT_EQUAL_HEX(0x0B, mirror_id_span(&p));   /* highest bound row */
+}
+
+/* The customer case for the AiM stream: Link generic dash left on 1000 for the
+ * AiM dash, AiM stream moved to 1300 for the RDM. */
+static void test_aim_rebases_to_1300(void) {
+    mirror_preset_t p = aim_stream();
+    uint32_t out[ROWS_MAX];
+    TEST_ASSERT_EQUAL_INT(0, mirror_rebase(&p, 1300, out));
+    TEST_ASSERT_EQUAL_HEX(0x514, out[0]);   /* 1300 */
+    TEST_ASSERT_EQUAL_HEX(0x517, out[1]);
+    TEST_ASSERT_EQUAL_HEX(0,     out[2]);   /* unsupported stays unbound */
+    TEST_ASSERT_EQUAL_HEX(0x51A, out[3]);
+    TEST_ASSERT_EQUAL_HEX(0x51F, out[4]);
+    /* and it must not reach the generic dash stream sitting on 0x3E8 */
+    TEST_ASSERT_TRUE(out[0] > 0x3E8);
+}
+
+/* The declared width is what the ceiling check uses, so a base that would fit
+ * the ROWS but not the whole stream is refused. */
+static void test_declared_width_bounds_the_ceiling(void) {
+    mirror_preset_t p = aim_stream();
+    uint32_t out[ROWS_MAX];
+    TEST_ASSERT_EQUAL_INT(-1, mirror_rebase(&p, 0x7F4, out));  /* rows fit, stream does not */
+    TEST_ASSERT_EQUAL_INT(0,  mirror_rebase(&p, 0x7F0, out));
+    TEST_ASSERT_EQUAL_HEX(0x7FB, out[4]);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_span_is_zero_for_single_id_stream);
@@ -217,5 +266,8 @@ int main(void) {
     RUN_TEST(test_base_past_11_bits_is_rejected);
     RUN_TEST(test_highest_single_id_base_is_allowed);
     RUN_TEST(test_span_must_also_fit_under_the_ceiling);
+    RUN_TEST(test_declared_stream_width_beats_rows);
+    RUN_TEST(test_aim_rebases_to_1300);
+    RUN_TEST(test_declared_width_bounds_the_ceiling);
     return UNITY_END();
 }
