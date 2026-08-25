@@ -1,6 +1,7 @@
 #include "web_server.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "system/crash_log.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "cJSON.h"
@@ -111,6 +112,16 @@ esp_err_t web_server_send_layout_too_large(httpd_req_t *req, size_t actual) {
  * Access-Control-Allow-Origin that strict browsers reject. */
 static void _reboot_timer_cb(void *arg) {
 	(void)arg;
+	/* Mark the shutdown clean BEFORE restarting.
+	 *
+	 * esp_restart() on the S3 resets through the RTC watchdog, so the next
+	 * boot reads ESP_RST_WDT — which crash_log counts as crash-class. Without
+	 * this, every deliberate reboot through the API logged itself as a panic:
+	 * panic_count climbed and /api/selftest reported prev_was_crash on a dash
+	 * that had simply been asked to restart. The OTA path already did this;
+	 * this one did not, and it is the path a user hits after any settings
+	 * change or a bootloader self-update. */
+	crash_log_mark_clean_shutdown();
 	esp_restart();
 }
 

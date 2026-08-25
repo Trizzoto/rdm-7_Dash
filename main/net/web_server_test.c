@@ -284,12 +284,21 @@ static esp_err_t _selftest_handler(httpd_req_t *req) {
 	overall &= lfs_ok;
 
 	/* CAN driver state. */
-	uint32_t can_state = 0, bus_err = 0, rx_err = 0, dummy = 0;
-	can_get_diagnostics(&can_state, &dummy, &dummy, &dummy, &rx_err, &bus_err, &dummy);
+	uint32_t can_state = 0, bus_err = 0, rx_err = 0, tx_err = 0,
+	         msgs_to_tx = 0, dummy = 0;
+	can_get_diagnostics(&can_state, &msgs_to_tx, &dummy, &tx_err, &rx_err,
+	                    &bus_err, &dummy);
 	cJSON *can = cJSON_AddObjectToObject(root, "can");
 	cJSON_AddNumberToObject(can, "state", can_state);
 	cJSON_AddNumberToObject(can, "bus_errors", bus_err);
 	cJSON_AddNumberToObject(can, "rx_errors", rx_err);
+	/* tx_errors is the one that says whether THIS dash is the aggressor.
+	 * bus_errors counts every error the controller sees, including ones it
+	 * only witnessed; a climbing bus_errors with tx_errors pinned at 0 means
+	 * the noise is not ours. msgs_to_tx > 0 with tx_errors high is a frame
+	 * stuck retransmitting into a bus that will not acknowledge it. */
+	cJSON_AddNumberToObject(can, "tx_errors", tx_err);
+	cJSON_AddNumberToObject(can, "tx_queued", msgs_to_tx);
 	cJSON_AddNumberToObject(can, "rx_frames", can_get_rx_frame_count());
 
 	/* RDM device bus: is anything else out there, and are we in step with it.

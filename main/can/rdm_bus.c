@@ -42,6 +42,11 @@ static const char *TAG = "rdm_bus";
 #define BUS_ANNOUNCE_EVERY     5u      /* 1 Hz once something is out there */
 #define BUS_ANNOUNCE_EVERY_QUIET 150u  /* 30 s while nothing has ever answered */
 #define BUS_PEER_STALE_MS      5000u
+/* How recently the bus must have spoken for the dash to consider it worth
+ * announcing at 1 Hz. Comfortably longer than any ECU's broadcast period and
+ * shorter than a crank, so a live bus always passes and a bus that has gone
+ * quiet drops back to the 30 s rate within one window. */
+#define BUS_ALIVE_WITHIN_MS    2500u
 #define BUS_FRAMES_PER_TICK    24u     /* ~120 frames/s: a 3.2 KB outline in
                                         * ~4.5 s, and never a burst */
 #define BUS_RX_TIMEOUT_MS      3000u
@@ -361,11 +366,17 @@ static void _tick(lv_timer_t *t) {
 
     /* Announce rate backs off on a bus that has never said anything. A dash
      * wired to nothing (a bench, or a single-device install) has no other node
-     * to ACK its frames, so every announce fails and retries — the bench dash
-     * reached 17.8 million bus errors in a minute doing exactly this. One
-     * received frame, from anything, is proof there is somebody out there and
-     * puts it straight back to 1 Hz. */
-    bool bus_is_alive = (can_get_rx_frame_count() > 0);
+     * to ACK its frames, so every announce fails — the bench dash reached 17.8
+     * million bus errors in a minute doing exactly this. A RECENT frame, from
+     * anything, is proof there is somebody out there and puts it back to 1 Hz.
+     *
+     * Recent, not ever. The lifetime counter meant one frame at key-on bought
+     * 1 Hz announcing for the rest of the drive, including through a crank
+     * where the ECU browns out and stops ACKing. The frames themselves are
+     * single shot now (see can_try_transmit_frame), so a missed announce costs
+     * one frame rather than a permanent error-flag storm; this just stops the
+     * dash chattering at a bus that is not answering. */
+    bool bus_is_alive = can_bus_seen_within_ms(BUS_ALIVE_WITHIN_MS);
     uint32_t every = bus_is_alive ? BUS_ANNOUNCE_EVERY : BUS_ANNOUNCE_EVERY_QUIET;
     if ((s_tick % every) == 0) {
         _announce();

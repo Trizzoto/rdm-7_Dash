@@ -110,3 +110,17 @@ CONFIG_LITTLEFS_BLOCK_CYCLES=512
 # primary console is UART0 via the CH343, so nothing is lost by turning it
 # off. See bootloader_components/rdm_can_park.
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# The bootloader self-update (main/storage/bootloader_selfupdate.c) writes the
+# bootloader region at 0x0, and IDF's default DANGEROUS_WRITE_ABORTS turns that
+# into abort() — the dash panics and reboots instead of updating.
+#
+# This removes that net globally, so it is worth being precise about what it
+# was protecting: bootloader_selfupdate.c is the ONLY code in this firmware
+# that calls esp_flash_write/esp_flash_erase directly. OTA, LittleFS and NVS
+# all go through esp_partition_*, which bounds-checks against the partition
+# independently and is unaffected. The one raw writer carries its own explicit
+# BL_OFFSET / BL_REGION_SIZE bounds and refuses anything that does not fit.
+#
+# If a second raw-flash writer is ever added, reconsider this.
+CONFIG_SPI_FLASH_DANGEROUS_WRITE_ALLOWED=y

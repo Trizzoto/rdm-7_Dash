@@ -18,6 +18,7 @@ idf_component_register(
         "data/unit_convert.c"
         "lap/lap_engine.c"
         "storage/boot_assets.c"
+        "storage/bootloader_selfupdate.c"
         "storage/config_store.c"
         "storage/sd_manager.c"
         "storage/data_logger.c"
@@ -189,7 +190,12 @@ idf_component_register(
         "esp-tls"
         "esp_http_server"
         "joltwallet__littlefs"
-    EMBED_FILES "embed/RDM.rdmimg" "web/favicon.ico" "${CMAKE_CURRENT_BINARY_DIR}/index.html.gz"
+    # bootloader_image/bootloader.bin is a COMMITTED artifact, not
+    # build/bootloader/bootloader.bin. Embedding the build output would ship
+    # whatever this build happened to produce and would make the app depend on
+    # the bootloader subproject; the dash writes this into its own flash, so it
+    # should be something a person chose. See main/bootloader_image/README.md.
+    EMBED_FILES "embed/RDM.rdmimg" "web/favicon.ico" "bootloader_image/bootloader.bin" "${CMAKE_CURRENT_BINARY_DIR}/index.html.gz"
                 "embed/fonts/montserrat.ttf" "embed/fonts/fugaz_one.ttf" "embed/fonts/manrope_bold.ttf"
 )
 

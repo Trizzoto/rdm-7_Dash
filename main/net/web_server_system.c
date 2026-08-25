@@ -21,6 +21,7 @@
 #include "esp_wifi.h"
 #include "driver/twai.h"
 #include "net/wifi_manager.h"
+#include "storage/bootloader_selfupdate.h"
 #include "storage/config_store.h"
 #include "storage/sd_manager.h"
 #include "storage/data_logger.h"
@@ -256,6 +257,81 @@ static esp_err_t _can_config_post_handler(httpd_req_t *req) {
 	return ESP_OK;
 }
 
+
+/* ── Bootloader self-update ──────────────────────────────────────────────
+ *
+ * The CAN boot-window park lives in the 2nd-stage bootloader (ADR-0047) and
+ * OTA writes app partitions only, so without this a dash already in a car
+ * needs a USB reflash to get it. Deliberately two endpoints: a GET that says
+ * whether an update is even pending, and a POST that has to be asked for.
+ * Nothing calls the POST automatically — see bootloader_selfupdate.h for why
+ * that matters. */
+
+/* GET /api/bootloader/status */
+static esp_err_t bootloader_status_handler(httpd_req_t *req) {
+	bl_selfupdate_state_t st = bootloader_selfupdate_check();
+	cJSON *root = cJSON_CreateObject();
+	const char *s = (st == BL_SELFUPDATE_UP_TO_DATE) ? "up_to_date"
+	              : (st == BL_SELFUPDATE_DIFFERENT)  ? "update_available"
+	                                                 : "unreadable";
+	cJSON_AddStringToObject(root, "state", s);
+	cJSON_AddBoolToObject  (root, "update_available", st == BL_SELFUPDATE_DIFFERENT);
+	cJSON_AddNumberToObject(root, "image_bytes", bootloader_selfupdate_image_size());
+	/* Said plainly because the consequence is not recoverable over the air. */
+	cJSON_AddStringToObject(root, "warning",
+	    "Writing the bootloader briefly leaves the dash with none. If power is "
+	    "lost during the write the dash will not boot and must be recovered "
+	    "over USB. Do this with the engine running or on a stable supply.");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return web_server_send_json(req, root);
+}
+
+/* POST /api/bootloader/update  body: {"confirm":"write-bootloader"} */
+static esp_err_t bootloader_update_handler(httpd_req_t *req) {
+	char buf[128];
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "JSON"); return ESP_FAIL; }
+	const cJSON *jc = cJSON_GetObjectItemCaseSensitive(root, "confirm");
+	bool confirmed = cJSON_IsString(jc) &&
+	                 strcmp(jc->valuestring, "write-bootloader") == 0;
+	cJSON_Delete(root);
+	/* A typed confirmation, so this cannot be reached by a stray POST from a
+	 * script that was iterating endpoints. */
+	if (!confirmed) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+		                    "Send {\"confirm\":\"write-bootloader\"}");
+		return ESP_FAIL;
+	}
+
+	const char *detail = "";
+	bool committed = false;
+	esp_err_t err = bootloader_selfupdate_apply(&detail, &committed);
+
+	cJSON *resp = cJSON_CreateObject();
+	cJSON_AddBoolToObject  (resp, "ok", err == ESP_OK);
+	cJSON_AddStringToObject(resp, "detail", detail ? detail : "");
+	cJSON_AddNumberToObject(resp, "err", err);
+	/* The distinction the caller actually needs on failure: whether the old
+	 * bootloader is still intact, or whether this dash now needs a cable. */
+	cJSON_AddBoolToObject  (resp, "flash_modified", committed);
+	cJSON_AddBoolToObject  (resp, "reboot_required", err == ESP_OK && committed);
+	if (err != ESP_OK && committed) {
+		cJSON_AddStringToObject(resp, "recovery",
+		    "The bootloader region was modified and did not verify. Do NOT "
+		    "power cycle. Recover over USB with the Full Recovery Flash.");
+	}
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return web_server_send_json(req, resp);
+}
+
+static const httpd_uri_t bootloader_status_uri = {
+	.uri = "/api/bootloader/status", .method = HTTP_GET,
+	.handler = bootloader_status_handler, .user_ctx = NULL };
+static const httpd_uri_t bootloader_update_uri = {
+	.uri = "/api/bootloader/update", .method = HTTP_POST,
+	.handler = bootloader_update_handler, .user_ctx = NULL };
+
 static const httpd_uri_t can_config_get_uri = {
     .uri = "/api/can/config", .method = HTTP_GET,
     .handler = _can_config_get_handler, .user_ctx = NULL};
@@ -401,6 +477,8 @@ void web_server_system_register(httpd_handle_t server) {
 	REGISTER_URI(server, &can_config_post_uri);
 	REGISTER_URI(server, &system_health_uri);
 	REGISTER_URI(server, &system_reboot_uri);
+	REGISTER_URI(server, &bootloader_status_uri);
+	REGISTER_URI(server, &bootloader_update_uri);
 	REGISTER_URI(server, &dimmer_config_get_uri);
 	REGISTER_URI(server, &dimmer_config_post_uri);
 }

@@ -183,6 +183,15 @@ uint32_t can_get_last_rx_id(void);
  */
 uint32_t can_get_rx_frame_count(void);
 
+/* True if a frame arrived within the last window_ms.
+ *
+ * The lifetime frame counter answers "has this bus EVER spoken", which is the
+ * wrong question for anything deciding whether to transmit: a dash that saw
+ * one frame at key-on then went to a bus that stopped answering (a crank
+ * brownout, the ECU rebooting, the loom pulled) keeps believing somebody is
+ * listening forever. Ask this instead. */
+bool can_bus_seen_within_ms(uint32_t window_ms);
+
 /**
  * Suspend normal CAN operation.  Stops the RX task and uninstalls
  * the TWAI driver so the caller can take ownership of the peripheral

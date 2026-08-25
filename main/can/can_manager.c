@@ -15,6 +15,9 @@
 #include "signal_sim.h"
 
 #include "driver/gpio.h"
+#include "soc/gpio_reg.h"
+#include "soc/io_mux_reg.h"
+#include "soc/usb_serial_jtag_reg.h"
 #include "driver/twai.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -69,6 +72,12 @@ static volatile bool can_task_should_stop = false;
 static volatile bool s_can_task_running = false;
 static volatile uint32_t s_last_rx_can_id = 0;
 static volatile uint32_t s_rx_frame_count = 0;
+/* Milliseconds (esp_timer) at the last successful receive; 0 = nothing has
+ * ever arrived. Written by the CAN RX task on core 0, read by the LVGL task —
+ * a single aligned 32-bit word, so no tearing. Milliseconds rather than the
+ * native 64-bit microseconds precisely so the read stays atomic. Wraps after
+ * ~49 days; the unsigned subtraction in can_bus_seen_within_ms handles it. */
+static volatile uint32_t s_last_rx_ms = 0;
 static volatile bool     s_suspended = false;
 
 #define CAN_TASK_PRIORITY 7
@@ -270,6 +279,7 @@ static void can_receive_task(void *pvParameter) {
 			recovery_delay_ms = CAN_RECOVERY_INITIAL_MS;
 
 			s_last_rx_can_id = message.identifier;
+			s_last_rx_ms = (uint32_t)(esp_timer_get_time() / 1000);
 			s_rx_frame_count++;
 			if (s_can_queue != NULL) {
 				/* Non-blocking enqueue; drop oldest frames if the queue is
@@ -742,6 +752,21 @@ void can_set_promiscuous_mode(bool enable) {
  * the heap is interesting, and safe to call again after.
  */
 void can_park_tx_line(void) {
+	/* Report what the bootloader left behind BEFORE touching anything. This
+	 * is the only way to tell, from a running dash, whether the bootloader
+	 * hook actually ran: if it did, the pad is already off the USB PHY and
+	 * driven high, and this call is a no-op. If it did not, the line has been
+	 * floating (and the bus jammed) since power-on. Worth a line at every boot
+	 * — it is how you confirm a bootloader self-update really took. */
+	uint32_t usj = REG_READ(USB_SERIAL_JTAG_CONF0_REG);
+	uint32_t mux = REG_READ(IO_MUX_GPIO20_REG);
+	bool parked_by_bootloader = (((usj >> 14) & 1) == 0) &&   /* usb pad released */
+	                            (((mux >> 12) & 7) == 1) &&   /* GPIO function    */
+	                            (((REG_READ(GPIO_ENABLE_REG) >> CAN_TX_GPIO_NUM) & 1) == 1);
+	ESP_LOGI(TAG, "CAN TX at app start: %s",
+	         parked_by_bootloader ? "already parked by the bootloader"
+	                              : "FLOATING — bootloader has no park hook");
+
 	/* Level first, then direction — enabling the output driver while
 	 * GPIO_OUT still holds 0 would pulse the bus dominant. */
 	gpio_set_level(CAN_TX_GPIO_NUM, 1);
@@ -925,9 +950,23 @@ esp_err_t can_try_transmit_frame(uint32_t can_id, const uint8_t *data, uint8_t d
 	 *
 	 * A 1 Hz heartbeat has no business blocking a repaint: it is idempotent
 	 * and repeats a second later, so failing to send one is free. Callers that
-	 * genuinely need delivery keep using can_transmit_frame. */
+	 * genuinely need delivery keep using can_transmit_frame.
+	 *
+	 * SINGLE SHOT is the other half of "failing to send one is free", and it
+	 * is the important half. Without TWAI_MSG_FLAG_SS the controller
+	 * retransmits a frame nothing ACKs *indefinitely*, and every failed
+	 * attempt puts a 6-bit dominant error flag on the wire. One unacknowledged
+	 * heartbeat is therefore not one lost frame — it is a permanent
+	 * error-flag storm that corrupts everyone else's traffic and never stops
+	 * on its own. Measured on a bench dash with nothing to ACK it:
+	 * 38,483 bus errors per second, forever.
+	 *
+	 * Single shot also drops the frame on loss of arbitration. For an
+	 * idempotent heartbeat that repeats a second later that is the behaviour
+	 * we want; a caller that needs delivery must not use this function. */
 	twai_message_t msg = {0};
 	msg.identifier = can_id & 0x7FFu;
+	msg.flags = TWAI_MSG_FLAG_SS;
 	msg.data_length_code = dlc > 8 ? 8 : dlc;
 	if (data && msg.data_length_code)
 		memcpy(msg.data, data, msg.data_length_code);
@@ -1126,6 +1165,13 @@ uint32_t can_get_last_rx_id(void) {
 
 uint32_t can_get_rx_frame_count(void) {
 	return s_rx_frame_count;
+}
+
+bool can_bus_seen_within_ms(uint32_t window_ms) {
+	uint32_t last = s_last_rx_ms;      /* one atomic 32-bit read */
+	if (last == 0) return false;       /* nothing has ever arrived */
+	uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+	return (uint32_t)(now - last) <= window_ms;
 }
 
 twai_timing_config_t can_get_timing_for_bitrate(uint8_t index) {
