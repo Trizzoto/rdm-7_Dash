@@ -653,6 +653,12 @@ const ecu_preset_t ECU_PRESETS[] = {
         .make = "Link ECU",
         .version = "Generic Dash",
         .display = "Link ECU (G4+ / G4X Generic Dash)",
+        /* The generic dash stream id is whatever the tuner types into
+         * PCLink; 0x3E8 (1000) is only the convention. Declaring it here
+         * lets the picker offer a Base CAN ID, which is what a car running
+         * two dashes off one bus needs — a second generic stream on a spare
+         * id for the RDM, leaving 0x3E8 to the other dash. */
+        .base_id = 0x3E8,
         .rows = {
             [ECU_SIG_RPM]             = { 0x3E8, 16, 16, 1.0f,  0.0f,    false, 1, "rpm",    0, NULL, 0, 8, 0 },
             [ECU_SIG_MAP]             = { 0x3E8, 32, 16, 1.0f,  0.0f,    false, 1, "kPa",    0, NULL, 0, 8, 0 },
@@ -1059,9 +1065,47 @@ int ecu_preset_match_score(const ecu_preset_t *preset) {
     return score;
 }
 
+uint32_t ecu_preset_id_span(const ecu_preset_t *preset) {
+    if (!preset || preset->base_id == 0) return 0;
+    uint32_t span = 0;
+    for (int i = 0; i < ECU_SIG__COUNT; i++) {
+        uint32_t id = preset->rows[i].can_id;
+        if (id == 0 || id < preset->base_id) continue;  /* unsupported slot */
+        uint32_t off = id - preset->base_id;
+        if (off > span) span = off;
+    }
+    return span;
+}
+
 esp_err_t ecu_preset_apply_to_layout(const char *layout_name,
                                      const ecu_preset_t *preset) {
+    return ecu_preset_apply_to_layout_based(layout_name, preset, 0);
+}
+
+esp_err_t ecu_preset_apply_to_layout_based(const char *layout_name,
+                                           const ecu_preset_t *preset,
+                                           uint32_t base_id) {
     if (!layout_name || !preset) return ESP_ERR_INVALID_ARG;
+
+    /* Re-base the stream, if this preset has a configurable base and the
+     * caller asked for a different one. Only can_id moves, so the shift is
+     * carried as a delta and applied per row where the signals are emitted
+     * — copying the whole preset would put ~660 bytes on a 5 KB httpd
+     * stack, and the const preset table must not be written to in any case
+     * (several callers share it, including the auto-detect scorer). */
+    int32_t id_delta = 0;
+    if (preset->base_id != 0 && base_id != 0 && base_id != preset->base_id) {
+        uint32_t span = ecu_preset_id_span(preset);
+        if (base_id > ECU_BASE_ID_MAX || base_id + span > ECU_BASE_ID_MAX) {
+            ESP_LOGE(TAG, "base id 0x%03lX (+ span %lu) runs past 0x7FF",
+                     (unsigned long)base_id, (unsigned long)span);
+            return ESP_ERR_INVALID_ARG;
+        }
+        id_delta = (int32_t)base_id - (int32_t)preset->base_id;
+        ESP_LOGI(TAG, "%s %s re-based to 0x%03lX (delta %+ld)",
+                 preset->make, preset->version,
+                 (unsigned long)base_id, (long)id_delta);
+    }
 
     /* Load the layout file as raw JSON. */
     char *buf = malloc(LAYOUT_MAX_FILE_BYTES);
@@ -1115,7 +1159,13 @@ esp_err_t ecu_preset_apply_to_layout(const char *layout_name,
         cJSON_DeleteItemFromObject(root, "signals");
         cJSON *sigs = cJSON_AddArrayToObject(root, "signals");
         for (int i = 0; i < ECU_SIG__COUNT; i++) {
-            cJSON *s = _build_signal_json(ECU_SIGNAL_NAMES[i], &preset->rows[i]);
+            /* Row copy so the shifted id never reaches the const table.
+             * Unsupported slots (can_id 0) stay 0 — shifting them would
+             * invent a binding the ECU does not broadcast. */
+            ecu_signal_row_t row = preset->rows[i];
+            if (id_delta && row.can_id)
+                row.can_id = (uint32_t)((int32_t)row.can_id + id_delta);
+            cJSON *s = _build_signal_json(ECU_SIGNAL_NAMES[i], &row);
             if (s) cJSON_AddItemToArray(sigs, s);
         }
 

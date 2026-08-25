@@ -756,9 +756,18 @@ static esp_err_t ecu_list_handler(httpd_req_t *req) {
 		cJSON_AddStringToObject(item, "display", ECU_PRESETS[i].display);
 		cJSON_AddNumberToObject(item, "match_score",
 		                        ecu_preset_match_score(&ECU_PRESETS[i]));
+		/* base_id != 0 means the stream's first id is the tuner's choice, so
+		 * the picker offers a Base CAN ID box. id_span is how many ids above
+		 * the base the stream occupies, which bounds what may be typed. */
+		if (ECU_PRESETS[i].base_id) {
+			cJSON_AddNumberToObject(item, "base_id", ECU_PRESETS[i].base_id);
+			cJSON_AddNumberToObject(item, "id_span",
+			                        ecu_preset_id_span(&ECU_PRESETS[i]));
+		}
 		cJSON_AddItemToArray(arr, item);
 	}
 	cJSON_AddNumberToObject(root, "match_threshold", ECU_PRESET_MATCH_THRESHOLD);
+	cJSON_AddNumberToObject(root, "base_id_max",     ECU_BASE_ID_MAX);
 	cJSON_AddBoolToObject  (root, "auto_mode",       config_store_load_ecu_picker_auto());
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 	return web_server_send_json(req, root);
@@ -804,13 +813,24 @@ static esp_err_t ecu_current_handler(httpd_req_t *req) {
 	cJSON *root = cJSON_CreateObject();
 	cJSON_AddStringToObject(root, "make", make);
 	cJSON_AddStringToObject(root, "version", ver);
+	/* Report the base actually in use, falling back to the preset's own
+	 * default so the picker always has a number to show. */
+	const ecu_preset_t *cur = (make[0] && ver[0]) ? ecu_preset_find(make, ver) : NULL;
+	if (cur && cur->base_id) {
+		uint32_t saved = config_store_load_ecu_base_id();
+		cJSON_AddNumberToObject(root, "base_id", saved ? saved : cur->base_id);
+		cJSON_AddNumberToObject(root, "default_base_id", cur->base_id);
+		cJSON_AddNumberToObject(root, "id_span", ecu_preset_id_span(cur));
+	}
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 	return web_server_send_json(req, root);
 }
 
 /* POST /api/ecu/set  body: {"make":"...","version":"..."} - empty strings clear */
 static esp_err_t ecu_set_handler(httpd_req_t *req) {
-	char buf[128];
+	/* make + version + an optional base_id; 192 leaves room for the id in
+	 * either base without the body silently truncating. */
+	char buf[192];
 	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
@@ -825,6 +845,27 @@ static esp_err_t ecu_set_handler(httpd_req_t *req) {
 	const char *make = jm->valuestring;
 	const char *ver  = jv->valuestring;
 
+	/* Optional base id, accepted as a number or a string so "1300" and
+	 * "0x514" both work — a tuner reads the id off whichever PCLink screen
+	 * they happen to be on, and those disagree about base. */
+	uint32_t base_id = 0;
+	const cJSON *jb = cJSON_GetObjectItemCaseSensitive(root, "base_id");
+	if (cJSON_IsNumber(jb)) {
+		base_id = (uint32_t)jb->valuedouble;
+	} else if (cJSON_IsString(jb) && jb->valuestring[0]) {
+		const char *t = jb->valuestring;
+		while (*t == ' ' || *t == '	') t++;
+		bool hex = (t[0] == '0' && (t[1] == 'x' || t[1] == 'X'));
+		char *end = NULL;
+		unsigned long v = strtoul(t, &end, hex ? 16 : 10);
+		if (end == t) {
+			cJSON_Delete(root);
+			httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "base_id not a number");
+			return ESP_FAIL;
+		}
+		base_id = (uint32_t)v;
+	}
+
 	if (make[0] && ver[0]) {
 		const ecu_preset_t *p = ecu_preset_find(make, ver);
 		if (!p) {
@@ -832,18 +873,35 @@ static esp_err_t ecu_set_handler(httpd_req_t *req) {
 			httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Unknown ECU");
 			return ESP_FAIL;
 		}
+		if (base_id && !p->base_id) {
+			cJSON_Delete(root);
+			httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+			                    "This ECU broadcasts on fixed CAN ids");
+			return ESP_FAIL;
+		}
 		char active[LAYOUT_MAX_NAME] = {0};
 		layout_manager_get_active(active, sizeof(active));
 		if (active[0] == '\0') strcpy(active, "default");
-		if (ecu_preset_apply_to_layout(active, p) != ESP_OK) {
+		esp_err_t aerr = ecu_preset_apply_to_layout_based(active, p, base_id);
+		if (aerr == ESP_ERR_INVALID_ARG) {
+			cJSON_Delete(root);
+			httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+			                    "Base CAN ID out of range");
+			return ESP_FAIL;
+		}
+		if (aerr != ESP_OK) {
 			cJSON_Delete(root);
 			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Apply failed");
 			return ESP_FAIL;
 		}
 		config_store_save_ecu(make, ver);
+		/* Only presets with a configurable base carry one; anything else
+		 * stores 0 so a later preset change cannot inherit a stale id. */
+		config_store_save_ecu_base_id(p->base_id ? base_id : 0);
 		rdm_async_call(_deferred_screen_reload, NULL);
 	} else {
 		config_store_save_ecu("", "");
+		config_store_save_ecu_base_id(0);
 	}
 	cJSON_Delete(root);
 

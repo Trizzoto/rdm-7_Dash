@@ -89,6 +89,16 @@ typedef struct {
     const char *make;      /* e.g. "ECU Master" */
     const char *version;   /* e.g. "Black/Classic" */
     const char *display;   /* picker label, e.g. "ECU Master Black / Classic" */
+    /* Default first CAN id of the preset's stream, for the streams whose
+     * base id the user picks when they configure the ECU (a Link generic
+     * dash stream is any id the tuner types into PCLink; an OEM broadcast
+     * is not). 0 means "the ids in rows[] are fixed" and the base-id field
+     * stays hidden in the picker.
+     *
+     * Applying with a different base shifts every row by the same delta, so
+     * a multi-id stream keeps its internal spacing and a multiplexed
+     * single-id stream (Link Generic Dash) simply moves. */
+    uint32_t base_id;
     ecu_signal_row_t rows[ECU_SIG__COUNT];
 } ecu_preset_t;
 
@@ -223,6 +233,30 @@ const ecu_preset_t *ecu_preset_find(const char *make, const char *version);
  */
 esp_err_t ecu_preset_apply_to_layout(const char *layout_name,
                                      const ecu_preset_t *preset);
+
+/**
+ * As ecu_preset_apply_to_layout(), but re-bases the stream.
+ *
+ * Every row's can_id is shifted by (base_id - preset->base_id), so a stream
+ * the tuner has moved to a different id decodes exactly as it would at the
+ * default id — same signals, same order. Used when a car runs two dashes off
+ * one bus and the second stream has to live somewhere else.
+ *
+ * @param base_id  Desired first id of the stream. 0, or a preset with no
+ *                 configurable base (base_id == 0), applies unshifted.
+ */
+esp_err_t ecu_preset_apply_to_layout_based(const char *layout_name,
+                                           const ecu_preset_t *preset,
+                                           uint32_t base_id);
+
+/* Largest 11-bit CAN id. A re-based stream must fit under this with all of
+ * its rows, so the highest row offset limits how far the base can move. */
+#define ECU_BASE_ID_MAX 0x7FFu
+
+/* Highest (can_id - base_id) across the preset's supported rows, i.e. how
+ * much headroom above the base the stream occupies. 0 for a single-id
+ * stream. Returns 0 for presets with no configurable base. */
+uint32_t ecu_preset_id_span(const ecu_preset_t *preset);
 
 /* True if the preset is the OBD2 Standard preset, which uses request/response
  * polling rather than a fixed broadcast bit-decode. The apply path stores the

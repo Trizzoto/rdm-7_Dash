@@ -664,6 +664,31 @@ esp_err_t config_store_load_edit_step_px(int8_t *step)
  * ═══════════════════════════════════════════════════════════════════════ */
 #define NS_ECU "ecu_cfg"
 
+/* Base CAN id the ECU stream was applied at, for the presets whose base is
+ * user-chosen (see ecu_preset_t.base_id). 0 = the preset's own default.
+ * Kept beside make/version because it is part of "which ECU stream is this
+ * dash listening to", and the picker has to show it back to the user. */
+esp_err_t config_store_save_ecu_base_id(uint32_t base_id)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_ECU, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u32(handle, "base_id", base_id);
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
+    return err;
+}
+
+uint32_t config_store_load_ecu_base_id(void)
+{
+    nvs_handle_t handle;
+    if (nvs_open(NS_ECU, NVS_READONLY, &handle) != ESP_OK) return 0;
+    uint32_t v = 0;
+    if (nvs_get_u32(handle, "base_id", &v) != ESP_OK) v = 0;
+    nvs_close(handle);
+    return v;
+}
+
 esp_err_t config_store_save_ecu(const char *make, const char *version)
 {
     if (!make || !version) return ESP_ERR_INVALID_ARG;

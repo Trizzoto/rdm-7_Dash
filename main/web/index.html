@@ -19578,6 +19578,8 @@
          * the on-device picker and the web picker stay in sync. */
 
         let _ecuPresetState   = null;  /* last /api/ecu/list response */
+        let _ecuCurrentBase   = 0;     /* base id the active ECU is applied at */
+        let _ecuCurrentKey    = '';    /* "make||version" of the active ECU */
         let _ecuPresetTimer   = null;  /* live-refresh interval handle */
         const _ECU_REFRESH_MS = 1500;
 
@@ -19630,6 +19632,8 @@
                 const newState = await listR.json();
                 const cur = await curR.json();
                 const curKey = cur.make ? `${cur.make}||${cur.version}` : '';
+                _ecuCurrentBase = cur.base_id || 0;
+                _ecuCurrentKey  = curKey;
 
                 /* Build a fingerprint of everything that affects the
                  * DOM SHAPE (not the badge values). Detected-set changes
@@ -19781,23 +19785,143 @@
             }
         }
 
+        /* Parse a CAN id the way a tuner would type it: "1300" is decimal,
+         * "0x514" (or "514h") is hex. Returns null on anything else, so the
+         * caller can keep the dialog open instead of guessing. */
+        function _parseCanId(txt) {
+            const t = String(txt || '').trim().replace(/\s+/g, '');
+            if (!t) return null;
+            let m;
+            if ((m = /^0[xX]([0-9a-fA-F]+)$/.exec(t))) return parseInt(m[1], 16);
+            if ((m = /^([0-9a-fA-F]+)[hH]$/.exec(t)))  return parseInt(m[1], 16);
+            if (/^[0-9]+$/.test(t)) return parseInt(t, 10);
+            return null;
+        }
+
+        /* Ask for the stream's first CAN id, for presets whose base is the
+         * tuner's choice rather than a fixed OEM broadcast — a Link generic
+         * dash stream is whatever id was typed into PCLink. Doubles as the
+         * apply confirmation so the user gets one dialog, not two.
+         *
+         * Its own overlay rather than _showPromptOverlay(): a bad id should
+         * mark the field and leave the dialog up, and that helper tears the
+         * overlay down before it hands the value back. Resolves the chosen
+         * id, or null if the user backed out.
+         */
+        function _askEcuBaseId(make, version, preset, currentBase) {
+            const dflt = currentBase || preset.base_id;
+            const span = preset.id_span || 0;
+            const max  = (_ecuPresetState && _ecuPresetState.base_id_max) || 0x7FF;
+            const hex  = (n) => '0x' + n.toString(16).toUpperCase();
+            const range = span
+                ? `Uses ${span + 1} consecutive ids from the base.`
+                : 'The whole stream is this one id.';
+
+            return new Promise(resolve => {
+                const overlay = document.createElement('div');
+                overlay.style.cssText = 'position:fixed;inset:0;background:rgba(6,6,8,0.82);backdrop-filter:blur(6px);z-index:9999;display:flex;align-items:center;justify-content:center;';
+                overlay.innerHTML = `
+                    <div style="background:#1a1b1e;border:1px solid #2e2f34;border-radius:10px;padding:24px;min-width:360px;max-width:420px;box-shadow:0 24px 60px rgba(0,0,0,0.6);">
+                        <div style="font-size:13px;font-weight:600;color:#e0e0e0;margin-bottom:8px;letter-spacing:0.03em;">Apply ${make} ${version}</div>
+                        <div style="font-size:11px;color:#888;margin-bottom:14px;line-height:1.6;">
+                            Base CAN ID of the stream &mdash; decimal (<code>1300</code>) or hex (<code>0x514</code>).<br>
+                            Default is <b>${preset.base_id}</b> (${hex(preset.base_id)}). ${range}<br>
+                            Set a different one to run this dash on a second stream, leaving the default id free for another device on the same bus.
+                        </div>
+                        <input id="_ecuBaseInput" type="text" value="${dflt}" maxlength="12"
+                            style="width:100%;box-sizing:border-box;background:#111214;border:1px solid #3a3b40;border-radius:6px;padding:9px 12px;color:#fff;font-size:13px;font-family:'JetBrains Mono',monospace;outline:none;"
+                            onfocus="this.select()">
+                        <div id="_ecuBaseHint" style="font-size:10px;color:#777;margin-top:7px;min-height:13px;"></div>
+                        <div style="font-size:11px;color:#999;margin-top:12px;line-height:1.5;">Applying overwrites your layout&rsquo;s signals with this ECU&rsquo;s decode.</div>
+                        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
+                            <button id="_ecuBaseCancel" style="padding:7px 16px;cursor:pointer;background:transparent;border:1px solid #2e2f34;border-radius:6px;color:#999;font-size:12px;">Cancel</button>
+                            <button id="_ecuBaseOk" style="padding:7px 16px;cursor:pointer;background:#3b82f6;border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:500;">Apply</button>
+                        </div>
+                    </div>`;
+                document.body.appendChild(overlay);
+                const inp  = document.getElementById('_ecuBaseInput');
+                const hint = document.getElementById('_ecuBaseHint');
+
+                /* One exit for every path, and the key hook always comes off. */
+                const close = (val) => {
+                    if (!overlay.parentNode) return;
+                    overlay.remove();
+                    document.removeEventListener('keydown', onKey, true);
+                    resolve(val);
+                };
+                const validate = () => {
+                    const n = _parseCanId(inp.value);
+                    if (n === null) {
+                        inp.style.borderColor = '#f44';
+                        hint.style.color = '#f88';
+                        hint.textContent = 'Not a number. Use 1300 or 0x514.';
+                        return null;
+                    }
+                    if (n + span > max) {
+                        inp.style.borderColor = '#f44';
+                        hint.style.color = '#f88';
+                        hint.textContent = span
+                            ? `Too high — with ${span} more ids the stream would run past ${hex(max)}.`
+                            : `Too high — the maximum 11-bit id is ${max} (${hex(max)}).`;
+                        return null;
+                    }
+                    inp.style.borderColor = '#3a3b40';
+                    hint.style.color = '#777';
+                    hint.textContent = span
+                        ? `${n} (${hex(n)}) — stream occupies ${hex(n)}..${hex(n + span)}.`
+                        : `${n} (${hex(n)})`;
+                    return n;
+                };
+                const submit = () => { const n = validate(); if (n !== null) close(n); };
+                const onKey = (e) => {
+                    if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); close(null); }
+                    else if (e.key === 'Enter') { e.stopPropagation(); e.preventDefault(); submit(); }
+                };
+                document.addEventListener('keydown', onKey, true);
+                inp.addEventListener('input', validate);
+                document.getElementById('_ecuBaseOk').onclick = submit;
+                document.getElementById('_ecuBaseCancel').onclick = () => close(null);
+                overlay.addEventListener('mousedown', e => { if (e.target === overlay) close(null); });
+                validate();
+                inp.focus();
+            });
+        }
+
         async function _ecuPresetPick(el) {
             const make = el.dataset.make;
             const version = el.dataset.version;
             const isRdmInternal = (make === 'RDM-7' && version === 'Internal');
-            const confirmMsg = isRdmInternal
-                ? 'Switch to RDM-7 Internal? Your existing signals are preserved; the Gear Setup will open so you can configure ratios.'
-                : `Apply ${make} ${version}? This overwrites your layout's signals with the ECU's default decode.`;
-            if (!(await confirmAsync(isRdmInternal ? 'Switch to RDM-7 Internal' : 'Apply ECU Preset', confirmMsg, isRdmInternal ? 'Switch' : 'Apply'))) return;
+
+            /* Presets that declare a base_id get the id dialog instead of the
+             * plain confirm — same decision point, one extra field. */
+            const preset = (_ecuPresetState && _ecuPresetState.presets || [])
+                .find(p => p.make === make && p.version === version);
+            let baseId = null;
+            if (preset && preset.base_id) {
+                /* Re-applying the ECU that is already active pre-fills the
+                 * id it was applied at; picking a different one starts from
+                 * that preset's own default. */
+                const isActive = (_ecuCurrentKey === `${make}||${version}`);
+                baseId = await _askEcuBaseId(
+                    make, version, preset, isActive ? _ecuCurrentBase : 0);
+                if (baseId === null) return;
+            } else {
+                const confirmMsg = isRdmInternal
+                    ? 'Switch to RDM-7 Internal? Your existing signals are preserved; the Gear Setup will open so you can configure ratios.'
+                    : `Apply ${make} ${version}? This overwrites your layout's signals with the ECU's default decode.`;
+                if (!(await confirmAsync(isRdmInternal ? 'Switch to RDM-7 Internal' : 'Apply ECU Preset', confirmMsg, isRdmInternal ? 'Switch' : 'Apply'))) return;
+            }
             try {
+                const body = { make, version };
+                if (baseId !== null) body.base_id = baseId;
                 const r = await fetch('/api/ecu/set', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ make, version })
+                    body: JSON.stringify(body)
                 });
                 if (!r.ok) throw new Error(await r.text());
                 closeEcuPreset();
-                updateStatus(`ECU preset applied: ${make} ${version} — reloading layout...`);
+                updateStatus(`ECU preset applied: ${make} ${version}${baseId !== null ? ` @ ${baseId} (0x${baseId.toString(16).toUpperCase()})` : ''} — reloading layout...`);
                 setTimeout(() => {
                     fetchLayouts();
                     loadLayout();

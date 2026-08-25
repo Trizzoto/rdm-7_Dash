@@ -153,6 +153,11 @@ esp_err_t config_store_load_edit_step_px(int8_t *step);
  * wizard completion and in Device Settings to auto-populate the active
  * layout's signals[] array via ecu_preset_apply_to_layout(). */
 esp_err_t config_store_save_ecu(const char *make, const char *version);
+
+/* Base CAN id the active ECU stream was applied at. 0 = the preset default.
+ * Only meaningful for presets that declare a configurable base. */
+esp_err_t config_store_save_ecu_base_id(uint32_t base_id);
+uint32_t  config_store_load_ecu_base_id(void);
 esp_err_t config_store_load_ecu(char *make, size_t m_len,
                                 char *version, size_t v_len);
 
