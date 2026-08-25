@@ -14,6 +14,7 @@
 #include "lap/lap_engine.h"
 #include "signal_sim.h"
 
+#include "driver/gpio.h"
 #include "driver/twai.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -32,7 +33,7 @@ static const char *TAG = "CAN_MGR";
 
 static twai_timing_config_t g_t_config = TWAI_TIMING_CONFIG_500KBITS();
 static twai_general_config_t g_config =
-	TWAI_GENERAL_CONFIG_DEFAULT(20, 19, TWAI_MODE_NORMAL);
+	TWAI_GENERAL_CONFIG_DEFAULT(CAN_TX_GPIO_NUM, CAN_RX_GPIO_NUM, TWAI_MODE_NORMAL);
 static twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 
 /* Current live bitrate index (0=125k,1=250k,2=500k,3=1M). Tracks what's
@@ -720,6 +721,45 @@ void can_set_promiscuous_mode(bool enable) {
 
 	s_promiscuous_active = enable;
 	ESP_LOGI(TAG, "Promiscuous mode %s", enable ? "ENABLED" : "disabled");
+}
+
+/* ── CAN TX line parking ─────────────────────────────────────────────
+ *
+ * TWAI TX is GPIO20, which is also USB D+ on the S3. Out of reset the USB
+ * Serial/JTAG PHY owns that pad and leaves it floating — measured on a dash
+ * 2026-08-25: usb_pad_en=1, dp_pullup=0, PU=0, PD=0, out_en=0. A floating
+ * TXD input reads as 0 at the transceiver, and TXD low means "hold the bus
+ * dominant", so the whole bus is jammed until something claims the pin.
+ *
+ * The bootloader hook in bootloader_components/rdm_can_park parks the line
+ * at ~25 ms, which is the fix that matters. This is the same park repeated
+ * from the application: it costs microseconds, it covers the case where an
+ * OTA'd app is running under an older bootloader that has no hook, and it
+ * re-asserts the state if anything between the bootloader and here hands
+ * the pad back to the USB PHY.
+ *
+ * Call it as the first thing in app_main. Safe to call before NVS, before
+ * the heap is interesting, and safe to call again after.
+ */
+void can_park_tx_line(void) {
+	/* Level first, then direction — enabling the output driver while
+	 * GPIO_OUT still holds 0 would pulse the bus dominant. */
+	gpio_set_level(CAN_TX_GPIO_NUM, 1);
+
+	gpio_config_t io = {
+		.pin_bit_mask = 1ULL << CAN_TX_GPIO_NUM,
+		.mode         = GPIO_MODE_OUTPUT,
+		.pull_up_en   = GPIO_PULLUP_ENABLE,
+		.pull_down_en = GPIO_PULLDOWN_DISABLE,
+		.intr_type    = GPIO_INTR_DISABLE,
+	};
+	/* gpio_config() -> gpio_ll_func_sel() clears USB_PAD_ENABLE for
+	 * GPIO19/20 on the S3, which is what actually takes the pad off the
+	 * USB PHY. */
+	gpio_config(&io);
+	gpio_set_level(CAN_TX_GPIO_NUM, 1);
+
+	ESP_LOGI(TAG, "CAN TX (GPIO%d) parked recessive", CAN_TX_GPIO_NUM);
 }
 
 void can_init(void) {

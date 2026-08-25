@@ -791,7 +791,16 @@ static void _deferred_wifi_boot_cb(lv_timer_t *timer) {
 #endif
 }
 
+
 void app_main(void) {
+  /* FIRST. TWAI TX (GPIO20) is USB D+ on the S3 and floats out of reset,
+   * which the transceiver reads as "hold the bus dominant" — it jams the
+   * whole bus until something claims the pin. The bootloader hook
+   * (bootloader_components/rdm_can_park) already parked it at ~25 ms; this
+   * repeats the park for an app OTA'd onto an older bootloader that has no
+   * hook. Nothing above this line may touch the bus. */
+  can_park_tx_line();
+
   // Initialize PWM for GPIO16
   init_pwm();
 

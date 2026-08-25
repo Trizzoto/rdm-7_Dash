@@ -17,6 +17,16 @@
  *
  * Call early in app_main — before the LVGL mutex exists.
  */
+/* TWAI pin assignment. GPIO20 is also USB D+ on the ESP32-S3 — see
+ * can_park_tx_line(). */
+#define CAN_TX_GPIO_NUM 20
+#define CAN_RX_GPIO_NUM 19
+
+/* Drive the CAN transmit line recessive (high) so the transceiver is not
+ * holding the bus dominant. Call as the first statement of app_main; the
+ * bootloader hook does the same thing ~1.4 s earlier. */
+void can_park_tx_line(void);
+
 void can_init(void);
 
 /**
