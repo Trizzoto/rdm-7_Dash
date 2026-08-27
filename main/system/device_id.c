@@ -8,9 +8,20 @@
 
 static const char *TAG = "device_id";
 
+/* Defined below; used by init_device_id to log the serial at boot. */
+esp_err_t get_device_serial(char *serial);
+
 esp_err_t init_device_id(void) {
-    // Nothing to initialize since we read MAC directly
-    ESP_LOGI(TAG, "Device ID system initialized");
+    /* Nothing to initialise — the serial is derived from the MAC on demand.
+     * It IS worth printing once, though: it is the dash's identity, it is the
+     * first thing support asks for, and until now the only ways to read it
+     * were the settings screen or an HTTP call — neither available on a dash
+     * that has not joined a network yet. */
+    char serial[MAX_SERIAL_LENGTH] = {0};
+    if (get_device_serial(serial) == ESP_OK)
+        ESP_LOGI(TAG, "Device serial: %s", serial);
+    else
+        ESP_LOGW(TAG, "Device serial unavailable (MAC read failed)");
     return ESP_OK;
 }
 
