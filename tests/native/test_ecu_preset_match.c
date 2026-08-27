@@ -75,6 +75,37 @@ static int score_for(const uint32_t *preset_ids_raw, int preset_id_count_raw,
     return score;
 }
 
+/* Mirror of the re-basable branch.
+ *
+ * A preset whose base the tuner chooses is not where its table says it is, so
+ * scoring the literal row ids reports "no live" for a stream that is arriving
+ * perfectly — the picker calling a working setup dead. The firmware instead
+ * matches the PATTERN: relative spacing between frames is fixed even when the
+ * base is not, so every detected id is tried as a candidate base and the best
+ * score wins. base_id == 0 means fixed ids and no such search. */
+static int score_for_based(const uint32_t *preset_ids_raw, int preset_id_count_raw,
+                           uint32_t base_id,
+                           const uint32_t *detected, int detected_count) {
+    if (base_id == 0)
+        return score_for(preset_ids_raw, preset_id_count_raw, detected, detected_count);
+    if (!detected || detected_count <= 0) return 0;
+
+    int best = 0;
+    for (int k = 0; k < detected_count; k++) {
+        int32_t delta = (int32_t)detected[k] - (int32_t)base_id;
+        uint32_t shifted[MAX_PRESET_IDS];
+        int n = 0;
+        for (int i = 0; i < preset_id_count_raw && n < MAX_PRESET_IDS; i++) {
+            if (preset_ids_raw[i] == 0) { shifted[n++] = 0; continue; }
+            int32_t want = (int32_t)preset_ids_raw[i] + delta;
+            shifted[n++] = (want < 0 || want > 0x7FF) ? 0xFFFFFFFFu : (uint32_t)want;
+        }
+        int sc = score_for(shifted, n, detected, detected_count);
+        if (sc > best) best = sc;
+    }
+    return best;
+}
+
 /* The threshold mirror — change in lockstep with ECU_PRESET_MATCH_THRESHOLD
  * in main/layout/ecu_presets.h. */
 #define TEST_MATCH_THRESHOLD 30
@@ -236,6 +267,49 @@ static void test_realistic_wrong_preset_misses(void) {
 
 /* ── Runner ─────────────────────────────────────────────────────────────── */
 
+/* ── Re-based streams (the customer case) ───────────────────────────────── */
+
+/* The AiM stream shipped at 0x5F0 but the tuner put it on 1300. The bus is
+ * carrying it perfectly; the literal-id scorer sees nothing. */
+static void test_rebased_stream_is_detected(void) {
+    const uint32_t aim[] = { 0x5F0, 0x5F2, 0x5F3, 0x5F4, 0x5F6, 0x5FB };
+    /* what a dash actually sees with the stream moved to 1300 (0x514) */
+    const uint32_t seen[] = { 0x514, 0x516, 0x517, 0x518, 0x51A, 0x51F };
+    TEST_ASSERT_EQUAL_INT(0,   score_for(aim, 6, seen, 6));            /* the bug */
+    TEST_ASSERT_EQUAL_INT(100, score_for_based(aim, 6, 0x5F0, seen, 6)); /* the fix */
+}
+
+/* Still finds it at the default base — the search must not break the ordinary
+ * case where nobody moved anything. */
+static void test_rebasable_preset_still_matches_at_default(void) {
+    const uint32_t aim[]  = { 0x5F0, 0x5F2, 0x5F3 };
+    const uint32_t seen[] = { 0x5F0, 0x5F2, 0x5F3 };
+    TEST_ASSERT_EQUAL_INT(100, score_for_based(aim, 3, 0x5F0, seen, 3));
+}
+
+/* A fixed-id preset must NOT pattern-match, or every OEM preset would light up
+ * against any bus that happened to carry the same spacing. */
+static void test_fixed_id_preset_does_not_pattern_match(void) {
+    const uint32_t ford[] = { 0x420, 0x421, 0x422 };
+    const uint32_t seen[] = { 0x620, 0x621, 0x622 };   /* same spacing, wrong ids */
+    TEST_ASSERT_EQUAL_INT(0, score_for_based(ford, 3, 0, seen, 3));
+}
+
+/* Partial coverage at a moved base still scores proportionally, so a stream
+ * that is half there does not claim to be fully present. */
+static void test_rebased_partial_match_scores_proportionally(void) {
+    const uint32_t aim[]  = { 0x5F0, 0x5F2, 0x5F3, 0x5F4 };
+    const uint32_t seen[] = { 0x514, 0x516 };          /* 2 of 4, base 1300 */
+    TEST_ASSERT_EQUAL_INT(50, score_for_based(aim, 4, 0x5F0, seen, 2));
+}
+
+/* An unrelated bus must not accidentally satisfy the pattern search. */
+static void test_rebased_search_does_not_invent_a_match(void) {
+    const uint32_t aim[]  = { 0x5F0, 0x5F2, 0x5F3, 0x5F4, 0x5F6, 0x5FB };
+    const uint32_t seen[] = { 0x100, 0x7E8, 0x400 };
+    TEST_ASSERT_TRUE(score_for_based(aim, 6, 0x5F0, seen, 3) < TEST_MATCH_THRESHOLD);
+}
+
 int main(void) {
     UNITY_BEGIN();
 
@@ -263,5 +337,10 @@ int main(void) {
     RUN_TEST(test_realistic_ford_bf_preset_matches_when_bus_quiet);
     RUN_TEST(test_realistic_wrong_preset_misses);
 
+    RUN_TEST(test_rebased_stream_is_detected);
+    RUN_TEST(test_rebasable_preset_still_matches_at_default);
+    RUN_TEST(test_fixed_id_preset_does_not_pattern_match);
+    RUN_TEST(test_rebased_partial_match_scores_proportionally);
+    RUN_TEST(test_rebased_search_does_not_invent_a_match);
     return UNITY_END();
 }

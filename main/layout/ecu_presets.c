@@ -1048,24 +1048,41 @@ int ecu_preset_match_score(const ecu_preset_t *preset) {
     int64_t now_us = esp_timer_get_time();
     int64_t cutoff = now_us - LIVE_ID_FRESH_WINDOW_US;
 
-    int hits = 0;
     uint16_t tracker_n = can_id_tracker_count();
-    for (int i = 0; i < preset_count; i++) {
+
+    /* Count how many of the preset's frames are live, with every id shifted by
+     * id_delta. Split out because a preset whose base the tuner chooses has to
+     * be tried at more than one base — see below. */
+    int hits_at_delta = 0;
+    #define _SCORE_AT(delta) do {                                                      hits_at_delta = 0;                                                             for (int i = 0; i < preset_count; i++) {                                           int32_t want = (int32_t)preset_frames[i].id + (delta);                         if (want < 0 || want > 0x7FF) continue;                                        for (uint16_t k = 0; k < tracker_n; k++) {                                         const can_id_entry_t *e = can_id_tracker_get(k);                               if (!e) continue;                                                              if (e->can_id != (uint32_t)want || e->extended) continue;                      /* Multiplexed frame: require its specific index to have been                   * seen. mux_seen is cumulative rather than windowed, so this                    * leans on the id's own freshness check below for liveness. */                if (preset_frames[i].mux_len) {                                                    if (preset_frames[i].mux_val > 15) continue;                                   if (!(e->mux_seen & (uint16_t)(1u << preset_frames[i].mux_val)))                         continue;                                                              }                                                                              if (e->last_seen_us >= cutoff) { hits_at_delta++; break; }                 }                                                                          }                                                                          } while (0)
+
+    int hits = 0;
+    if (preset->base_id == 0) {
+        /* Fixed ids — the rows say where the stream is, and that is that. */
+        _SCORE_AT(0);
+        hits = hits_at_delta;
+    } else {
+        /* A stream whose base the tuner chose is not where the table says it
+         * is. Scoring the literal row ids means a correctly-received re-based
+         * stream reports "no live" forever — the picker calling a working
+         * setup dead, which is worse than saying nothing.
+         *
+         * So match the PATTERN instead: the relative spacing between the
+         * preset's frames is fixed even when the base is not. Every id the
+         * tracker has actually seen is tried as a candidate base and the best
+         * score wins. Bounded by the tracker (<=64) and the frame count, and
+         * only presets that declare a settable base pay for it. */
         for (uint16_t k = 0; k < tracker_n; k++) {
             const can_id_entry_t *e = can_id_tracker_get(k);
-            if (!e) continue;
-            if (e->can_id != preset_frames[i].id || e->extended) continue;
-            /* Multiplexed frame: require its specific index to have been
-             * seen. mux_seen is cumulative rather than windowed, so this
-             * leans on the id's own freshness check below for liveness. */
-            if (preset_frames[i].mux_len) {
-                if (preset_frames[i].mux_val > 15) continue;
-                if (!(e->mux_seen & (uint16_t)(1u << preset_frames[i].mux_val)))
-                    continue;
-            }
-            if (e->last_seen_us >= cutoff) { hits++; break; }
+            if (!e || e->extended) continue;
+            if (e->last_seen_us < cutoff) continue;
+            int32_t delta = (int32_t)e->can_id - (int32_t)preset->base_id;
+            _SCORE_AT(delta);
+            if (hits_at_delta > hits) hits = hits_at_delta;
+            if (hits == preset_count) break;      /* cannot do better */
         }
     }
+    #undef _SCORE_AT
 
     /* Round-to-nearest percentage so a 1/3 split surfaces as 33 not 33.33 -> 33. */
     int score = (hits * 100 + preset_count / 2) / preset_count;
