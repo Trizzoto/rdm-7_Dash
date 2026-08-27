@@ -22,9 +22,26 @@ esp_err_t get_device_serial(char *serial) {
         return err;
     }
 
-    // Format: RDM-XXXX-XXXX where XXXX is derived from MAC address
+    /* Format: RDM-XXXX-XXXX from the LAST four MAC bytes.
+     *
+     * It used to take mac[0..3], which looked reasonable and was nearly
+     * useless: mac[0..2] is Espressif's OUI and is byte-identical on every
+     * chip in the block, so the whole serial turned on mac[3] alone — 256
+     * values, and boards from one batch collide. Measured 2026-08-27: a
+     * brand-new board and the bench dash both reported RDM-DCB4-D926.
+     *
+     * That matters most for the X-RDM-Device check in web_server_ota.c,
+     * which exists to stop an update landing on the wrong dash and cannot do
+     * that if two dashes answer to the same name.
+     *
+     * mac[3..5] vary per chip and mac[2] varies across OUIs, so this keeps
+     * the same shape and length while carrying real uniqueness. Note this
+     * RENAMES every dash already in the field — nothing stores the serial
+     * (every caller derives it fresh) and the AP SSID uses mac[4..5]
+     * independently, so nothing breaks, but a printed label will disagree
+     * with the screen. */
     snprintf(serial, MAX_SERIAL_LENGTH, "RDM-%02X%02X-%02X%02X",
-             mac[0], mac[1], mac[2], mac[3]);
+             mac[2], mac[3], mac[4], mac[5]);
 
     return ESP_OK;
 }
