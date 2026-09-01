@@ -18507,7 +18507,13 @@
          *                           added 2026-08 so a bundle saved at the car
          *                           carries the CAN decode/threshold setup for
          *                           offline editing; older importers skip
-         *                           unknown types gracefully)
+         *                           unknown types gracefully,
+         *                           4 = video overlay placement JSON — Studio
+         *                           only, added 2026-09 (ADR-0051) so one file
+         *                           carries both pictures. The dash has no HUD:
+         *                           it reads this entry and does nothing with
+         *                           it, which is the graceful skip above being
+         *                           used on purpose rather than by accident)
          *     [1]       Name length: uint8
          *     [2..N]    Name: UTF-8 (name_length bytes)
          *     [N..N+4]  Data length: uint32 LE
@@ -18731,6 +18737,7 @@
                     const images = [];
                     const fonts = [];
                     let channelsData = null;
+                    let overlayData = null;   /* type 4, Studio-side only */
 
                     /* Parse entries */
                     for (let i = 0; i < entryCount; i++) {
@@ -18756,6 +18763,13 @@
                             fonts.push({ name: entryName, data: data });
                         } else if (entryType === 3) {
                             channelsData = data; /* device channel registry */
+                        } else if (entryType === 4) {
+                            /* The video overlay's placement (ADR-0051). Read so
+                               that a bundle carrying one is not mistaken for a
+                               truncated file, and then left alone: the dash has
+                               no HUD to put it on. Studio's overlay reads it
+                               from here. */
+                            overlayData = data;
                         }
                     }
 
