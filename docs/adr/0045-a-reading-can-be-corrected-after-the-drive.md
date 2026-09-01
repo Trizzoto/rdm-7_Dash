@@ -5,7 +5,7 @@ Status: Accepted
 Repos: rdm7-desktop (GPS workspace)
 Completes [0044](0044-a-recording-carries-its-own-meaning.md), which froze a
 recording's channel definitions at download and would otherwise have frozen
-mistakes with them. Rests on [0008](0008-the-puck-is-dumb.md).
+mistakes with them. Rests on [0008](0008-gps-lap-timing-integration.md).
 
 ## Context
 

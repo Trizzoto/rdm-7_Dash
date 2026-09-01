@@ -3,7 +3,7 @@
 Date: 2026-08-22
 Status: Accepted
 Repos: rdm7-desktop (GPS workspace)
-Rests on [0008](0008-the-puck-is-dumb.md) — the puck logs, Studio interprets.
+Rests on [0008](0008-gps-lap-timing-integration.md) — the puck logs, Studio interprets.
 Evidence: `rdm7-desktop/docs/IN_THE_CAR_2026-08-22.md` (the drive to Mallala).
 
 ## Context

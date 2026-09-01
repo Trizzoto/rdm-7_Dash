@@ -3,7 +3,7 @@
 Date: 2026-08-20
 Status: Accepted
 Repos: rdm7-desktop (GPS workspace), rdm-gps-node (wire format — unchanged, described)
-Builds on [0008](0008-the-puck-is-dumb.md): the puck stays dumb, and this is
+Builds on [0008](0008-gps-lap-timing-integration.md): the puck stays dumb, and this is
 the other half of the bargain.
 
 ## Context
