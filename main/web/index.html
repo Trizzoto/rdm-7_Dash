@@ -6394,6 +6394,14 @@
         let ORIGIN_X = 400; // Center X = CANVAS_W / 2
         let ORIGIN_Y = 240; // Center Y = CANVAS_H / 2
 
+        /* A meter is square, so one number caps both of its sides. The LONG
+         * screen dimension, not the short one: on the 7 inch dash that keeps
+         * the 800 this was written as, and a meter deliberately taller than
+         * the screen — an arc rising out of the bottom edge — is a layout
+         * somebody may already have. On the round panels it becomes their
+         * own size instead of a 7 inch number that means nothing there. */
+        function _meterMaxSide() { return Math.max(CANVAS_W, CANVAS_H); }
+
         /* Layout JSON max size — must match LAYOUT_MAX_FILE_BYTES in
          * main/layout/layout_manager.h. The server returns
          * { ok:false, error:"layout_too_large", max, actual } with HTTP 413
@@ -11887,7 +11895,7 @@
                 // Snap
                 newW = Math.round(newW / SNAP_SIZE) * SNAP_SIZE;
                 newH = Math.round(newH / SNAP_SIZE) * SNAP_SIZE;
-                if (w.type === 'meter') { const sq = Math.min(Math.max(newW, newH), 800); newW = sq; newH = sq; }
+                if (w.type === 'meter') { const sq = Math.min(Math.max(newW, newH), _meterMaxSide()); newW = sq; newH = sq; }
                 if (w.type === 'image' && w.config && w.config.auto_size) {
                     const imgInfo = (_cachedImageList || []).find(img => img.name === w.config.image_name);
                     if (imgInfo && imgInfo.width && imgInfo.height) {
@@ -14525,7 +14533,7 @@
             if (isNaN(finalVal)) return;
             currentLayout.widgets[selectedIndex][field] = finalVal;
             if (currentLayout.widgets[selectedIndex].type === 'meter' && (field === 'w' || field === 'h')) {
-                finalVal = Math.min(finalVal, 800);
+                finalVal = Math.min(finalVal, _meterMaxSide());
                 currentLayout.widgets[selectedIndex].w = finalVal;
                 currentLayout.widgets[selectedIndex].h = finalVal;
                 /* Sync the other input without full rebuild */
@@ -14560,17 +14568,23 @@
                  * silently corrupts the saved layout (widget vanishes on reload). */
                 if (!Number.isFinite(n)) return;
                 finalVal = n;
-                /* Keep the widget's anchor on-screen so a mistyped coordinate can't
-                 * lose it off the canvas (center origin: x±400, y±240). */
-                if (field === 'x')      finalVal = Math.max(-400, Math.min(400, finalVal));
-                else if (field === 'y') finalVal = Math.max(-240, Math.min(240, finalVal));
-                else if (field === 'w') finalVal = Math.max(1, Math.min(800, finalVal));
-                else if (field === 'h') finalVal = Math.max(1, Math.min(480, finalVal));
+                /* Keep the widget's anchor on-screen so a mistyped coordinate
+                 * can't lose it off the canvas — against THIS screen, not the
+                 * 7 inch one. These were written as ±400 / ±240 / 800 / 480,
+                 * and the editor has three other screens: on the 720 and 800
+                 * round panels the bottom third of the canvas could not be
+                 * typed into at all and no widget could be taller than 480,
+                 * and on the 480 round one you could push a widget 160 px
+                 * past the right edge. */
+                if (field === 'x')      finalVal = Math.max(-ORIGIN_X, Math.min(ORIGIN_X, finalVal));
+                else if (field === 'y') finalVal = Math.max(-ORIGIN_Y, Math.min(ORIGIN_Y, finalVal));
+                else if (field === 'w') finalVal = Math.max(1, Math.min(CANVAS_W, finalVal));
+                else if (field === 'h') finalVal = Math.max(1, Math.min(CANVAS_H, finalVal));
             }
             currentLayout.widgets[selectedIndex][field] = finalVal;
             /* Meter widget must stay square, max 800 */
             if (currentLayout.widgets[selectedIndex].type === 'meter' && (field === 'w' || field === 'h')) {
-                finalVal = Math.min(finalVal, 800);
+                finalVal = Math.min(finalVal, _meterMaxSide());
                 currentLayout.widgets[selectedIndex].w = finalVal;
                 currentLayout.widgets[selectedIndex].h = finalVal;
             }
@@ -15283,7 +15297,8 @@
             const imgEl = new Image();
             imgEl.onload = () => {
                 const origW = imgEl.width, origH = imgEl.height;
-                const SCREEN_W = 800, SCREEN_H = 480;
+                /* The screen this layout is for, not the 7 inch one. */
+                const SCREEN_W = CANVAS_W, SCREEN_H = CANVAS_H;
 
                 let existingName = '';
                 if (selectedIndex >= 0 && currentLayout.widgets[selectedIndex])
@@ -15300,7 +15315,7 @@
                     <div id="iio-stage" style="flex:1;display:flex;align-items:center;justify-content:center;min-height:0;padding:24px 24px 12px;">
                         <div id="iio-frame" style="position:relative;border:1px solid rgba(255,255,255,0.18);border-radius:3px;overflow:hidden;background:#000;flex-shrink:0;box-shadow:0 0 0 1px rgba(255,255,255,0.06),0 16px 56px rgba(0,0,0,0.8);">
                             <img id="iio-preview" src="${imgEl.src}" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);display:block;">
-                            <div style="position:absolute;bottom:4px;right:6px;font-size:10px;color:rgba(255,255,255,0.3);pointer-events:none;font-family:monospace;">800×480</div>
+                            <div style="position:absolute;bottom:4px;right:6px;font-size:10px;color:rgba(255,255,255,0.3);pointer-events:none;font-family:monospace;">${SCREEN_W}×${SCREEN_H}</div>
                         </div>
                     </div>
                     <div style="background:rgba(12,12,20,0.97);border-top:1px solid rgba(255,255,255,0.08);padding:12px 20px 16px;display:flex;flex-direction:column;gap:10px;">
@@ -15625,8 +15640,8 @@
                 /* Cap at device screen — rdm_image_load rejects larger. */
                 let tw = Math.max(1, Math.round(origW * pct / 100));
                 let th = Math.max(1, Math.round(origH * pct / 100));
-                if (tw > 800 || th > 480) {
-                    const fit = Math.min(800 / tw, 480 / th);
+                if (tw > CANVAS_W || th > CANVAS_H) {
+                    const fit = Math.min(CANVAS_W / tw, CANVAS_H / th);
                     tw = Math.max(1, Math.floor(tw * fit));
                     th = Math.max(1, Math.floor(th * fit));
                 }
@@ -17576,18 +17591,21 @@
             let rect = img.getBoundingClientRect();
             if (rect.width === 0 || rect.height === 0) {
                 /* Fall back to the canvas in the same layout slot — it keeps
-                 * its 800×480 layout size even while the img is empty. */
+                 * its screen-sized layout box even while the img is empty. */
                 const canvas = document.getElementById('screenshotCanvas');
                 if (canvas) rect = canvas.getBoundingClientRect();
             }
             if (rect.width === 0 || rect.height === 0) return null;
             const cx = e.clientX - rect.left;
             const cy = e.clientY - rect.top;
-            const x = Math.round(cx * 800 / rect.width);
-            const y = Math.round(cy * 480 / rect.height);
+            /* Against the CONNECTED screen. Written as 800×480, which sent a
+             * round dash a touch from a screen it does not have: the middle
+             * of a 480 panel arrived as x=400, off its right-hand edge. */
+            const x = Math.round(cx * CANVAS_W / rect.width);
+            const y = Math.round(cy * CANVAS_H / rect.height);
             return {
-                x: Math.max(0, Math.min(799, x)),
-                y: Math.max(0, Math.min(479, y)),
+                x: Math.max(0, Math.min(CANVAS_W - 1, x)),
+                y: Math.max(0, Math.min(CANVAS_H - 1, y)),
             };
         }
 
@@ -18226,9 +18244,9 @@
                         <div id="imgEditResize">
                             <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
                                 <label style="width:50px;font-size:13px;">Width:</label>
-                                <input id="imgEditW" type="number" value="${origW}" min="1" max="800" style="width:80px;">
+                                <input id="imgEditW" type="number" value="${origW}" min="1" max="${CANVAS_W}" style="width:80px;">
                                 <label style="width:50px;font-size:13px;">Height:</label>
-                                <input id="imgEditH" type="number" value="${origH}" min="1" max="480" style="width:80px;">
+                                <input id="imgEditH" type="number" value="${origH}" min="1" max="${CANVAS_H}" style="width:80px;">
                             </div>
                             <div style="margin-bottom:8px;">
                                 <label style="font-size:13px;"><input id="imgEditLock" type="checkbox" checked> Lock aspect ratio</label>
@@ -18370,8 +18388,8 @@
                     } else {
                         srcCanvas = decoded.canvas;
                     }
-                    const targetW = activeTab === 'crop' ? srcCanvas.width : Math.max(1, Math.min(800, parseInt(wInput.value) || origW));
-                    const targetH = activeTab === 'crop' ? srcCanvas.height : Math.max(1, Math.min(480, parseInt(hInput.value) || origH));
+                    const targetW = activeTab === 'crop' ? srcCanvas.width : Math.max(1, Math.min(CANVAS_W, parseInt(wInput.value) || origW));
+                    const targetH = activeTab === 'crop' ? srcCanvas.height : Math.max(1, Math.min(CANVAS_H, parseInt(hInput.value) || origH));
                     overlay.remove();
 
                     /* Create an Image from the source canvas for convertImageToRDMIMG */
