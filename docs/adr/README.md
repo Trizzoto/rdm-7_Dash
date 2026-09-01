@@ -61,6 +61,7 @@ Read the relevant ADR before changing the area it covers. The "we already tried 
 | [0052](0052-an-export-is-a-snapshot-not-a-worker.md) | Proposed | An export is a snapshot, not a worker — decode and encode are already off-main-thread and the fast path already survives a hidden window (31.2 s of footage in ~18 s, throttled); what blocks the app is a full-screen modal and shared mutable state read live per frame. A Worker would have forked `gpHudRender` and lost the document fonts whose `measureText` drives layout, not just glyphs | `../rdm7-desktop/src/tauri-overlay.html` (export path, `.gp-expdlg`), `../rdm7-desktop/tools/check_export.js` |
 
 | [0053](0053-a-circuit-can-be-built-from-the-drive-that-proves-it.md) | Accepted | A circuit can be built from the drive that proves it — `gpAutoSetUp` already recognises 117 named circuits plus the library, so the gap was a track in neither: a private test track, airfield, skidpan or kart circuit got "add the circuit in Tracks", which is the setup the rest of the machinery removes. Three CLEAN laps within 25% mints one from the drive itself; counting raw laps instead let a four-stop road drive mint a circuit and put lap times on the board, so the run flags of 0046 are what holds the line | `../rdm7-desktop/src/tauri-overlay.html` (`gpTrackFromDrive`, `gpAutoSetUp`), `../rdm7-desktop/tools/check_autotrack.js` |
+| [0054](0054-prompt-does-not-come-back.md) | Accepted | `prompt()` does not come back — ADR-0016 left the browser prompt alone on the understanding that it "opened nothing"; measured over CDP it is the webview's own, unimplemented, and it NEVER RETURNS, so New dashboard… and a channel's Custom… unit froze the desktop app where they stood. `promptAsync()` wraps the editor's own overlay the way `confirmAsync()` wraps the confirm one, and the overlay now escapes what it is handed | `main/web/index.html` (`_showPromptOverlay`, `promptAsync`, `layoutEditorNew`, `_chUnitSelect`, `_chUnitFieldHTML`), `../rdm7-desktop/tools/check_dialogs.js` |
 
 ## When to write a new ADR
 
@@ -107,7 +108,7 @@ Existing ADRs vary slightly from this skeleton — none rigorous. Match the surr
 
 ## Numbering
 
-Strictly sequential. The next ADR is `0054`. Don't reuse numbers, even if a draft is abandoned — leave a stub if needed (`0011-abandoned.md` with one line of explanation).
+Strictly sequential. The next ADR is `0055`. Don't reuse numbers, even if a draft is abandoned — leave a stub if needed (`0011-abandoned.md` with one line of explanation).
 
 `0029` is deliberately unclaimed: a draft of it exists outside this repo (the
 GPS "a recording plays as a session" work). Take `0031`, not `0029`.

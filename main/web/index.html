@@ -7696,41 +7696,86 @@
             }
         }
 
-        /* ── Styled Prompt Overlay (replaces browser prompt()) ── */
+        /* ── Styled Prompt Overlay (replaces browser prompt()) ──
+         * window.prompt is not just unstyled here — under the Tauri desktop
+         * webview it is not implemented, and it does not return. No dialog is
+         * created and the script thread never resumes: the editor freezes
+         * mid-click and Task Manager is the only way out. Measured over CDP
+         * on 2026-09-02 — after a prompt() call, evaluating `1+1` in the page
+         * never answered again, and the process owned no dialog window of any
+         * kind. It is worse than the confirm() of ADR-0016, which at least
+         * ran on. Every ask goes through this overlay: the callback form, or
+         * promptAsync(). */
         function _showPromptOverlay(title, defaultValue, onConfirm, opts) {
             const _opts = typeof opts === 'string' ? { subtitle: opts } : (opts || {});
-            const subtitle = _opts.subtitle ? `<div style="font-size:11px;color:#888;margin-bottom:10px;white-space:pre-wrap;">${_opts.subtitle}</div>` : '';
+            /* The title and the seed value are somebody's data — a layout
+             * name, a unit label. Both are written into markup, and the seed
+             * into an attribute, so a value carrying a quote used to close
+             * the attribute and take the dialog's buttons out with it. */
+            const esc = (s) => String(s == null ? '' : s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            const subtitle = _opts.subtitle ? `<div style="font-size:11px;color:#888;margin-bottom:10px;white-space:pre-wrap;">${esc(_opts.subtitle)}</div>` : '';
             const overlay = document.createElement('div');
             overlay.style.cssText = 'position:fixed;inset:0;background:rgba(6,6,8,0.82);backdrop-filter:blur(6px);z-index:9999;display:flex;align-items:center;justify-content:center;';
             overlay.innerHTML = `
                 <div style="background:#1a1b1e;border:1px solid #2e2f34;border-radius:10px;padding:24px;min-width:320px;box-shadow:0 24px 60px rgba(0,0,0,0.6);">
-                    <div style="font-size:13px;font-weight:600;color:#e0e0e0;margin-bottom:14px;letter-spacing:0.03em;">${title}</div>
+                    <div style="font-size:13px;font-weight:600;color:#e0e0e0;margin-bottom:14px;letter-spacing:0.03em;">${esc(title)}</div>
                     ${subtitle}
-                    <input id="_promptInput" type="text" value="${defaultValue || ''}" maxlength="64"
+                    <input class="_promptInput" type="text" value="${esc(defaultValue)}" maxlength="64"
                         style="width:100%;box-sizing:border-box;background:#111214;border:1px solid #3a3b40;border-radius:6px;padding:9px 12px;color:#fff;font-size:13px;font-family:'JetBrains Mono',monospace;outline:none;"
                         onfocus="this.select()">
                     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
-                        <button id="_promptCancel" style="padding:7px 16px;cursor:pointer;background:transparent;border:1px solid #2e2f34;border-radius:6px;color:#999;font-size:12px;">Cancel</button>
-                        <button id="_promptOk" style="padding:7px 16px;cursor:pointer;background:#3b82f6;border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:500;">OK</button>
+                        <button class="_promptCancel" style="padding:7px 16px;cursor:pointer;background:transparent;border:1px solid #2e2f34;border-radius:6px;color:#999;font-size:12px;">Cancel</button>
+                        <button class="_promptOk" style="padding:7px 16px;cursor:pointer;background:#3b82f6;border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:500;">OK</button>
                     </div>
                 </div>`;
             document.body.appendChild(overlay);
-            const inp = document.getElementById('_promptInput');
-            const cancel = () => { overlay.remove(); };
-            document.getElementById('_promptCancel').onclick = cancel;
-            overlay.addEventListener('click', e => { if (e.target === overlay) cancel(); });
-            document.getElementById('_promptOk').onclick = () => {
+            /* Found by class WITHIN this overlay, not by a fixed id in the
+             * document: two of these can be open at once (a prompt raised
+             * from a modal that is itself a prompt), and getElementById
+             * handed the second one the first one's input box. */
+            const inp = overlay.querySelector('._promptInput');
+            const ok = overlay.querySelector('._promptOk');
+            /* One exit for every path, as in _showConfirmOverlay: OK, Cancel,
+             * backdrop and Escape all come through here, the key hook is
+             * always unhooked, and a stray second event cannot answer twice. */
+            const close = (value) => {
+                if (!overlay.parentNode) return;
+                overlay.remove();
+                document.removeEventListener('keydown', onKey, true);
+                if (value == null) { if (_opts.onCancel) _opts.onCancel(); }
+                else onConfirm(value);
+            };
+            const accept = () => {
                 let val = inp.value.trim();
                 if (!_opts.raw) val = val.replace(/[^a-zA-Z0-9_-]/g, '_');
                 if (!val) { inp.style.borderColor = '#f44'; return; }
-                overlay.remove();
-                onConfirm(val);
+                close(val);
             };
-            inp.addEventListener('keydown', e => {
-                if (e.key === 'Enter') document.getElementById('_promptOk').click();
-                if (e.key === 'Escape') cancel();
-            });
+            /* Capture phase: the editor has its own Escape (deselect, close
+             * the open modal) and it must not fire behind this dialog. The
+             * old hook was on the input alone, so Escape did nothing at all
+             * once focus reached a button. */
+            const onKey = (e) => {
+                if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); close(null); }
+                else if (e.key === 'Enter') { e.stopPropagation(); e.preventDefault(); accept(); }
+            };
+            document.addEventListener('keydown', onKey, true);
+            overlay.querySelector('._promptCancel').onclick = () => close(null);
+            ok.onclick = accept;
+            overlay.addEventListener('mousedown', e => { if (e.target === overlay) close(null); });
             setTimeout(() => inp.focus(), 50);
+        }
+
+        /* Promise form — `const name = await promptAsync(...)` reads like the
+         * prompt() it replaces, and Cancel, Escape and the backdrop all
+         * resolve null the way a cancelled prompt() returned null. */
+        function promptAsync(title, defaultValue, opts) {
+            return new Promise(resolve => _showPromptOverlay(
+                title, defaultValue, resolve,
+                Object.assign({}, typeof opts === 'string' ? { subtitle: opts } : opts,
+                              { onCancel: () => resolve(null) })));
         }
 
         /* ── Styled Confirm Overlay (replaces browser confirm()) ──
@@ -19396,9 +19441,12 @@
          * instead of every slot showing as "Internal". */
         const _origLayoutEditorNew = layoutEditorNew;
         layoutEditorNew = async function() {
-            const name = prompt('New layout name:', '');
-            if (!name || !name.trim()) return;
-            const safeName = name.trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+            /* promptAsync, not prompt: the bare one hangs the desktop app
+             * outright, so New dashboard… froze the editor rather than
+             * asking anything. The overlay already sanitises the name the
+             * same way this line used to. */
+            const safeName = await promptAsync('New Layout', '');
+            if (!safeName) return;
             if (safeName === 'default') { showToast('Cannot use name "default"', 'error'); return; }
             const ecuChoice = await showEcuModal();
             if (!ecuChoice) return;      /* Cancel — nothing has been made yet */
@@ -25861,23 +25909,35 @@
         function _chUnitFieldHTML(c) {
             const native = c.units_native || '';
             const opts = _chUnitOptions(native);
+            /* A unit label is free text — "Custom…" accepts whatever gets
+             * typed, because °C and km/h and in-lb are all legitimate. So it
+             * has to be escaped on the way into the markup: a label with a
+             * quote in it used to close the attribute early and spill the
+             * rest of the tag onto the page. */
+            const q = (s) => String(s == null ? '' : s)
+                .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
             if (!opts.length) {
-                return `<input type="text" value="${c.units_display||''}" placeholder="${native||'unit'}" onchange="_chEdit('${c.id}','units_display', this.value)">`;
+                return `<input type="text" value="${q(c.units_display)}" placeholder="${q(native || 'unit')}" onchange="_chEdit('${c.id}','units_display', this.value)">`;
             }
             const cur = c.units_display || '';
             const isNative = !cur || cur === native;
             const isKnown = isNative || opts.includes(cur);
             return `<select onchange="_chUnitSelect('${c.id}', this.value)">
-                        <option value="${native}" ${isNative ? 'selected' : ''}>${native} (native)</option>
-                        ${opts.map(u => `<option value="${u}" ${cur === u ? 'selected' : ''}>${u}</option>`).join('')}
-                        ${!isKnown ? `<option value="${cur}" selected>${cur} (custom)</option>` : ''}
+                        <option value="${q(native)}" ${isNative ? 'selected' : ''}>${q(native)} (native)</option>
+                        ${opts.map(u => `<option value="${q(u)}" ${cur === u ? 'selected' : ''}>${q(u)}</option>`).join('')}
+                        ${!isKnown ? `<option value="${q(cur)}" selected>${q(cur)} (custom)</option>` : ''}
                         <option value="__custom__">Custom…</option>
                     </select>`;
         }
         async function _chUnitSelect(id, value) {
             const c = (_chCache || []).find(x => x.id === id);
             if (value === '__custom__') {
-                const typed = prompt('Custom unit label (relabel only — values are not converted):', c?.units_display || '');
+                /* raw: a unit label is °C or km/h or in-lb, none of which
+                 * survive the name sanitiser. promptAsync, not prompt —
+                 * the bare one hangs the desktop app (see
+                 * _showPromptOverlay), so "Custom…" froze the page. */
+                const typed = await promptAsync('Custom unit label', c?.units_display || '',
+                    { raw: true, subtitle: 'Relabel only — the values are not converted.' });
                 if (typed == null) { _renderChannelDetail(); return; }
                 value = typed.trim();
             }
