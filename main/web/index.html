@@ -11692,8 +11692,36 @@
             });
         })();
 
+        /* Where a keystroke belongs to the focused CONTROL and not to the
+         * canvas. Both keyboard handlers used to ask `tagName !== 'INPUT'`,
+         * which left out everything else a key means something to.
+         *
+         * Measured in the editor: with an inspector font picker focused,
+         * Down changed the font AND nudged the widget a pixel, and Delete
+         * removed the widget outright — someone tabbing to a dropdown and
+         * pressing Delete lost their work. */
+        function _keyGoesToField(el) {
+            if (!el) return false;
+            if (el.isContentEditable) return true;
+            const t = el.tagName;
+            return t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT' || t === 'OPTION';
+        }
+
+        /* Everything the SPACE BAR already operates. Space-to-pan cancels the
+         * keystroke, so anything in here would simply lose it: the space bar
+         * typed nothing in either of the editor's textareas — the Load-JSON
+         * paste box and the CAN-trace notes field — and would not press a
+         * focused button or open a focused dropdown. */
+        function _spaceGoesToControl(el) {
+            if (!el) return false;
+            if (_keyGoesToField(el)) return true;
+            const t = el.tagName;
+            if (t === 'BUTTON' || t === 'A' || t === 'SUMMARY') return true;
+            return !!(el.getAttribute && el.getAttribute('role') === 'button');
+        }
+
         window.addEventListener('keydown', (e) => {
-            if (e.code === 'Space' && e.target.tagName !== 'INPUT') {
+            if (e.code === 'Space' && !_spaceGoesToControl(e.target)) {
                 e.preventDefault();
                 workspaceViewport.style.cursor = 'grab';
             }
@@ -12125,7 +12153,9 @@
         window.onpointercancel = _endPointerInteraction;
 
         window.onkeydown = (e) => {
-            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+            /* A dropdown was missing from this list, and Delete with one
+             * focused deleted the selected widget — see _keyGoesToField. */
+            if (_keyGoesToField(e.target)) return;
 
             if (e.ctrlKey || e.metaKey) {
                 if (e.shiftKey) {
