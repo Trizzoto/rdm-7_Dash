@@ -8033,6 +8033,37 @@
             const m = document.getElementById('loadJsonModal');
             if (m) m.style.display = 'none';
         }
+        /* What is wrong with a pasted layout, in the words of the thing that
+         * is wrong. This page takes an export OR whatever an AI builder
+         * produced, and it used to load anything with a widgets array: a
+         * paste carrying x: "far" and a widget with no type at all came back
+         * as "Loaded layout (4 widgets)", one row reading `undefined` in the
+         * layers panel, and buildFirmwarePayload then offered the dash
+         * `{ type: undefined, x: "far" }`.
+         *
+         * Only what cannot be represented is refused. A widget whose TYPE
+         * this editor does not know is NOT refused — it may be a layout for a
+         * newer dash, and throwing away somebody's file is worse than drawing
+         * it short — but the load says so instead of claiming all is well. */
+        function _layoutProblems(data) {
+            const bad = [], unknown = [];
+            (data.widgets || []).forEach(function (w, i) {
+                const where = 'Widget ' + (i + 1) + (w && w.id ? ' ("' + w.id + '")' : '');
+                if (!w || typeof w !== 'object' || Array.isArray(w)) {
+                    bad.push(where + ' is not a widget.');
+                    return;
+                }
+                if (!w.type) bad.push(where + ' does not say what type it is.');
+                else if (!WIDGET_DEFS[w.type] && unknown.indexOf(w.type) < 0) unknown.push(w.type);
+                ['x', 'y', 'w', 'h'].forEach(function (k) {
+                    if (w[k] === undefined || w[k] === null) return;   /* absent is fine — it defaults */
+                    if (!Number.isFinite(Number(w[k])))
+                        bad.push(where + ' has ' + k + ' set to ' + JSON.stringify(w[k]) + ', which is not a number.');
+                });
+            });
+            return { bad, unknown };
+        }
+
         function loadJsonFromText() {
             const ta = document.getElementById('loadJsonText');
             const err = document.getElementById('loadJsonError');
@@ -8044,6 +8075,15 @@
             catch (e) { fail('Not valid JSON: ' + (e && e.message || e)); return; }
             if (!data || typeof data !== 'object' || !Array.isArray(data.widgets)) {
                 fail('Invalid layout: expected an object with a "widgets" array.'); return;
+            }
+            const problems = _layoutProblems(data);
+            if (problems.bad.length) {
+                const shown = problems.bad.slice(0, 6);
+                if (problems.bad.length > shown.length)
+                    shown.push('…and ' + (problems.bad.length - shown.length) + ' more.');
+                fail(shown.join('\n'));
+                if (err) err.style.whiteSpace = 'pre-line';
+                return;
             }
             try {
                 pushHistory();
@@ -8059,7 +8099,16 @@
                 renderSignals();
                 updateInspector();
                 closeLoadJsonModal();
-                updateStatus('Loaded layout "' + currentLayout.name + '" (' + currentLayout.widgets.length + ' widgets)');
+                const n = currentLayout.widgets.length;
+                let said = 'Loaded layout "' + currentLayout.name + '" (' + n + (n === 1 ? ' widget)' : ' widgets)');
+                if (problems.unknown.length) {
+                    const list = problems.unknown.map(t => '"' + t + '"').join(', ');
+                    said += ' — but nothing here can draw ' + list +
+                            (problems.unknown.length === 1 ? ', so that widget is blank.'
+                                                           : ', so those widgets are blank.');
+                    showToast('This layout uses ' + list + ', which this editor does not know', 'error');
+                }
+                updateStatus(said, problems.unknown.length > 0);
             } catch (e) {
                 fail('Failed to load layout: ' + (e && e.message || e));
             }
