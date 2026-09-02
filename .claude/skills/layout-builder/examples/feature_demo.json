@@ -1,0 +1,172 @@
+{
+ "schema_version": 18,
+ "name": "feature_demo",
+ "screen_w": 800,
+ "screen_h": 480,
+ "night_mode": { "signal_name": "HEADLIGHTS", "active_when": 1 },
+ "signals": [],
+ "widgets": [
+  {
+   "type": "shape_panel",
+   "id": "bg",
+   "x": 0,
+   "y": 0,
+   "w": 800,
+   "h": 480,
+   "config": {
+    "bg_color": 2113,
+    "border_width": 0,
+    "border_radius": 0
+   }
+  },
+  {
+   "type": "meter",
+   "id": "tach",
+   "x": -215,
+   "y": 0,
+   "w": 380,
+   "h": 380,
+   "config": {
+    "signal_name": "RPM",
+    "min": 0,
+    "max": 8000,
+    "start_angle": 135,
+    "end_angle": 45,
+    "minor_tick_count": 33,
+    "major_tick_every": 4,
+    "tick_label_divisor": 1000,
+    "meter_bg_opa": 0,
+    "border_width": 0,
+    "major_tick_color": 65535,
+    "minor_tick_color": 27568,
+    "tick_label_color": 36020,
+    "tick_outline_strength": 190,
+    "tick_outline_color": 0,
+    "tick_outline_fade": 3,
+    "needle_color": 13854,
+    "needle_tip_style": 1,
+    "needle_ball_color": 65535,
+    "shadow_enabled": true,
+    "shadow_opa": 140,
+    "shadow_width_extra": 2,
+    "redline_enabled": true,
+    "redline_threshold": 6800,
+    "redline_color": 57861,
+    "night": {
+     "needle_color": 57861,
+     "major_tick_color": 36020,
+     "tick_label_color": 27568
+    }
+   }
+  },
+  {
+   "type": "arc",
+   "id": "boost",
+   "x": 190,
+   "y": -70,
+   "w": 230,
+   "h": 230,
+   "config": {
+    "signal_name": "MAP",
+    "signal_min": 0,
+    "signal_max": 250,
+    "start_angle": 135,
+    "end_angle": 45,
+    "arc_width": 16,
+    "bg_arc_color": 2277,
+    "lead_edge_enabled": true,
+    "grad_stops": [
+     { "pos": 0, "color": 2016 },
+     { "pos": 55, "color": 65504 },
+     { "pos": 100, "color": 63488 }
+    ],
+    "night": {
+     "bg_arc_color": 1057
+    }
+   }
+  },
+  {
+   "type": "panel",
+   "id": "ect",
+   "x": 190,
+   "y": 120,
+   "w": 155,
+   "h": 92,
+   "config": {
+    "label": "COOLANT",
+    "signal_name": "COOLANT_TEMP",
+    "show_unit": true,
+    "bg_opa": 0,
+    "border_width": 0,
+    "label_color": 36020,
+    "value_color": 65535,
+    "night": {
+     "value_color": 36020,
+     "label_color": 27568
+    },
+    "rules": [
+     {
+      "signal_name": "COOLANT_TEMP",
+      "op": "range",
+      "range_min": 60,
+      "range_max": 100,
+      "overrides": [
+       { "field": "value_color", "type": "color", "value": 2016 }
+      ]
+     },
+     {
+      "signal_name": "COOLANT_TEMP",
+      "op": ">",
+      "threshold": 105,
+      "overrides": [
+       { "field": "value_color", "type": "color", "value": 63488 },
+       { "field": "label_color", "type": "color", "value": 63488 }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "type": "bar",
+   "id": "fuel",
+   "x": 0,
+   "y": 210,
+   "w": 320,
+   "h": 22,
+   "config": {
+    "signal_name": "FUEL_LEVEL",
+    "show_bar_label": false,
+    "bar_bg_color": 2277,
+    "grad_stops": [
+     { "pos": 0, "color": 63488 },
+     { "pos": 25, "color": 65504 },
+     { "pos": 100, "color": 13854 }
+    ]
+   }
+  },
+  {
+   "type": "warning",
+   "id": "oilw",
+   "x": -330,
+   "y": -200,
+   "w": 34,
+   "h": 34,
+   "config": {
+    "slot": 0,
+    "signal_name": "OIL_PRESSURE",
+    "active_color": 63488,
+    "inactive_color": 8452,
+    "rules": [
+     {
+      "signal_name": "OIL_PRESSURE",
+      "op": ">=",
+      "threshold": 100,
+      "overrides": [
+       { "field": "lamp_on", "type": "bool", "value": false }
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}

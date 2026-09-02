@@ -1,29 +1,107 @@
 {
-  "schema_version": 15,
-  "name": "demo_minimal",
-  "screen_w": 800,
-  "screen_h": 480,
-  "signals": [
-    { "name": "GEAR", "value_map": [
-      {"v":0,"label":"N"}, {"v":1,"label":"1"}, {"v":2,"label":"2"},
-      {"v":3,"label":"3"}, {"v":4,"label":"4"}, {"v":5,"label":"5"}, {"v":6,"label":"6"} ] }
-  ],
-  "widgets": [
-    { "type": "rpm_bar", "id": "rpm", "x": 0, "y": -213, "w": 800, "h": 55,
-      "config": { "signal_name": "RPM", "rpm_max": 8000, "redline": 6500, "bar_color": 13854 } },
-
-    { "type": "meter", "id": "coolant", "x": -210, "y": 30, "w": 280, "h": 280,
-      "config": { "signal_name": "COOLANT_TEMP", "min": 40, "max": 120,
-                  "redline_enabled": true, "redline_threshold": 110, "redline_color": 57861,
-                  "show_ticks": true, "minor_tick_count": 9, "major_tick_every": 2,
-                  "show_tick_labels": true, "tick_label_divisor": 1,
-                  "needle_color": 13854 } },
-
-    { "type": "panel", "id": "speedp", "x": 190, "y": -20, "w": 220, "h": 140,
-      "config": { "signal_name": "VEHICLE_SPEED", "label": "SPEED", "show_unit": true,
-                  "value_color": 65535, "label_color": 36020 } },
-
-    { "type": "text", "id": "gear", "x": 190, "y": 120, "w": 120, "h": 80,
-      "config": { "signal_name": "GEAR", "font": "Montserrat:48", "text_color": 13854 } }
-  ]
+ "schema_version": 18,
+ "name": "demo_minimal",
+ "screen_w": 800,
+ "screen_h": 480,
+ "signals": [
+  {
+   "name": "GEAR",
+   "value_map": [
+    {
+     "v": 0,
+     "label": "N"
+    },
+    {
+     "v": 1,
+     "label": "1"
+    },
+    {
+     "v": 2,
+     "label": "2"
+    },
+    {
+     "v": 3,
+     "label": "3"
+    },
+    {
+     "v": 4,
+     "label": "4"
+    },
+    {
+     "v": 5,
+     "label": "5"
+    },
+    {
+     "v": 6,
+     "label": "6"
+    }
+   ]
+  }
+ ],
+ "widgets": [
+  {
+   "type": "rpm_bar",
+   "id": "rpm",
+   "x": 0,
+   "y": -213,
+   "w": 800,
+   "h": 55,
+   "config": {
+    "signal_name": "RPM",
+    "rpm_max": 8000,
+    "redline": 6500,
+    "bar_color": 13854
+   }
+  },
+  {
+   "type": "meter",
+   "id": "coolant",
+   "x": -210,
+   "y": 30,
+   "w": 280,
+   "h": 280,
+   "config": {
+    "signal_name": "COOLANT_TEMP",
+    "min": 40,
+    "max": 120,
+    "redline_enabled": true,
+    "redline_threshold": 110,
+    "redline_color": 57861,
+    "show_ticks": true,
+    "minor_tick_count": 9,
+    "major_tick_every": 2,
+    "show_tick_labels": true,
+    "tick_label_divisor": 1,
+    "needle_color": 13854
+   }
+  },
+  {
+   "type": "panel",
+   "id": "speedp",
+   "x": 190,
+   "y": -20,
+   "w": 220,
+   "h": 140,
+   "config": {
+    "signal_name": "VEHICLE_SPEED",
+    "label": "SPEED",
+    "show_unit": true,
+    "value_color": 65535,
+    "label_color": 36020
+   }
+  },
+  {
+   "type": "text",
+   "id": "gear",
+   "x": 190,
+   "y": 120,
+   "w": 120,
+   "h": 80,
+   "config": {
+    "signal_name": "GEAR",
+    "font": "Montserrat:48",
+    "text_color": 13854
+   }
+  }
+ ]
 }
