@@ -9531,6 +9531,26 @@
 
         /* ── Splash management functions ──────────────────────────── */
 
+        /* The splash picker carries one synthetic entry — "Disable (boot
+         * straight to dashboard)" — and it is a SETTING, not a splash. Three
+         * places read the picker's value straight as a name, so whenever that
+         * entry was the selected one they built `_splash___disable__`:
+         *
+         *   - with the splash turned off on the dash, the picker is set to it
+         *     deliberately (see below), and then editing and saving in Splash
+         *     mode wrote a junk file to the device and left the real splash
+         *     untouched;
+         *   - with NO splashes at all — a fresh dash, or the desktop app
+         *     offline — it is the only entry, so it is also the selected one,
+         *     and the editor tried to load a splash by that name on the way in.
+         *
+         * One place decides what the picker MEANS. */
+        function _splashPickerName(fallback) {
+            const sel = document.getElementById('splashSelect');
+            const v = sel && sel.value;
+            return (v && v !== '__disable__') ? v : (fallback || 'Default');
+        }
+
         async function fetchSplashes() {
             try {
                 const resp = await fetch('/api/splash/list');
@@ -9557,7 +9577,8 @@
                  * picker instead of preselecting an active splash. */
                 const splashDisabled = data.enabled === false;
                 if (splashDisabled) sel.value = '__disable__';
-                const active = (splashDisabled ? null : sel.value) || data.active || 'Default';
+                const active = splashDisabled ? (data.active || 'Default')
+                                              : _splashPickerName(data.active);
                 await loadLayout('_splash_' + active);
             } catch (e) {
                 updateStatus('Error loading splash list', true);
@@ -16966,9 +16987,8 @@
         async function loadLayout(name) {
             try {
                 /* Fetch live in-memory state first; fall back to raw file */
-                const splashSel = document.getElementById('splashSelect');
                 const fetchName = currentScreenMode === 'splash'
-                    ? '_splash_' + (splashSel && splashSel.value ? splashSel.value : 'Default')
+                    ? '_splash_' + _splashPickerName()
                     : name;
                 let response = await fetch('/api/layout/current');
                 if (!response.ok) {
@@ -17121,8 +17141,11 @@
                 existing = Array.from(layoutSelect.options).map(o => o.value);
             } else {
                 const splashSel = document.getElementById('splashSelect');
+                /* Skip the synthetic "Disable" entry — it is a setting, not a
+                   sibling to avoid colliding with. */
                 existing = splashSel
-                    ? Array.from(splashSel.options).map(o => '_splash_' + o.value)
+                    ? Array.from(splashSel.options).filter(o => o.value !== '__disable__')
+                        .map(o => '_splash_' + o.value)
                     : [];
             }
             const baseExists = existing.includes(base);
@@ -17168,8 +17191,7 @@
 
             /* Splash layouts save as _splash_<name> */
             if (isSplash) {
-                const splashSel = document.getElementById('splashSelect');
-                payload.name = '_splash_' + (splashSel && splashSel.value ? splashSel.value : 'Default');
+                payload.name = '_splash_' + _splashPickerName();
             }
 
             /* Factory-default protection — see _resolveProtectedName above.
@@ -21213,9 +21235,17 @@
                 if (r.ok) info = await r.json();
             } catch (e) { /* offline — handled below */ }
 
-            if (!info) {
+            /* `offline` is the desktop app's local virtual dash saying it is
+             * not a dash (the same flag the channel page keys off, ADR-0030).
+             * Without this the card fell through to the CAN branch below and
+             * printed "the driver is stopped — check the dash has power on
+             * its CAN pins": advice about a bus on hardware that is not
+             * plugged in, from a reading nobody took. On the device itself
+             * the flag is never set and nothing changes. */
+            if (!info || info.offline) {
                 set('canSetupHeadline', 'No dash connected');
                 set('canSetupDetail', 'Connect to the dash to see its bus state.');
+                set('canSetupSignals', '—');
                 const d = document.getElementById('canSetupDot');
                 if (d) d.style.background = 'var(--text-muted)';
                 return;
@@ -21590,7 +21620,12 @@
                 const r = await fetch('/api/obd2/dtcs?mode=' + _dtcCurrentTab);
                 const data = await r.json();
                 if (!data.ok) {
-                    if (status) status.textContent = `Error: ${data.error || 'unknown'}`;
+                    /* Being offline is not an error, it is a state — the word
+                     * "Error:" in front of "no dash is connected" reads like
+                     * something broke. */
+                    if (status) status.textContent = data.offline
+                        ? (data.error || 'Offline — no dash is connected')
+                        : `Error: ${data.error || 'unknown'}`;
                     if (body)   body.innerHTML = `<tr><td colspan="2" style="padding:14px; text-align:center; color:var(--text-muted); font-style:italic;">${(data.error || 'No response from ECU')}</td></tr>`;
                     return;
                 }
@@ -21693,6 +21728,23 @@
                 const ecu = (ecuR && ecuR.ok && ecuR.ecu_name) ? ecuR.ecu_name : '';
                 _vehInfoLast.vin = vin;
                 _vehInfoLast.ecu = ecu;
+                /* "Not all ECUs support VIN" is a statement about the CAR, and
+                 * it was printed whenever the fetch came back empty for ANY
+                 * reason — including the desktop app being offline, where no
+                 * ECU was asked anything and no reading was taken to stamp a
+                 * time on. `offline` is the local virtual dash saying it is
+                 * not a dash; a real dash never sets it, so nothing about the
+                 * on-device answer changes. */
+                const why = ((vinR && vinR.offline) || (ecuR && ecuR.offline))
+                    ? ((vinR && vinR.error) || (ecuR && ecuR.error) || 'Offline — no dash is connected')
+                    : '';
+                if (!vin && !ecu && why) {
+                    if (vinEl) vinEl.textContent = '—';
+                    if (ecuEl) ecuEl.textContent = '—';
+                    if (timeEl) timeEl.textContent = 'not read';
+                    if (status) status.textContent = why;
+                    return;
+                }
                 if (vinEl) vinEl.textContent = vin || '(no response — not all ECUs support VIN)';
                 if (ecuEl) ecuEl.textContent = ecu || '(no response — Mode 09 PID 0x0A unsupported)';
                 if (timeEl) timeEl.textContent = new Date().toLocaleTimeString();
