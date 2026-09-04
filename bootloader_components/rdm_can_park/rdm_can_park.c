@@ -38,9 +38,39 @@
 
 #define RDM_CAN_TX_GPIO 20
 
+/* Feature stamp, read back out of flash by main/storage/bootloader_selfupdate.c.
+ *
+ * The app can compare the bootloader in flash against the copy it carries, but
+ * a byte comparison answers the wrong question: any rebuild changes bytes (a
+ * console pin, a toolchain bump), and prompting a customer to rewrite their
+ * bootloader — a write that bricks the dash if power drops mid-way — for a
+ * cosmetic difference is not a trade worth making. What the dash actually
+ * needs to know is whether the bootloader has THE FIX, so the bootloader says
+ * so itself.
+ *
+ * Fixed layout on purpose: the prefix is searched for verbatim in a flash
+ * read-back, and the four ASCII digits after it are the version. Bump the
+ * version when a change here must reach dashes already in cars; leave it alone
+ * for anything that does not change behaviour.
+ *
+ *   0000  no marker at all — a bootloader from before this existed, which may
+ *         or may not park the CAN line. Treated as "needs the fix", because
+ *         offering a redundant write is the safe direction.
+ *   0001  parks TWAI TX (GPIO20) recessive before init. ADR-0047.
+ */
+/* `retain` keeps it through --gc-sections, which the bootloader is built
+ * with; `used` alone only stops the compiler dropping it, and the first
+ * build of this stamp went out without it because the linker collected it. */
+__attribute__((used, retain))
+const char rdm_bl_feature_marker[] = "RDM-BL-FEAT:0001";
+
 /* Tell the linker to keep this translation unit — the hooks below override
  * weak symbols and would otherwise be dropped. */
-void bootloader_hooks_include(void) {}
+void bootloader_hooks_include(void) {
+	/* A real reference to the stamp, so keeping it does not rest on an
+	 * attribute alone. Costs nothing: no load is actually performed. */
+	__asm__ volatile("" :: "r"(rdm_bl_feature_marker));
+}
 
 void bootloader_before_init(void) {
 	const uint32_t mask = (1u << RDM_CAN_TX_GPIO);

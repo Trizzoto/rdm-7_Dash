@@ -320,6 +320,17 @@ static esp_err_t bootloader_status_handler(httpd_req_t *req) {
 	cJSON_AddStringToObject(root, "state", s);
 	cJSON_AddBoolToObject  (root, "update_available", st == BL_SELFUPDATE_DIFFERENT);
 	cJSON_AddNumberToObject(root, "image_bytes", bootloader_selfupdate_image_size());
+	/* Which features flash has vs which this app carries. 0 = no stamp, i.e. a
+	 * bootloader older than the stamp, so we cannot tell whether it parks the
+	 * CAN line and offer the write rather than assume. bytes_identical is
+	 * diagnostic only — see bootloader_selfupdate.h for why it does not drive
+	 * the banner. */
+	bl_selfupdate_info_t info;
+	if (bootloader_selfupdate_info(&info)) {
+		cJSON_AddNumberToObject(root, "installed_feature", info.installed);
+		cJSON_AddNumberToObject(root, "carried_feature",   info.carried);
+		cJSON_AddBoolToObject  (root, "bytes_identical",   info.bytes_identical);
+	}
 	/* Said plainly because the consequence is not recoverable over the air. */
 	cJSON_AddStringToObject(root, "warning",
 	    "Writing the bootloader briefly leaves the dash with none. If power is "

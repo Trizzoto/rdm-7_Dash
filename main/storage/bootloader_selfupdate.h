@@ -36,12 +36,29 @@ extern "C" {
 #endif
 
 typedef enum {
-	BL_SELFUPDATE_UP_TO_DATE = 0, /* flash already holds the embedded image  */
+	BL_SELFUPDATE_UP_TO_DATE = 0, /* flash has the features this app carries */
 	BL_SELFUPDATE_DIFFERENT,      /* an update is available to write         */
 	BL_SELFUPDATE_UNREADABLE,     /* could not read the running bootloader   */
 } bl_selfupdate_state_t;
 
-/* Compare the bootloader in flash against the one embedded in this app.
+/* What the two bootloaders say about themselves. `installed` is the feature
+ * version stamped into the bootloader currently in flash, `carried` the one in
+ * the image this app was built with (see rdm_can_park.c for the stamp). Zero
+ * means no stamp was found, i.e. a bootloader older than the stamp itself.
+ *
+ * `bytes_identical` is reported for diagnostics only. It is deliberately NOT
+ * what drives the banner: an unrelated rebuild changes bytes without changing
+ * behaviour, and this write is too dangerous to offer for cosmetic reasons. */
+typedef struct {
+	uint32_t installed;
+	uint32_t carried;
+	bool     bytes_identical;
+} bl_selfupdate_info_t;
+
+/* Fills *out from flash. False if the running bootloader could not be read. */
+bool bootloader_selfupdate_info(bl_selfupdate_info_t *out);
+
+/* Does the bootloader in flash have the features this app carries?
  * Read-only — touches nothing. */
 bl_selfupdate_state_t bootloader_selfupdate_check(void);
 

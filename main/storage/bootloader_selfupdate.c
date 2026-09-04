@@ -78,16 +78,65 @@ static uint8_t *_read_running_bootloader(size_t len) {
 	return buf;
 }
 
-bl_selfupdate_state_t bootloader_selfupdate_check(void) {
+/* Find the feature stamp rdm_can_park.c puts in the bootloader. Returns the
+ * version, or 0 when there is no stamp — which means a bootloader built before
+ * the stamp existed, so we cannot tell whether it has the fix. */
+#define BL_FEAT_PREFIX  "RDM-BL-FEAT:"
+#define BL_FEAT_DIGITS  4
+
+static uint32_t _feature_version(const uint8_t *img, size_t len) {
+	const size_t plen = sizeof(BL_FEAT_PREFIX) - 1;
+	if (!img || len < plen + BL_FEAT_DIGITS) return 0;
+	for (size_t i = 0; i + plen + BL_FEAT_DIGITS <= len; i++) {
+		if (img[i] != (uint8_t)BL_FEAT_PREFIX[0]) continue;   /* cheap reject */
+		if (memcmp(img + i, BL_FEAT_PREFIX, plen) != 0) continue;
+		const uint8_t *d = img + i + plen;
+		uint32_t v = 0;
+		for (size_t k = 0; k < BL_FEAT_DIGITS; k++) {
+			if (d[k] < '0' || d[k] > '9') return 0;
+			v = v * 10u + (uint32_t)(d[k] - '0');
+		}
+		return v;
+	}
+	return 0;
+}
+
+bool bootloader_selfupdate_info(bl_selfupdate_info_t *out) {
+	if (!out) return false;
 	size_t len = bootloader_selfupdate_image_size();
-	if (len == 0) return BL_SELFUPDATE_UNREADABLE;
+	if (len == 0) return false;
 
 	uint8_t *cur = _read_running_bootloader(len);
-	if (!cur) return BL_SELFUPDATE_UNREADABLE;
+	if (!cur) return false;
 
-	bool same = (memcmp(cur, _bl_image_start, len) == 0);
+	out->installed       = _feature_version(cur, len);
+	out->carried         = _feature_version(_bl_image_start, len);
+	out->bytes_identical = (memcmp(cur, _bl_image_start, len) == 0);
 	free(cur);
-	return same ? BL_SELFUPDATE_UP_TO_DATE : BL_SELFUPDATE_DIFFERENT;
+	return true;
+}
+
+bl_selfupdate_state_t bootloader_selfupdate_check(void) {
+	bl_selfupdate_info_t info;
+	if (!bootloader_selfupdate_info(&info)) return BL_SELFUPDATE_UNREADABLE;
+
+	/* Nothing to advertise: this app carries an unstamped bootloader, so there
+	 * is no feature claim to compare. Fall back to the old byte test rather
+	 * than silently never offering the update again. */
+	if (info.carried == 0)
+		return info.bytes_identical ? BL_SELFUPDATE_UP_TO_DATE
+		                            : BL_SELFUPDATE_DIFFERENT;
+
+	/* The question that matters, and the reason this is not a byte compare:
+	 * does flash already have at least the features this app ships? A dash
+	 * whose bootloader is newer than the app (downgraded firmware) is left
+	 * alone — writing an older bootloader over a newer one helps nobody. */
+	if (info.installed < info.carried) {
+		ESP_LOGI(TAG, "bootloader feature v%u in flash, v%u available",
+		         (unsigned)info.installed, (unsigned)info.carried);
+		return BL_SELFUPDATE_DIFFERENT;
+	}
+	return BL_SELFUPDATE_UP_TO_DATE;
 }
 
 esp_err_t bootloader_selfupdate_apply(const char **err_detail,
