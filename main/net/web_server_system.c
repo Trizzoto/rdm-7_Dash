@@ -5,8 +5,9 @@
  *   GET  /api/device/info      full device/hw/system/signal snapshot
  *   GET  /api/brightness       current display brightness
  *   POST /api/brightness       set display brightness
- *   GET  /api/can/config       CAN bitrate index
- *   POST /api/can/config       update CAN bitrate index
+ *   GET  /api/can/config       CAN bitrate index (saved + live), bus state
+ *   POST /api/can/config       set CAN bitrate index — applied LIVE, optionally
+ *                              without persisting (see the handler)
  *   GET  /api/system/health    uptime, heap, psram, WiFi RSSI
  *   POST /api/system/reboot    deferred esp_restart()
  *   GET  /api/dimmer/config    brightness-dimmer signal config
@@ -20,6 +21,7 @@
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "driver/twai.h"
+#include "can/can_manager.h"
 #include "net/wifi_manager.h"
 #include "storage/bootloader_selfupdate.h"
 #include "storage/config_store.h"
@@ -210,6 +212,12 @@ static const httpd_uri_t brightness_post_uri = {
 
 /* ── CAN Config ──────────────────────────────────────────────────────────── */
 
+/* GET reports the SAVED rate and the LIVE one separately, because they are
+ * allowed to differ: the OBD2 bus scan probes other rates transiently, and
+ * so does Studio's keypad wizard, which walks the bus looking for a device
+ * whose rate nobody knows. A caller that reads one number cannot tell "the
+ * dash is set to 500k" from "the dash is listening at 500k right now", and
+ * those are different questions when something is mid-probe. */
 static esp_err_t _can_config_get_handler(httpd_req_t *req) {
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 	httpd_resp_set_type(req, "application/json");
@@ -217,12 +225,34 @@ static esp_err_t _can_config_get_handler(httpd_req_t *req) {
 	uint8_t bitrate = 2; /* default 500 kbps */
 	config_store_load_bitrate(&bitrate);
 
-	char buf[32];
-	snprintf(buf, sizeof(buf), "{\"bitrate\":%d}", (int)bitrate);
+	char buf[96];
+	snprintf(buf, sizeof(buf),
+	         "{\"bitrate\":%d,\"live\":%d,\"promiscuous\":%s,\"suspended\":%s}",
+	         (int)bitrate, (int)can_get_bitrate_index(),
+	         can_is_promiscuous() ? "true" : "false",
+	         can_is_suspended()   ? "true" : "false");
 	httpd_resp_sendstr(req, buf);
 	return ESP_OK;
 }
 
+/* Body: { "bitrate": 0-3, "persist": true }
+ *
+ * This used to save to NVS and stop there, so a bitrate change did nothing at
+ * all until somebody rebooted the dash — and the endpoint answered "ok" the
+ * whole time. That cost real hours on the bench: the rate was set, the reply
+ * said it worked, and the bus stayed silent, which looks exactly like a dead
+ * device on the other end. can_change_bitrate() had been sitting in
+ * can_manager.c the entire time; the on-device settings screen and the OBD2
+ * scan both call it. Now this does too.
+ *
+ * "persist": false applies the rate WITHOUT writing it to NVS — for a caller
+ * that is walking rates to find something and will put the dash back where it
+ * found it. Defaults to true so every existing caller keeps its old meaning.
+ *
+ * The response reports the rate actually in effect afterwards, which is not
+ * always the one asked for: while the bus scan owns the peripheral the change
+ * is deferred to can_resume(), and saying "ok" to that would be the same lie
+ * this endpoint used to tell. */
 static esp_err_t _can_config_post_handler(httpd_req_t *req) {
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 
@@ -243,6 +273,8 @@ static esp_err_t _can_config_post_handler(httpd_req_t *req) {
 	}
 
 	uint8_t bitrate = (uint8_t)j->valuedouble;
+	cJSON *jp = cJSON_GetObjectItem(root, "persist");
+	bool persist = cJSON_IsBool(jp) ? cJSON_IsTrue(jp) : true;
 	cJSON_Delete(root);
 
 	if (bitrate > 3) {
@@ -250,10 +282,21 @@ static esp_err_t _can_config_post_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
-	config_store_save_bitrate(bitrate);
+	/* Persist BEFORE applying: can_resume() reloads the saved rate from NVS
+	 * when a deferred change lands, so a persisted rate survives the defer.
+	 * (can_persist_bitrate's own docs call out this ordering.) */
+	if (persist) config_store_save_bitrate(bitrate);
+	can_change_bitrate(bitrate);
 
+	bool deferred = can_is_suspended();
+	char out[128];
+	snprintf(out, sizeof(out),
+	         "{\"status\":\"ok\",\"bitrate\":%d,\"live\":%d,\"persisted\":%s,"
+	         "\"deferred\":%s}",
+	         (int)bitrate, (int)can_get_bitrate_index(),
+	         persist ? "true" : "false", deferred ? "true" : "false");
 	httpd_resp_set_type(req, "application/json");
-	httpd_resp_sendstr(req, "{\"status\":\"ok\"}");
+	httpd_resp_sendstr(req, out);
 	return ESP_OK;
 }
 

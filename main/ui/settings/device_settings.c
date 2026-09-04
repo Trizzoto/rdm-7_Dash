@@ -1,4 +1,5 @@
 #include "device_settings.h"
+#include "esp_attr.h"
 #include "theme.h"
 #include "lvgl.h"
 #include "driver/ledc.h"
@@ -155,6 +156,30 @@ static lv_obj_t  *s_scan_cancel_btn    = NULL;
 
 /* Bitrate dropdown pointer for scan apply */
 static lv_obj_t  *s_bitrate_dropdown   = NULL;
+
+/* Stat line on the CAN bus card in the setup grid. Held so every path that
+ * moves the bitrate can rewrite it: the card is what you read walking past,
+ * and it used to carry the string literal "500 KBPS" no matter what the bus
+ * was doing — a dash on 1 Mbps said 500 on the card and 1 Mbps in the popup
+ * that sets it. */
+static lv_obj_t  *s_can_bitrate_stat_label = NULL;
+
+/* The rate the TWAI driver is installed at right now. Live index rather than
+ * NVS: a bus scan or a wizard step moves the driver, and the question the
+ * card answers is "what is this bus running at", not "what did someone last
+ * save". */
+static const char *_bitrate_stat_text(void) {
+    static const char *labels[] = {"125 KBPS", "250 KBPS", "500 KBPS", "1 MBPS"};
+    uint8_t idx = can_get_bitrate_index();
+    return labels[idx > 3 ? 2 : idx];
+}
+
+static void _refresh_can_bitrate_stat(void) {
+    /* lv_obj_is_valid, not just NULL: the pointer survives a screen delete.
+     * Same reason refresh_can_diagnostics checks it. */
+    if (s_can_bitrate_stat_label && lv_obj_is_valid(s_can_bitrate_stat_label))
+        lv_label_set_text(s_can_bitrate_stat_label, _bitrate_stat_text());
+}
 
 // AP hotspot status label
 static lv_obj_t* ap_status_label = NULL;
@@ -682,7 +707,7 @@ static void brightness_dimmer_config_cb(lv_event_t * e) {
     lv_obj_set_style_pad_all(signal_dd, 4, 0);
     lv_obj_set_style_text_color(signal_dd, THEME_COLOR_TEXT_MUTED, LV_PART_INDICATOR);
     {
-        static char sig_options[1024];
+        static EXT_RAM_BSS_ATTR char sig_options[1024];
         uint16_t sel = _build_signal_options(sig_options, sizeof(sig_options));
         lv_dropdown_set_options(signal_dd, sig_options);
         lv_dropdown_set_selected(signal_dd, sel);
@@ -1073,6 +1098,12 @@ static void refresh_can_diagnostics(void) {
 }
 
 static void refresh_can_diag_timer_cb(lv_timer_t* timer) {
+    (void)timer;
+    /* Card stat first. refresh_can_diagnostics() deletes this timer when the
+     * legacy health panel's labels are absent — and they are, that panel is
+     * compiled out of the current screen — so anything that needs to run has
+     * to run before it. */
+    _refresh_can_bitrate_stat();
     refresh_can_diagnostics();
 }
 
@@ -1126,6 +1157,7 @@ static void _scan_apply_cb(lv_event_t *e) {
     if (s_bitrate_dropdown && lv_obj_is_valid(s_bitrate_dropdown)) {
         lv_dropdown_set_selected(s_bitrate_dropdown, idx);
     }
+    _refresh_can_bitrate_stat();
 
     _close_scan_overlay();
     refresh_can_diagnostics();
@@ -1534,6 +1566,7 @@ static void close_menu_event_cb(lv_event_t * e) {
     s_scan_close_btn = NULL;
     s_scan_cancel_btn = NULL;
     s_bitrate_dropdown = NULL;
+    s_can_bitrate_stat_label = NULL;
 
     lv_obj_t * old_screen = (lv_obj_t *)lv_event_get_user_data(e);
     if (old_screen) {
@@ -1550,6 +1583,11 @@ static void bitrate_dropdown_event_cb(lv_event_t * e) {
 
     /* Apply the new bitrate (stops task, reinits TWAI, restarts task) */
     can_change_bitrate((uint8_t)selected);
+
+    /* The card behind this popup carries the rate, and closing the popup is
+     * how you get back to it. Rewrite it now rather than leaving the old
+     * number sitting there. */
+    _refresh_can_bitrate_stat();
 }
 
 // Timer callback to show WiFi screen after loading dialog
@@ -3191,11 +3229,13 @@ static void _can_bus_popup_open(lv_event_t *e) {
     lv_obj_set_style_pad_all(s_bitrate_dropdown, 4, 0);
     lv_obj_set_style_text_color(s_bitrate_dropdown, THEME_COLOR_TEXT_MUTED, LV_PART_INDICATOR);
     lv_obj_add_event_cb(s_bitrate_dropdown, bitrate_dropdown_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
-    /* Restore persisted bitrate (previously done in
-     * device_settings_with_return_screen after _build_section_can_config). */
-    uint8_t saved_bitrate = 2;
-    config_store_load_bitrate(&saved_bitrate);
-    lv_dropdown_set_selected(s_bitrate_dropdown, saved_bitrate);
+    /* Show what the bus is running at, which is what the card says too. This
+     * read NVS, so a rate the driver had genuinely moved to — a wizard scan
+     * applying its recommendation, say — appeared here only once it had also
+     * been saved. */
+    uint8_t live_bitrate = can_get_bitrate_index();
+    if (live_bitrate > 3) live_bitrate = 2;
+    lv_dropdown_set_selected(s_bitrate_dropdown, live_bitrate);
 
     /* Live CAN feed — embed the same scrolling ID/Hz/DLC/bytes table that
      * the full-screen viewer uses, directly in the popup body. Replaces the
@@ -3270,9 +3310,10 @@ static void _build_vehicle_grid(lv_obj_t *content) {
     /* Bitrate + the live frame table. Named for what it opens: unlike
      * Studio's card it does not carry the ECU preset, because on the dash
      * presets are bound per-channel and by the setup wizard. */
-    _make_setup_card(grid, LV_SYMBOL_SHUFFLE, "CAN bus",
+    setup_card_t can_card = _make_setup_card(grid, LV_SYMBOL_SHUFFLE, "CAN bus",
         "Bus speed, and whether frames are arriving.",
-        "500 KBPS", _can_bus_popup_open);
+        _bitrate_stat_text(), _can_bus_popup_open);
+    s_can_bitrate_stat_label = can_card.stat_label;
 
     /* Diagnostics moved here from CONNECTIVITY: reading a check-engine
      * light is a question about the car, not about the dash's plumbing. */

@@ -18,7 +18,7 @@ LDFLAGS ?= -lm
 # the two drifted apart — test_obd2_pid_table and test_widget_warning_precedence
 # existed for a while but only ever ran on Windows. If you add a test, add it
 # here as well as writing the file.
-TESTS = test_can_decode test_widget_rules test_layout_migration test_widget_arc_precedence test_obd2_freeze_frame test_obd2_one_shot_decode test_obd2_pid_table test_ota_skip_version test_calculated_gear test_web_path_safety test_ecu_preset_match test_widget_fields test_widget_warning_precedence test_hardening_fixes test_meter_display_units test_arc_display_units test_widget_decimals_follow_channel test_track_map_geo test_meter_sweep_angles test_rdm_bus_proto test_can_mux test_ecu_preset_rebase
+TESTS = test_can_decode test_widget_rules test_layout_migration test_widget_arc_precedence test_obd2_freeze_frame test_obd2_one_shot_decode test_obd2_pid_table test_ota_skip_version test_calculated_gear test_web_path_safety test_ecu_preset_match test_widget_fields test_widget_warning_precedence test_hardening_fixes test_meter_display_units test_arc_display_units test_widget_decimals_follow_channel test_track_map_geo test_meter_sweep_angles test_rdm_bus_proto test_can_mux test_ecu_preset_rebase test_channel_math_fold test_keypad_lights
 
 BIN_DIR := build
 BINS    := $(addprefix $(BIN_DIR)/, $(TESTS))
@@ -54,6 +54,14 @@ $(BIN_DIR)/test_can_mux: test_can_mux.c unity.c \
 # widget_rules pulls widget_rules.c (the firmware source) plus a vendored
 # cJSON, with the mocks/ stubs first on the include path so widget_types.h
 # resolves <lvgl.h>, <esp_log.h>, <esp_heap_caps.h> to our shims.
+# The keypad boot player links the REAL keypad_lights.c plus the vendored
+# cJSON, with mocks/ supplying esp_err, esp_timer, FreeRTOS and a CAN
+# peripheral that records instead of transmitting. It parses a fixture written
+# by RDM Studio itself (see the test's header) so the two repos cannot drift
+# apart quietly.
+$(BIN_DIR)/test_keypad_lights: test_keypad_lights.c unity.c cjson/cJSON.c     ../../main/can/keypad_lights.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -Imocks -Icjson -I. -I../../main 	    test_keypad_lights.c unity.c cjson/cJSON.c ../../main/can/keypad_lights.c 	    -o $@ $(LDFLAGS)
+
 $(BIN_DIR)/test_widget_rules: test_widget_rules.c unity.c cjson/cJSON.c | $(BIN_DIR)
 	$(CC) $(CFLAGS) -Imocks -Icjson -I. \
 	    test_widget_rules.c unity.c cjson/cJSON.c \
@@ -88,6 +96,14 @@ $(BIN_DIR)/test_meter_display_units: test_meter_display_units.c unity.c ../../ma
 $(BIN_DIR)/test_arc_display_units: test_arc_display_units.c unity.c ../../main/data/unit_convert.c | $(BIN_DIR)
 	$(CC) $(CFLAGS) -I../../main/data \
 	    test_arc_display_units.c unity.c ../../main/data/unit_convert.c \
+	    -o $@ $(LDFLAGS)
+
+# channel_math_fold mirrors the calculated-channel unit fold (the third-term
+# work) and links the same REAL unit_convert.c, so kPa/psi and the L/100km
+# arithmetic are checked against the shipping table.
+$(BIN_DIR)/test_channel_math_fold: test_channel_math_fold.c unity.c ../../main/data/unit_convert.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -I../../main/data \
+	    test_channel_math_fold.c unity.c ../../main/data/unit_convert.c \
 	    -o $@ $(LDFLAGS)
 
 # track_map_geo links the real RDMTRK parser and reads fixtures written by RDM

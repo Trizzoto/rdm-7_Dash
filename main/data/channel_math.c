@@ -72,20 +72,52 @@ static bool _store_operand(channel_t *c, const channel_math_operand_t *o,
 }
 
 bool channel_math_set(channel_t *c, const channel_math_operand_t *a,
-                      const channel_math_operand_t *b, uint8_t op) {
+                      const channel_math_operand_t *b, uint8_t op,
+                      const channel_math_operand_t *cc, uint8_t op2) {
 	if (!c || !a || !b) return false;
 	if (op > CH_MATH_DIV) return false;
-	/* const ∘ const is a fixed number — that's not a derived channel, and
+	if (cc && op2 > CH_MATH_DIV) return false;
+	/* All-constant is a fixed number — that's not a derived channel, and
 	 * with no live operand the output would never refresh. Reject. */
-	if (a->is_const && b->is_const) {
+	if (a->is_const && b->is_const && (!cc || cc->is_const)) {
 		ESP_LOGW(TAG, "'%s': at least one operand must be a channel", c->id);
 		return false;
 	}
 
-	if (!_store_operand(c, a, c->math_a, sizeof(c->math_a),
-	                    &c->math_a_is_const, &c->math_a_const)) return false;
-	if (!_store_operand(c, b, c->math_b, sizeof(c->math_b),
-	                    &c->math_b_is_const, &c->math_b_const)) return false;
+	/* Validate all three into locals BEFORE touching the channel. A third
+	 * operand that fails validation must not leave the first two written
+	 * over the channel's previous, working expression — the caller is told
+	 * "no" and nothing has changed. */
+	/* Zero-initialised: a constant operand only writes the terminator, and
+	 * the whole field is memcpy'd onto the channel below. */
+	char  ids[3][sizeof(c->math_a)] = {{0}};
+	bool  is_const[3] = {0};
+	float consts[3]   = {0};
+	const channel_math_operand_t *ops[3] = { a, b, cc };
+	for (int i = 0; i < (cc ? 3 : 2); i++) {
+		if (!_store_operand(c, ops[i], ids[i], sizeof(ids[i]),
+		                    &is_const[i], &consts[i])) return false;
+	}
+
+	memcpy(c->math_a, ids[0], sizeof(c->math_a));
+	memcpy(c->math_b, ids[1], sizeof(c->math_b));
+	c->math_a_is_const = is_const[0];
+	c->math_b_is_const = is_const[1];
+	c->math_a_const    = consts[0];
+	c->math_b_const    = consts[1];
+	if (cc) {
+		memcpy(c->math_c, ids[2], sizeof(c->math_c));
+		c->math_c_is_const = is_const[2];
+		c->math_c_const    = consts[2];
+		c->math_op2        = op2;
+		c->math_c_enabled  = true;
+	} else {
+		c->math_c[0]       = '\0';
+		c->math_c_is_const = false;
+		c->math_c_const    = 0.0f;
+		c->math_op2        = 0;
+		c->math_c_enabled  = false;
+	}
 	c->math_op = op;
 	c->math_enabled = true;
 
@@ -97,8 +129,13 @@ bool channel_math_set(channel_t *c, const channel_math_operand_t *a,
 	 * that persists the math block itself. */
 	channel_manager_set_signal(c, sig_name);
 
-	ESP_LOGI(TAG, "'%s' = '%s' op%u '%s' -> signal %s",
-	         c->id, c->math_a, c->math_op, c->math_b, sig_name);
+	if (c->math_c_enabled)
+		ESP_LOGI(TAG, "'%s' = ('%s' op%u '%s') op%u '%s' -> signal %s",
+		         c->id, c->math_a, c->math_op, c->math_b,
+		         c->math_op2, c->math_c, sig_name);
+	else
+		ESP_LOGI(TAG, "'%s' = '%s' op%u '%s' -> signal %s",
+		         c->id, c->math_a, c->math_op, c->math_b, sig_name);
 	return true;
 }
 
@@ -108,9 +145,12 @@ bool channel_math_clear(channel_t *c) {
 	c->math_enabled = false;
 	c->math_a[0] = '\0';
 	c->math_b[0] = '\0';
-	c->math_a_is_const = c->math_b_is_const = false;
-	c->math_a_const = c->math_b_const = 0.0f;
+	c->math_c[0] = '\0';
+	c->math_a_is_const = c->math_b_is_const = c->math_c_is_const = false;
+	c->math_a_const = c->math_b_const = c->math_c_const = 0.0f;
 	c->math_op = 0;
+	c->math_op2 = 0;
+	c->math_c_enabled = false;
 	/* Unbind from the synthetic signal — reverts the channel to "no source"
 	 * so the regular picker takes over. Persists + notifies. */
 	char sig_name[32];
@@ -153,6 +193,58 @@ static bool _operand_resolve(const char *channel_id, bool is_const,
 	return true;
 }
 
+/* Fold one operand into the running (value, unit) pair.
+ *
+ * The running unit is what the expression is currently expressed in, or
+ * NULL once the dimension is something no unit here can name. Rules, in
+ * one place so the two-operand and three-operand forms cannot disagree:
+ *
+ *   + and −  keep the dimension. Bring the operand into the running unit
+ *            when both are known; adopt the operand's unit when the
+ *            running value is a bare constant with no unit of its own.
+ *   × and ÷  by a CONSTANT keep the dimension too — scaling by a number
+ *            does not change what the number measures. This is what makes
+ *            the × 100 in an L/100km expression harmless.
+ *   × and ÷  by a CHANNEL do not: L/h ÷ km/h is neither L/h nor km/h, so
+ *            the running unit is dropped. A linear unit_convert on a
+ *            dimension it was never given would silently mis-scale.
+ *
+ * @p derived tracks WHY the running unit is NULL — "not a unit anyone
+ * named" (a bare constant, which may still adopt one) vs "a dimension we
+ * have deliberately dropped" (which must never adopt one again).
+ *
+ * Returns false when the operand makes the result meaningless (divide by
+ * ~zero): the caller skips this tick and the output goes stale on its own.
+ */
+static bool _fold(float *v, const char **unit, bool *derived,
+                  uint8_t op, float ov, const char *ounit) {
+	switch (op) {
+	case CH_MATH_ADD:
+	case CH_MATH_SUB:
+		if (*unit && ounit && strcmp(ounit, *unit) != 0)
+			ov = unit_convert(ov, ounit, *unit);
+		*v = (op == CH_MATH_ADD) ? (*v + ov) : (*v - ov);
+		if (!*unit && ounit && !*derived) *unit = ounit;
+		return true;
+	case CH_MATH_MUL:
+		*v *= ov;
+		if (ounit) {
+			if (!*unit && !*derived) *unit = ounit;   /* number × channel */
+			else { *unit = NULL; *derived = true; }
+		}
+		return true;
+	case CH_MATH_DIV:
+		if (fabsf(ov) < 1e-9f) return false;
+		*v /= ov;
+		/* Even number ÷ channel inverts the dimension (1/unit), which no
+		 * unit string here names — unlike ×, there is nothing to adopt. */
+		if (ounit) { *unit = NULL; *derived = true; }
+		return true;
+	default:
+		return false;
+	}
+}
+
 static void _math_timer_cb(lv_timer_t *t) {
 	(void)t;
 	size_t n = channel_manager_count();
@@ -167,40 +259,24 @@ static void _math_timer_cb(lv_timer_t *t) {
 		if (!_operand_resolve(c->math_b, c->math_b_is_const,
 		                      c->math_b_const, &b, &b_unit)) continue;
 
-		/* Commensurate: two channel operands in different but convertible
-		 * units → bring B into A's unit so kPa − psi means what it should.
-		 * Unknown pairs pass through (unit_convert is identity for those). */
-		if (a_unit && b_unit && strcmp(a_unit, b_unit) != 0)
-			b = unit_convert(b, b_unit, a_unit);
+		float v = a;
+		const char *res_unit = a_unit;
+		bool derived = false;
+		if (!_fold(&v, &res_unit, &derived, c->math_op, b, b_unit)) continue;
 
-		/* The result's unit: whichever channel operand supplied one (after
-		 * commensuration both channel operands are in a_unit; a constant
-		 * adopts the channel operand's unit). */
-		const char *res_unit = a_unit ? a_unit : b_unit;
-
-		float v;
-		switch (c->math_op) {
-		case CH_MATH_ADD: v = a + b; break;
-		case CH_MATH_SUB: v = a - b; break;
-		case CH_MATH_MUL: v = a * b; break;
-		case CH_MATH_DIV:
-			if (fabsf(b) < 1e-9f) continue; /* hold last value; goes stale */
-			v = a / b;
-			break;
-		default: continue;
+		if (c->math_c_enabled) {
+			float cv; const char *c_unit;
+			if (!_operand_resolve(c->math_c, c->math_c_is_const,
+			                      c->math_c_const, &cv, &c_unit)) continue;
+			if (!_fold(&v, &res_unit, &derived, c->math_op2, cv, c_unit)) continue;
 		}
 		if (!isfinite(v)) continue;
 
-		/* Output-unit conversion: honour this channel's units_native when
-		 * the result is dimensionally that of the channel operand — i.e.
-		 * for + and −, or when one operand is a constant (scaling keeps
-		 * the dimension). channel × / ÷ channel changes the dimension
-		 * (kPa² , ratio); a linear convert there would silently mis-scale,
-		 * so those pass through raw and the output unit is the user's
-		 * choice to label. */
-		bool dim_preserved = (c->math_op == CH_MATH_ADD || c->math_op == CH_MATH_SUB ||
-		                      c->math_a_is_const || c->math_b_is_const);
-		if (dim_preserved && res_unit && c->units_native[0] &&
+		/* Output-unit conversion: honour this channel's units_native only
+		 * while the running dimension is still one a unit names. Once it
+		 * has been dropped (channel × / ÷ channel) the output unit is the
+		 * user's to label — an L/100km channel is exactly that case. */
+		if (res_unit && c->units_native[0] &&
 		    strcmp(res_unit, c->units_native) != 0)
 			v = unit_convert(v, res_unit, c->units_native);
 

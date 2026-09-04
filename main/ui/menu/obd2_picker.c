@@ -23,6 +23,7 @@
  * lets a conflicting PID get into the list — the modal filters them out.
  */
 #include "obd2_picker.h"
+#include "esp_attr.h"
 
 #include "obd2.h"
 #include "can_manager.h"
@@ -86,7 +87,7 @@ static lv_obj_t      *s_list       = NULL;
 static lv_obj_t      *s_status     = NULL;     /* scan status label */
 static lv_obj_t      *s_scan_btn   = NULL;
 static lv_timer_t    *s_live_timer = NULL;
-static signal_row_t   s_rows[PICKER_MAX_ROWS];
+static EXT_RAM_BSS_ATTR signal_row_t   s_rows[PICKER_MAX_ROWS];
 static int            s_row_count  = 0;
 
 /* Snapshot of the enabled PID list at modal open. Encoded (service<<8|pid)

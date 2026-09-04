@@ -18,6 +18,7 @@
  * of 500 frames during a corner could cost something real.
  */
 #include "rdm_bus.h"
+#include "esp_attr.h"
 
 #include "rdm_bus_proto.h"
 #include "can_manager.h"
@@ -77,12 +78,12 @@ static int64_t     s_state_us = 0;
 static int64_t     s_last_nak_us = 0;
 
 /* Receive side */
-static uint8_t     s_rx_buf[RDM_BUS_ASSET_MAX_BYTES];
+static EXT_RAM_BSS_ATTR uint8_t     s_rx_buf[RDM_BUS_ASSET_MAX_BYTES];
 static rdm_bus_rx_t s_rx;
 static uint32_t    s_rx_rev = 0;
 
 /* Send side */
-static uint8_t     s_tx_buf[RDM_BUS_ASSET_MAX_BYTES];
+static EXT_RAM_BSS_ATTR uint8_t     s_tx_buf[RDM_BUS_ASSET_MAX_BYTES];
 static uint16_t    s_tx_len = 0;
 static uint16_t    s_tx_seq = 0;
 static uint16_t    s_tx_total_seq = 0;

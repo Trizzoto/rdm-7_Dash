@@ -10,6 +10,10 @@ extern "C" {
 
 // Function declarations
 void show_ota_update_dialog(const char* current_version, const char* new_version, float file_size_mb, const char* release_notes);
+/* Do what pressing Install does. The dialog must already be up — the boot
+ * resume path shows it first, then calls this, so the install it starts has
+ * the same progress bar and the same error handling as a manual one. */
+void ota_update_dialog_begin_install(void);
 void show_ota_checking_dialog(void);
 void show_ota_up_to_date_dialog(const char* current_version);
 void show_ota_check_failed_dialog(void);

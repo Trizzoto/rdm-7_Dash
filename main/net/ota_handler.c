@@ -858,13 +858,47 @@ const char* get_release_notes(void) {
  * at the post-boot epoch and the worker rejects every upload with 401.
  * Idempotent — safe to call on every reconnect. */
 void initialize_sntp(void) {
-    static bool s_sntp_started = false;
-    if (s_sntp_started) return;
-    ESP_LOGI(TAG, "Starting SNTP sync (pool.ntp.org)");
+    static atomic_bool s_sntp_started = false;
+    if (atomic_exchange(&s_sntp_started, true)) return;
+    ESP_LOGI(TAG, "Starting SNTP sync (pool.ntp.org) — %u B internal free, largest block %u B",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
     esp_sntp_setservername(0, "pool.ntp.org");
     esp_sntp_init();
-    s_sntp_started = true;
+}
+
+/* The WiFi event handler must not call this directly. esp_sntp_setservername
+ * and esp_sntp_init each block on a round trip to the tcpip thread, and lwIP
+ * hands every calling thread its own semaphore the first time it does that.
+ * On the 2304-byte system event task that allocation is one more thing the
+ * radios' internal SRAM has to find at the worst moment (it did not, and the
+ * NULL semaphore reset the dash on every boot — sys_arch_sem_wait). The
+ * esp_timer task is already up, already has stack, and pays for the
+ * semaphore once. */
+static void _sntp_deferred_cb(void *arg)
+{
+    (void)arg;
+    initialize_sntp();
+}
+
+void initialize_sntp_async(void)
+{
+    static esp_timer_handle_t s_timer = NULL;
+    if (!s_timer) {
+        const esp_timer_create_args_t args = {
+            .callback = _sntp_deferred_cb,
+            .name = "sntp_start",
+            .dispatch_method = ESP_TIMER_TASK,
+        };
+        esp_err_t err = esp_timer_create(&args, &s_timer);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "SNTP defer timer: %s", esp_err_to_name(err));
+            return;
+        }
+    }
+    /* ESP_ERR_INVALID_STATE here means it is already pending — fine. */
+    esp_timer_start_once(s_timer, 0);
 }
 
 // Add this function to test the download URL and network connectivity:
@@ -940,15 +974,47 @@ static void _boot_show_dialog_async(void *param)
                            get_release_notes());
 }
 
+/* Resume path: put the dialog up, then press its Install for the user. Going
+ * through the dialog rather than calling start_ota_update_task() directly is
+ * what gives the resumed install the same progress bar, the same button
+ * hiding and the same failure handling as one started by hand — including
+ * offering Reboot & Update again if the fresh heap somehow was not enough. */
+static void _boot_resume_install_async(void *param)
+{
+    _boot_show_dialog_async(param);
+    ota_update_dialog_begin_install();
+}
+
 static void _boot_check_task(void *arg)
 {
     (void)arg;
     ESP_LOGI(TAG, "Auto-OTA-check: running check_for_update() on boot");
     check_for_update();
 
+    /* Did the last attempt die at task creation and ask us to retry after a
+     * reboot? Read and clear FIRST, before anything can fail: a dash must
+     * never be able to loop reboot → try → fail → reboot. */
+    char resume_ver[32] = {0};
+    config_store_load_ota_resume_version(resume_ver, sizeof(resume_ver));
+    if (resume_ver[0]) config_store_clear_ota_resume_version();
+
     ota_status_t status = get_ota_status();
     if (status == OTA_UPDATE_AVAILABLE) {
         const char *latest = get_latest_version();
+        /* Resume takes precedence over the skip list and over the popup: the
+         * user asked for this install by name, one boot ago. Only for the
+         * same version — if upstream moved on, the request is stale and the
+         * normal popup should offer whatever is actually there now. Right
+         * here is also the best moment in the dash's life to try: WiFi is up
+         * and the internal heap has not yet been chewed through. */
+        if (resume_ver[0] && latest && strcmp(resume_ver, latest) == 0) {
+            ESP_LOGI(TAG, "Auto-OTA-check: resuming requested install of %s "
+                          "(largest internal block %u B)",
+                     latest, (unsigned)ota_internal_largest_free());
+            rdm_async_call(_boot_resume_install_async, NULL);
+            vTaskDelete(NULL);
+            return;
+        }
         /* Honour the per-version dismissal: if the offered version still
          * matches the one the user explicitly skipped, stay silent. As soon
          * as upstream releases anything newer the stored value is stale and

@@ -8,6 +8,7 @@
  * The browser converts PNG/JPG to this format before uploading.
  */
 #include "widget_image.h"
+#include "esp_attr.h"
 #include "widget_rules.h"
 #include "screen_config.h"
 #include "system/night_mode.h"
@@ -56,7 +57,7 @@ typedef struct {
 	lv_img_dsc_t *dsc;
 	uint16_t      refs;
 } img_cache_entry_t;
-static img_cache_entry_t s_img_cache[IMG_CACHE_MAX];
+static EXT_RAM_BSS_ATTR img_cache_entry_t s_img_cache[IMG_CACHE_MAX];
 
 static lv_img_dsc_t *_img_cache_acquire(const char *name) {
 	for (int i = 0; i < IMG_CACHE_MAX; i++) {

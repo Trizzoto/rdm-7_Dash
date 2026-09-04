@@ -18,15 +18,33 @@ static const char *TAG = "wifi_ui";
  * Static UI elements
  * =========================================================================
  *
- * Networking model (since the mode-selector overhaul):
- *   A single dropdown picks one of three mutually-exclusive modes —
+ * Networking model:
+ *   A single dropdown picks one of three MUTUALLY EXCLUSIVE modes —
  *     MODE_OFF    = radios off, no STA, no AP
  *     MODE_WIFI   = STA (client) only, try to join a saved network
  *     MODE_AP     = Hotspot (AP) only, phones join the dash directly
- *   A second dropdown (boot_dropdown) persists the same 3-way choice so the
- *   board comes up in the selected mode after reboot. The previous design
- *   had independent WiFi/Hotspot on-off switches, which let both run at once
- *   and regularly starved the single-radio ESP32 on phones. */
+ *   A second dropdown (boot_dropdown) persists the same choice so the board
+ *   comes up that way after reboot.
+ *
+ * Exclusive is a promise the code did not used to keep. The chip can run both
+ * at once (ESP32 APSTA) and the dash DID, whenever the hotspot was on and a
+ * network was saved — picking "Hotspot" only switched the hotspot on, it
+ * never switched the client side off. And _current_mode() returned AP the
+ * moment the hotspot was up, so a dash sitting on the house network reported
+ * "Hotspot", hid the network list, and showed its LAN IP in the corner at the
+ * same time. Reported from the car as "it turned off the hotspot and
+ * connected to WiFi without the screen saying anything". Nothing was turned
+ * off; the screen was describing a two-radio state with a one-radio
+ * vocabulary.
+ *
+ * Both halves are fixed rather than one: picking Hotspot now takes the client
+ * side down for real (wifi_manager_enable_ap owns that), which is what makes
+ * the AP-implies-not-STA reading below true instead of a guess.
+ *
+ * APSTA still happens transiently INSIDE operations — scanning for networks
+ * while the hotspot owns the radio, and the moment of joining one — and
+ * wifi_manager hands the radio back when they finish. It is never a state the
+ * dash is left in, so there is nothing here to name it. */
 
 typedef enum {
     WIFI_UI_MODE_OFF = 0,
@@ -467,13 +485,13 @@ static void _create_screen(void)
     /* -- Load initial state ---------------------------------------------- */
     lv_dropdown_set_selected(mode_dropdown, (uint16_t)_current_mode());
 
-    /* Load boot config and map the legacy two-bool struct to the dropdown.
-     * Precedence: AP > STA > Off so an older "both on" config still loads
-     * predictably rather than silently dropping one. */
+    /* Boot config. AP wins when an older device has both bits set — that is
+     * the pair the pre-exclusive build wrote for "Hotspot", and it is also
+     * what wifi_manager_start now does with it. Read and write agree. */
     wifi_boot_config_t boot_cfg = { .wifi_on_boot = false, .ap_enabled = false };
     config_store_load_wifi_boot(&boot_cfg);
     wifi_ui_mode_t boot_mode = WIFI_UI_MODE_OFF;
-    if (boot_cfg.ap_enabled)       boot_mode = WIFI_UI_MODE_AP;
+    if (boot_cfg.ap_enabled)        boot_mode = WIFI_UI_MODE_AP;
     else if (boot_cfg.wifi_on_boot) boot_mode = WIFI_UI_MODE_STA;
     lv_dropdown_set_selected(boot_dropdown, (uint16_t)boot_mode);
 
@@ -653,7 +671,12 @@ static lv_obj_t *_create_info_row(lv_obj_t *parent, const char *label_text,
 
 /* Compute the current "UI mode" from live wifi_manager state. The state is
  * the source of truth — the dropdown only drives intent, and the refresh
- * timer syncs the dropdown selection to whatever is actually running. */
+ * timer syncs the dropdown selection to whatever is actually running.
+ *
+ * "Hotspot up" is a sound answer to "which mode" only because the modes are
+ * genuinely exclusive now — enable_ap(true) takes the client side down. The
+ * same two lines used to be a guess, and a wrong one on any dash that had
+ * both halves running. */
 static wifi_ui_mode_t _current_mode(void)
 {
     if (!wifi_manager_is_started()) return WIFI_UI_MODE_OFF;
@@ -668,14 +691,14 @@ static void _update_visibility(void)
     /* AP info rows (SSID/IP/password) visible only in Hotspot mode */
     if (ap_info_container) {
         if (mode == WIFI_UI_MODE_AP) lv_obj_clear_flag(ap_info_container, LV_OBJ_FLAG_HIDDEN);
-        else                          lv_obj_add_flag  (ap_info_container, LV_OBJ_FLAG_HIDDEN);
+        else                         lv_obj_add_flag  (ap_info_container, LV_OBJ_FLAG_HIDDEN);
     }
 
     /* Available-networks list visible only in WiFi-client mode. In Hotspot
      * mode there's no STA to scan with, so the empty list was just noise. */
     if (right_panel) {
         if (mode == WIFI_UI_MODE_STA) lv_obj_clear_flag(right_panel, LV_OBJ_FLAG_HIDDEN);
-        else                           lv_obj_add_flag  (right_panel, LV_OBJ_FLAG_HIDDEN);
+        else                          lv_obj_add_flag  (right_panel, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
@@ -1217,10 +1240,17 @@ static void _back_btn_cb(lv_event_t *e)
     wifi_ui_hide();
 }
 
-/* Switch the live radio to the requested mode. Mutually exclusive:
+/* Switch the live radio to the requested mode:
  *   OFF → stop radio + web server
- *   STA → start radio with AP disabled, try auto-connect to saved network
- *   AP  → start radio (if stopped), enable AP, disable STA side
+ *   STA → radio up, hotspot off, try auto-connect to a saved network
+ *   AP  → radio up, hotspot on, client side genuinely off
+ *
+ * The exclusivity lives in wifi_manager_enable_ap, which takes the other half
+ * down as part of coming up — so there is never a moment with neither
+ * interface alive, and no ordering here to get wrong. It used to only switch
+ * the hotspot ON and leave the client side to whatever it was doing, so
+ * picking "Hotspot" with a saved network kept the dash on that network.
+ *
  * Also persists AP-enabled state in the AP config struct so a reboot is
  * consistent with the boot dropdown.
  */
@@ -1241,7 +1271,7 @@ static void _apply_ui_mode(wifi_ui_mode_t mode)
             wifi_manager_start();
             web_server_start();
         }
-        if (wifi_manager_is_ap_enabled()) wifi_manager_enable_ap(false);
+        wifi_manager_enable_ap(false);
         wifi_manager_auto_connect();
         ESP_LOGI(TAG, "Mode → WiFi (Client)");
         break;
@@ -1251,8 +1281,8 @@ static void _apply_ui_mode(wifi_ui_mode_t mode)
             wifi_manager_start();
             web_server_start();
         }
-        if (!wifi_manager_is_ap_enabled()) wifi_manager_enable_ap(true);
-        ESP_LOGI(TAG, "Mode → Hotspot (AP)");
+        wifi_manager_enable_ap(true);
+        ESP_LOGI(TAG, "Mode → Hotspot (AP), client side off");
         break;
     }
 
@@ -1281,6 +1311,7 @@ static void _boot_dropdown_cb(lv_event_t *e)
     if (!boot_dropdown) return;
     uint16_t sel = lv_dropdown_get_selected(boot_dropdown);
 
+    if (sel > WIFI_UI_MODE_AP) return;
     wifi_boot_config_t boot_cfg;
     config_store_load_wifi_boot(&boot_cfg);
     boot_cfg.wifi_on_boot = (sel == WIFI_UI_MODE_STA);

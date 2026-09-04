@@ -1,7 +1,7 @@
 /**
  * serial_protocol.h — Transport abstraction for serial communication.
  *
- * Supports multiple transports (UART, USB CDC) with automatic routing:
+ * Supports multiple transports (UART, USB CDC, BLE) with automatic routing:
  * responses are sent back on whichever transport received the request.
  *
  * Each transport's RX task sets the current transport ID before dispatching
@@ -21,6 +21,7 @@ extern "C" {
 typedef enum {
     TRANSPORT_UART    = 0,
     TRANSPORT_USB_CDC = 1,
+    TRANSPORT_BLE     = 2,
     TRANSPORT_MAX
 } transport_id_t;
 

@@ -2,13 +2,14 @@
  * can_id_tracker.c - Per-CAN-ID statistics. See header for design notes.
  */
 #include "can_id_tracker.h"
+#include "esp_attr.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include <string.h>
 
 static const char *TAG = "can_id_track";
 
-static can_id_entry_t s_entries[CAN_ID_TRACKER_MAX_IDS];
+static EXT_RAM_BSS_ATTR can_id_entry_t s_entries[CAN_ID_TRACKER_MAX_IDS];
 static uint16_t       s_count = 0;
 static bool           s_overflow_logged = false;
 

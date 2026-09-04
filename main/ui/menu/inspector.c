@@ -27,6 +27,7 @@
  * even on the area covered by the dock.
  */
 #include "ui/menu/inspector.h"
+#include "esp_attr.h"
 #include "ui/menu/design_tokens.h"
 #include "ui/menu/edit_mode.h"     /* edit_mode_commit_external_edit */
 #include "ui/menu/menu_screen.h"   /* load_menu_screen_for_widget */
@@ -258,7 +259,7 @@ typedef struct {
     lv_obj_t  *value_lbl;    /* STEPPER / SLIDER value readout */
 } inspector_row_t;
 
-static inspector_row_t s_rows[INSPECTOR_MAX_ROWS];
+static EXT_RAM_BSS_ATTR inspector_row_t s_rows[INSPECTOR_MAX_ROWS];
 static int             s_row_count = 0;
 
 /* Picker popover state. Opened on tap of a colour row, dismissed on tap
@@ -669,7 +670,7 @@ typedef struct {
 /* One ctx per colour row, kept alive for the row's lifetime. We store
  * them in s_color_row_ctxs and clear on tab teardown. */
 #define INSPECTOR_MAX_COLOR_ROWS WIDGET_FIELDS_MAX_TAB_COLOR
-static color_row_event_ctx_t s_color_row_ctxs[INSPECTOR_MAX_COLOR_ROWS];
+static EXT_RAM_BSS_ATTR color_row_event_ctx_t s_color_row_ctxs[INSPECTOR_MAX_COLOR_ROWS];
 static int                   s_color_row_ctx_count = 0;
 
 static void _color_row_clicked_cb(lv_event_t *e) {
@@ -742,7 +743,7 @@ typedef struct {
 } int_row_event_ctx_t;
 
 #define INSPECTOR_MAX_INT_ROWS WIDGET_FIELDS_MAX_TAB_INT
-static int_row_event_ctx_t s_int_row_ctxs[INSPECTOR_MAX_INT_ROWS];
+static EXT_RAM_BSS_ATTR int_row_event_ctx_t s_int_row_ctxs[INSPECTOR_MAX_INT_ROWS];
 static int                 s_int_row_ctx_count = 0;
 
 static void _int_slider_cb(lv_event_t *e) {

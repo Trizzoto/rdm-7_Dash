@@ -192,6 +192,13 @@ static cJSON *channel_to_full_json(const channel_t *c) {
 			if (c->math_b_is_const) cJSON_AddNumberToObject(m, "b", c->math_b_const);
 			else                    cJSON_AddStringToObject(m, "b", c->math_b);
 			cJSON_AddNumberToObject(m, "op", c->math_op);
+			/* Third term omitted when unused, so a client that has never
+			 * heard of it sees exactly the block it used to see. */
+			if (c->math_c_enabled) {
+				if (c->math_c_is_const) cJSON_AddNumberToObject(m, "c", c->math_c_const);
+				else                    cJSON_AddStringToObject(m, "c", c->math_c);
+				cJSON_AddNumberToObject(m, "op2", c->math_op2);
+			}
 		}
 	}
 
@@ -726,26 +733,45 @@ static bool apply_one_field(channel_t *c, const char *key, cJSON *val) {
 	}
 
 	/* Math/derived source — `{ "math": { "a": <operand>, "b": <operand>,
-	 * "op": 0..3 } }` configures, `{ "math": null }` clears (channel reverts
-	 * to unbound). An operand is a channel-id STRING or a NUMBER constant
-	 * (`{"a":"manifold_pressure","b":50,"op":1}` = MAP − 50). Validation
-	 * (operands exist, no self-reference, ≥1 channel) lives in
+	 * "op": 0..3 [, "c": <operand>, "op2": 0..3 ] } }` configures,
+	 * `{ "math": null }` clears (channel reverts to unbound). An operand is
+	 * a channel-id STRING or a NUMBER constant
+	 * (`{"a":"manifold_pressure","b":50,"op":1}` = MAP − 50).
+	 *
+	 * "c" is the optional third term, applied to the result of the first
+	 * two, left to right: (a op b) op2 c. Omitting it is the old
+	 * two-operand request, unchanged. It is what L/100km needs —
+	 * `{"a":"fuel_flow","b":"vehicle_speed","op":3,"c":100,"op2":2}`.
+	 *
+	 * Validation (operands exist, no self-reference, ≥1 channel) lives in
 	 * channel_math_set. */
 	if (!strcmp(key, "math")) {
 		if (cJSON_IsNull(val)) return channel_math_clear(c);
 		if (cJSON_IsObject(val)) {
-			cJSON *a  = cJSON_GetObjectItemCaseSensitive(val, "a");
-			cJSON *b  = cJSON_GetObjectItemCaseSensitive(val, "b");
-			cJSON *op = cJSON_GetObjectItemCaseSensitive(val, "op");
-			channel_math_operand_t oa = {0}, ob = {0};
+			cJSON *a   = cJSON_GetObjectItemCaseSensitive(val, "a");
+			cJSON *b   = cJSON_GetObjectItemCaseSensitive(val, "b");
+			cJSON *op  = cJSON_GetObjectItemCaseSensitive(val, "op");
+			cJSON *cc  = cJSON_GetObjectItemCaseSensitive(val, "c");
+			cJSON *op2 = cJSON_GetObjectItemCaseSensitive(val, "op2");
+			channel_math_operand_t oa = {0}, ob = {0}, oc = {0};
 			if (cJSON_IsString(a))      oa.channel_id = a->valuestring;
 			else if (cJSON_IsNumber(a)) { oa.is_const = true; oa.value = (float)a->valuedouble; }
 			else return false;
 			if (cJSON_IsString(b))      ob.channel_id = b->valuestring;
 			else if (cJSON_IsNumber(b)) { ob.is_const = true; ob.value = (float)b->valuedouble; }
 			else return false;
-			uint8_t opv = cJSON_IsNumber(op) ? (uint8_t)op->valueint : 0;
-			return channel_math_set(c, &oa, &ob, opv);
+			/* A present-but-empty "c" (the picker's "none" option posts "")
+			 * means "no third term", not "a channel called nothing". */
+			bool has_c = false;
+			if (cJSON_IsString(cc) && cc->valuestring && cc->valuestring[0]) {
+				oc.channel_id = cc->valuestring; has_c = true;
+			} else if (cJSON_IsNumber(cc)) {
+				oc.is_const = true; oc.value = (float)cc->valuedouble; has_c = true;
+			}
+			uint8_t opv  = cJSON_IsNumber(op)  ? (uint8_t)op->valueint  : 0;
+			uint8_t opv2 = cJSON_IsNumber(op2) ? (uint8_t)op2->valueint : 0;
+			return channel_math_set(c, &oa, &ob, opv,
+			                        has_c ? &oc : NULL, opv2);
 		}
 		return false;
 	}

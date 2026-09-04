@@ -10,6 +10,7 @@
  * vertical -> radius -> horizontal).
  */
 #include "widget_pathbar.h"
+#include "esp_attr.h"
 #include "widget_rules.h"
 #include "signal.h"
 #include "screen_config.h"
@@ -94,7 +95,7 @@ static void _pathbar_smooth_from_anchors(pathbar_data_t *pd) {
     const int na = pd->n_anchors;
     if (!pd->anchors || na < 2) return;
 
-    static lv_point_t buf[PATHBAR_MAX_POINTS];
+    static EXT_RAM_BSS_ATTR lv_point_t buf[PATHBAR_MAX_POINTS];
     int n = 0;
     #define SM_EMIT(X, Y) do { \
         lv_coord_t _x = (lv_coord_t)lroundf(X), _y = (lv_coord_t)lroundf(Y); \
@@ -639,7 +640,7 @@ static void _pathbar_draw_band(lv_draw_ctx_t *ctx, pathbar_data_t *pd,
      * path = a flat butt cut. Interior vertices use the angle bisector with the
      * miter length that preserves perpendicular half-width, clamped so a sharp
      * bend can't throw a long spike. */
-    static lv_point_t L[PATHBAR_MAX_POINTS], R[PATHBAR_MAX_POINTS];
+    static EXT_RAM_BSS_ATTR lv_point_t L[PATHBAR_MAX_POINTS], R[PATHBAR_MAX_POINTS];
     for (int i = 0; i < n; i++) {
         float inx = 0, iny = 0, onx = 0, ony = 0;       /* left-normals of in/out segs */
         if (i > 0) {

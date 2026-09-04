@@ -12,6 +12,7 @@
 #include "cJSON.h"
 #include "net/ota_handler.h"
 #include "system/device_id.h"
+#include "system/render_perf.h"
 #include "version.h"
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
@@ -245,6 +246,16 @@ static esp_err_t _ota_upload_handler(httpd_req_t *req) {
 	ESP_LOGI(TAG, "OTA upload starting: %d bytes -> partition '%s'",
 	         total, part->label);
 
+	/* Panel health across the write. A flash write is the one thing that can
+	 * take the PSRAM cache away from the RGB panel's bounce-buffer refill
+	 * interrupt, which would freeze or tear the screen mid-update; XIP plus
+	 * LCD_RGB_ISR_IRAM_SAFE are what prevent it. Both ISRs are in IRAM, so if
+	 * the cache did go away the refill count would fall behind the VSYNC count.
+	 * Logged rather than measured over HTTP because the upload owns the server
+	 * for its whole duration — nothing can poll us while this runs. */
+	uint32_t v0 = 0, b0 = 0;
+	panel_frame_counters_get(&v0, &b0);
+
 	int received = 0;
 	bool checked_magic = false;
 	int stalls = 0;
@@ -301,6 +312,25 @@ static esp_err_t _ota_upload_handler(httpd_req_t *req) {
 		received += n;
 	}
 	free(buf);
+
+	{
+		uint32_t v1 = 0, b1 = 0;
+		panel_frame_counters_get(&v1, &b1);
+		uint32_t dv = v1 - v0, db = b1 - b0;
+		if (db == 0 && dv == 0) {
+			/* Bounce mode off: nothing refills, so there is nothing to compare. */
+		} else if (db == 0) {
+			ESP_LOGE(TAG, "panel STALLED across the write: %u VSYNCs, 0 refills "
+			              "— the display lost the PSRAM cache", (unsigned)dv);
+		} else if (dv > db) {
+			ESP_LOGW(TAG, "panel starved across the write: %u VSYNCs vs %u refills "
+			              "(%u frames behind)", (unsigned)dv, (unsigned)db,
+			         (unsigned)(dv - db));
+		} else {
+			ESP_LOGI(TAG, "panel healthy across the write: %u VSYNCs, %u refills",
+			         (unsigned)dv, (unsigned)db);
+		}
+	}
 
 	err = esp_ota_end(handle);   /* validates the image */
 	if (err != ESP_OK) {

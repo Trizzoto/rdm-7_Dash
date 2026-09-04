@@ -16,6 +16,7 @@
  * everywhere without code changes. */
 
 #include "first_run_wizard.h"
+#include "esp_attr.h"
 
 #include "esp_log.h"
 #include <ctype.h>
@@ -134,7 +135,7 @@ static lv_obj_t  *s_channels_value_lbls[WIZ_CH_MAX_ROWS] = {NULL};
  * freed record would have left every one of its row references dangling
  * (the rpm-bar stale-globals bug class). 144 × 32 B of .bss buys ids
  * that outlive any record. */
-static char       s_channels_id_pool[WIZ_CH_MAX_ROWS][32];
+static EXT_RAM_BSS_ATTR char       s_channels_id_pool[WIZ_CH_MAX_ROWS][32];
 /* id pointer — canonical_def.id or channel_t.id. NULL means slot
  * vacant. Replaces the old s_channels_refs[] (channel_t pointer) so
  * ghost rows have something to bind their click handler to before
@@ -153,7 +154,7 @@ static bool        s_creating_custom       = false;
  * Runs automatically ONCE when the wizard's OBD2 step already proved the
  * car answers (s_wiz_obd2_found — setup-flow redesign 2026-08), or on a
  * "Scan for OBD2" chip tap from the channels editor. */
-static obd2_channel_match_t s_obd2_matches[CH_OBD2_MATCH_MAX];
+static EXT_RAM_BSS_ATTR obd2_channel_match_t s_obd2_matches[CH_OBD2_MATCH_MAX];
 static bool        s_obd2_pick[CH_OBD2_MATCH_MAX] = {false};
 static size_t      s_obd2_match_count   = 0;
 static bool        s_obd2_auto_apply    = false;  /* first-run: bind without a second tap */
@@ -226,7 +227,7 @@ typedef struct {
     uint8_t total;
 } wiz_ecu_match_t;
 
-static wiz_ecu_match_t s_ecu_matches[WIZ_ECU_MAX];
+static EXT_RAM_BSS_ATTR wiz_ecu_match_t s_ecu_matches[WIZ_ECU_MAX];
 static uint8_t         s_ecu_match_count = 0;
 static int             s_ecu_top_match   = -1;
 
@@ -287,6 +288,9 @@ static lv_obj_t *s_math_a_dd      = NULL;
 static lv_obj_t *s_math_op_dd     = NULL;
 static lv_obj_t *s_math_b_dd      = NULL;
 static lv_obj_t *s_math_bval_lbl  = NULL;  /* constant value shown on its button */
+static lv_obj_t *s_math_op2_dd    = NULL;  /* third term: operator */
+static lv_obj_t *s_math_c_dd      = NULL;  /* third term: operand (or "none") */
+static lv_obj_t *s_math_cval_lbl  = NULL;
 
 /* Set when the user picks an ECU (Step 2) OR binds any channel (Step 3).
  * Trips a dashboard reload at Finish so widgets pick up new bindings. */
@@ -388,6 +392,7 @@ static void _close_wizard(bool mark_done) {
     s_bind_sheet = NULL;
     s_bind_target_chan = NULL;
     s_math_sheet = s_math_a_dd = s_math_op_dd = s_math_b_dd = s_math_bval_lbl = NULL;
+    s_math_op2_dd = s_math_c_dd = s_math_cval_lbl = NULL;
     for (int i = 0; i < WIZ_CH_MAX_ROWS; i++) {
         s_channels_value_lbls[i] = NULL;
         s_channels_rows[i]       = NULL;
@@ -2989,11 +2994,19 @@ static void _render_detail_pane(void) {
         lv_obj_t *cll = lv_label_create(calc);
         if (c->math_enabled) {
             static const char *ops = "+-*/";
-            char ab[40];
+            char ab[80];
             const char *a = c->math_a_is_const ? "#" : c->math_a;
             const char *b = c->math_b_is_const ? "#" : c->math_b;
-            snprintf(ab, sizeof(ab), "Calc: %s %c %s", a,
-                     ops[c->math_op & 3], b);
+            if (c->math_c_enabled) {
+                /* Parenthesised because it evaluates left to right and a
+                 * reader who assumes precedence would read it wrong. */
+                const char *cc = c->math_c_is_const ? "#" : c->math_c;
+                snprintf(ab, sizeof(ab), "Calc: (%s %c %s) %c %s", a,
+                         ops[c->math_op & 3], b, ops[c->math_op2 & 3], cc);
+            } else {
+                snprintf(ab, sizeof(ab), "Calc: %s %c %s", a,
+                         ops[c->math_op & 3], b);
+            }
             lv_label_set_text(cll, ab);
         } else {
             lv_label_set_text(cll, "Calculate from other channels");
@@ -4257,14 +4270,16 @@ static void _close_bind_sheet(void) {
 #define CHM_MAX_FOR_UI 96
 
 static float     s_math_b_const   = 0.0f;
+static float     s_math_c_const   = 0.0f;
 /* Index→channel-id map shared by both operand dropdowns. The target
  * channel itself is excluded (no self-reference). */
-static char      s_math_ids[CHM_MAX_FOR_UI][40];
+static EXT_RAM_BSS_ATTR char      s_math_ids[CHM_MAX_FOR_UI][40];
 static uint16_t  s_math_id_count  = 0;
 
 static void _close_math_sheet(void) {
     if (s_math_sheet && lv_obj_is_valid(s_math_sheet)) lv_obj_del(s_math_sheet);
     s_math_sheet = s_math_a_dd = s_math_op_dd = s_math_b_dd = s_math_bval_lbl = NULL;
+    s_math_op2_dd = s_math_c_dd = s_math_cval_lbl = NULL;
 }
 
 static void _math_close_cb(lv_event_t *e) { (void)e; _close_math_sheet(); }
@@ -4284,16 +4299,32 @@ static void _math_bconst_cb(lv_event_t *e) {
     show_numeric_input_dialog("Number", initial, _math_bconst_confirmed, NULL, NULL);
 }
 
+static void _math_cconst_confirmed(const char *text, void *ud) {
+    (void)ud;
+    if (text && text[0]) s_math_c_const = strtof(text, NULL);
+    if (s_math_cval_lbl && lv_obj_is_valid(s_math_cval_lbl)) {
+        char b[24]; snprintf(b, sizeof(b), "%g", s_math_c_const);
+        lv_label_set_text(s_math_cval_lbl, b);
+    }
+}
+static void _math_cconst_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    char initial[24]; snprintf(initial, sizeof(initial), "%g", s_math_c_const);
+    show_numeric_input_dialog("Number", initial, _math_cconst_confirmed, NULL, NULL);
+}
+
 static void _math_apply_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
     channel_t *c = channel_manager_get(s_selected_ch_id);
     if (!c || !s_math_a_dd) { _close_math_sheet(); return; }
 
-    uint16_t ai  = lv_dropdown_get_selected(s_math_a_dd);
-    uint16_t opi = lv_dropdown_get_selected(s_math_op_dd);
-    uint16_t bi  = lv_dropdown_get_selected(s_math_b_dd);
+    uint16_t ai   = lv_dropdown_get_selected(s_math_a_dd);
+    uint16_t opi  = lv_dropdown_get_selected(s_math_op_dd);
+    uint16_t bi   = lv_dropdown_get_selected(s_math_b_dd);
+    uint16_t op2i = s_math_op2_dd ? lv_dropdown_get_selected(s_math_op2_dd) : 0;
+    uint16_t ci   = s_math_c_dd   ? lv_dropdown_get_selected(s_math_c_dd)   : 0;
 
-    channel_math_operand_t oa = {0}, ob = {0};
+    channel_math_operand_t oa = {0}, ob = {0}, oc = {0};
     /* A is always a channel (satisfies "≥1 operand must be a channel"). */
     if (ai >= s_math_id_count) { _close_math_sheet(); return; }
     oa.channel_id = s_math_ids[ai];
@@ -4301,11 +4332,23 @@ static void _math_apply_cb(lv_event_t *e) {
     if (bi == 0) { ob.is_const = true; ob.value = s_math_b_const; }
     else if ((uint16_t)(bi - 1) < s_math_id_count) ob.channel_id = s_math_ids[bi - 1];
     else { _close_math_sheet(); return; }
+    /* C: index 0 = "(none)" — two-operand form. 1 = the typed constant,
+     * 2.. = channel (index ci-2). */
+    bool has_c = (ci != 0);
+    if (ci == 1) { oc.is_const = true; oc.value = s_math_c_const; }
+    else if (ci >= 2) {
+        if ((uint16_t)(ci - 2) >= s_math_id_count) { _close_math_sheet(); return; }
+        oc.channel_id = s_math_ids[ci - 2];
+    }
 
-    bool ok = channel_math_set(c, &oa, &ob, (uint8_t)(opi & 3));
-    ESP_LOGI(TAG, "math_set %s: %s %u %s -> %s", c->id,
+    bool ok = channel_math_set(c, &oa, &ob, (uint8_t)(opi & 3),
+                               has_c ? &oc : NULL, (uint8_t)(op2i & 3));
+    ESP_LOGI(TAG, "math_set %s: (%s %u %s) %u %s -> %s", c->id,
              oa.channel_id ? oa.channel_id : "#", (unsigned)opi,
-             ob.channel_id ? ob.channel_id : "#", ok ? "ok" : "FAILED");
+             ob.channel_id ? ob.channel_id : "#",
+             (unsigned)op2i,
+             has_c ? (oc.channel_id ? oc.channel_id : "#") : "-",
+             ok ? "ok" : "FAILED");
     _close_math_sheet();
     /* channel_math_set persists + rebinds; re-render so SOURCE/Calc/value
      * all reflect the new derived binding. */
@@ -4351,10 +4394,10 @@ static void _open_math_sheet(const channel_t *c) {
     _close_math_sheet();
 
     /* Operand option strings — A is channels only; B prepends "Number…". */
-    static char a_opts[2048];
+    static EXT_RAM_BSS_ATTR char a_opts[2048];
     _math_build_channel_options(c->id, a_opts, sizeof(a_opts));
     if (s_math_id_count == 0) return;  /* nothing to derive from */
-    static char b_opts[2048];
+    static EXT_RAM_BSS_ATTR char b_opts[2048];
     int bp = snprintf(b_opts, sizeof(b_opts), "Number…");
     for (uint16_t i = 0; i < s_math_id_count; i++)
         bp += snprintf(b_opts + bp, sizeof(b_opts) - bp, "\n%s",
@@ -4362,7 +4405,17 @@ static void _open_math_sheet(const channel_t *c) {
                        (channel_manager_get(s_math_ids[i]) ?
                         channel_manager_get(s_math_ids[i])->label : s_math_ids[i]));
 
+    /* C prepends "(none)" as well as "Number…": the third term is optional,
+     * and "(none)" IS the two-operand expression that has always been here. */
+    static EXT_RAM_BSS_ATTR char c_opts[2048];
+    int cp = snprintf(c_opts, sizeof(c_opts), "(none)\nNumber…");
+    for (uint16_t i = 0; i < s_math_id_count; i++)
+        cp += snprintf(c_opts + cp, sizeof(c_opts) - cp, "\n%s",
+                       (channel_manager_get(s_math_ids[i]) ?
+                        channel_manager_get(s_math_ids[i])->label : s_math_ids[i]));
+
     s_math_b_const = c->math_enabled && c->math_b_is_const ? c->math_b_const : 0.0f;
+    s_math_c_const = c->math_enabled && c->math_c_is_const ? c->math_c_const : 0.0f;
 
     s_math_sheet = lv_obj_create(s_overlay);
     lv_obj_remove_style_all(s_math_sheet);
@@ -4374,7 +4427,7 @@ static void _open_math_sheet(const channel_t *c) {
 
     lv_obj_t *card = lv_obj_create(s_math_sheet);
     lv_obj_remove_style_all(card);
-    lv_obj_set_size(card, 460, 300);
+    lv_obj_set_size(card, 460, 386);
     lv_obj_center(card);
     lv_obj_set_style_bg_color(card, THEME_COLOR_PANEL, 0);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
@@ -4447,9 +4500,59 @@ static void _open_math_sheet(const channel_t *c) {
         lv_obj_add_event_cb(vbtn, _math_bconst_cb, LV_EVENT_CLICKED, NULL);
         cy += 44;
     }
+    /* Second operator. Always enabled, but it only means anything once C is
+     * something other than "(none)" — cheaper to read than a control that
+     * greys itself out and back. */
+    {
+        lv_obj_t *l = lv_label_create(card); lv_label_set_text(l, "then");
+        lv_obj_align(l, LV_ALIGN_TOP_LEFT, 0, cy + 6);
+        lv_obj_set_style_text_font(l, THEME_FONT_TINY, 0);
+        lv_obj_set_style_text_color(l, THEME_COLOR_TEXT_MUTED, 0);
+        s_math_op2_dd = lv_dropdown_create(card);
+        lv_dropdown_set_options(s_math_op2_dd, "+ C\n- C\nx C\n/ C");
+        lv_obj_set_size(s_math_op2_dd, 360, 30);
+        lv_obj_align(s_math_op2_dd, LV_ALIGN_TOP_RIGHT, 0, cy);
+        if (c->math_enabled && c->math_c_enabled)
+            lv_dropdown_set_selected(s_math_op2_dd, c->math_op2 & 3);
+        cy += 38;
+    }
+    /* Operand C (none / channel / Number…) + its constant value box. */
+    {
+        lv_obj_t *l = lv_label_create(card); lv_label_set_text(l, "C");
+        lv_obj_align(l, LV_ALIGN_TOP_LEFT, 0, cy + 6);
+        lv_obj_set_style_text_font(l, THEME_FONT_TINY, 0);
+        lv_obj_set_style_text_color(l, THEME_COLOR_TEXT_MUTED, 0);
+        s_math_c_dd = lv_dropdown_create(card);
+        lv_dropdown_set_options(s_math_c_dd, c_opts);
+        lv_obj_set_size(s_math_c_dd, 250, 30);
+        lv_obj_align(s_math_c_dd, LV_ALIGN_TOP_LEFT, 60, cy);
+        if (c->math_enabled && c->math_c_enabled)
+            lv_dropdown_set_selected(s_math_c_dd,
+                c->math_c_is_const ? 1
+                                   : (uint16_t)(_math_id_index(c->math_c) + 2));
+        lv_obj_t *cbtn = lv_btn_create(card);
+        lv_obj_set_size(cbtn, 96, 30);
+        lv_obj_align(cbtn, LV_ALIGN_TOP_RIGHT, 0, cy);
+        lv_obj_set_style_bg_color(cbtn, THEME_COLOR_INPUT_BG, 0);
+        lv_obj_set_style_radius(cbtn, 6, 0);
+        lv_obj_set_style_shadow_width(cbtn, 0, 0);
+        s_math_cval_lbl = lv_label_create(cbtn);
+        char cvb[24]; snprintf(cvb, sizeof(cvb), "%g", s_math_c_const);
+        lv_label_set_text(s_math_cval_lbl, cvb);
+        lv_obj_center(s_math_cval_lbl);
+        lv_obj_set_style_text_font(s_math_cval_lbl, THEME_FONT_SMALL, 0);
+        lv_obj_set_style_text_color(s_math_cval_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
+        lv_obj_add_event_cb(cbtn, _math_cconst_cb, LV_EVENT_CLICKED, NULL);
+        cy += 44;
+    }
 
     lv_obj_t *hint = lv_label_create(card);
-    lv_label_set_text(hint, "B = \"Number…\" uses the typed value; otherwise B is a channel.");
+    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(hint, 428);
+    lv_label_set_text(hint,
+        "Runs left to right: (A op B) then op C. \"Number…\" uses the typed "
+        "value. Leave C on \"(none)\" for a two-part sum. Litres/100km is "
+        "fuel flow / speed, then x 100.");
     lv_obj_align(hint, LV_ALIGN_TOP_LEFT, 0, cy);
     lv_obj_set_style_text_font(hint, THEME_FONT_TINY, 0);
     lv_obj_set_style_text_color(hint, THEME_COLOR_TEXT_MUTED, 0);

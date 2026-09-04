@@ -11733,6 +11733,36 @@
             }
         });
 
+        /* Commit a typed inspector value BEFORE anything can move the
+         * selection out from under it.
+         *
+         * The bug it fixes: type 300 into W, then click a different widget on
+         * the canvas, and BOTH widgets end up 300 wide. Two handlers write the
+         * same field. `oninput` fires per keystroke and had already applied 300
+         * to the widget you were editing — correct. Then `onchange` fires, and
+         * a change event on an input arrives on BLUR: the canvas's pointerdown
+         * handler has already run, already moved selectedIndex, and already
+         * rebuilt the inspector, so `onchange` applies 300 a second time, to
+         * the widget you just clicked.
+         *
+         * Blurring here, in the CAPTURE phase, puts the change back in front of
+         * the selection change, where it belongs. Every inspector field is
+         * fixed at once — W/H, X/Y, ID, colours, every config field — because
+         * they all read the live selection the same way.
+         *
+         * Scoped to a focused inspector field losing focus to something outside
+         * the inspector: field-to-field within one widget was never wrong, and
+         * forcing blur elsewhere in the app risks breaking a control that keeps
+         * focus on mousedown deliberately. */
+        document.addEventListener('pointerdown', (e) => {
+            const ae = document.activeElement;
+            if (!ae || ae.tagName !== 'INPUT') return;
+            const insp = document.getElementById('inspectorContent');
+            if (!insp || !insp.contains(ae)) return;
+            if (insp.contains(e.target)) return;
+            ae.blur();
+        }, true);
+
         function resetView() {
             _userZoomed = false;   /* explicit Fit hands control back */
             zoomToFit();
@@ -24795,8 +24825,15 @@
                 const v = info?.value;
                 const valTxt = (v == null || isNaN(v)) ? '—' : Number(v).toFixed(2);
                 const stale = !info || info.stale || v == null;
+                /* A third term gets brackets. The expression runs left to
+                 * right, and a reader who assumes × binds tighter than ÷
+                 * would read "flow ÷ speed × 100" as the wrong sum. */
+                const hasC = c.math.c !== undefined && c.math.c !== '';
+                const expr = hasC
+                    ? `(${lbl(c.math.a)} ${ops[c.math.op] || '?'} ${lbl(c.math.b)}) ${ops[c.math.op2 || 0] || '?'} ${lbl(c.math.c)}`
+                    : `${lbl(c.math.a)} ${ops[c.math.op] || '?'} ${lbl(c.math.b)}`;
                 body = `<div class="ch2-source-bound" onclick="_chMathToggleForm()" title="Click to edit calculation">
-                    <span class="ch2-source-bound-name">${lbl(c.math.a)} ${ops[c.math.op] || '?'} ${lbl(c.math.b)}</span>
+                    <span class="ch2-source-bound-name">${expr}</span>
                     <span class="ch2-source-bound-val ${stale?'stale':''}" data-sigval="${c.signal}">${valTxt}</span>
                     <span class="ch2-source-bound-chev">›</span>
                 </div>`;
@@ -24832,9 +24869,15 @@
 
         /* ── Calculated (math) channels ────────────────────────────────────
          * boost = MAP − BARO and friends. The form posts
-         * {math:{a,b,op}} to /api/channels/update; the firmware registers a
-         * MATH_<ID> signal, binds the channel to it and evaluates at 5 Hz.
-         * Operands are CHANNEL ids — any active channel except this one. */
+         * {math:{a,b,op[,c,op2]}} to /api/channels/update; the firmware
+         * registers a MATH_<ID> signal, binds the channel to it and evaluates
+         * at 5 Hz. Operands are CHANNEL ids — any active channel except this
+         * one — or typed numbers.
+         *
+         * The third term is optional and runs on the result of the first two,
+         * left to right. It is what an economy channel needs: fuel flow ÷
+         * speed is litres per KILOMETRE, and the number a driver reads is
+         * that × 100. */
         let _chMathFormOpen = false;
         function _chMathToggleForm() {
             _chMathFormOpen = !_chMathFormOpen;
@@ -24845,22 +24888,30 @@
             const ops = [['0','+ add'], ['1','− subtract'], ['2','× multiply'], ['3','÷ divide']];
             const cur = c.math || {};
             const bIsConst = typeof cur.b === 'number';
+            const cIsConst = typeof cur.c === 'number';
+            const hasC     = cur.c !== undefined && cur.c !== '';
             const operandOpts = sel => _chCache
                 .filter(x => x.id !== c.id)
                 .sort((a, b) => (a.label || a.id).localeCompare(b.label || b.id))
                 .map(x => `<option value="${x.id}" ${x.id === sel ? 'selected' : ''}>${x.label || x.id}</option>`)
                 .join('');
-            /* Operand B can be a channel OR a typed number ("MAP − 50"):
-             * the special __const__ option reveals the number input. Units
-             * are handled firmware-side: differing channel units convert to
-             * a common unit, the result converts to THIS channel's native
-             * unit, and constants are read in operand A's unit. */
+            /* Operands B and C can each be a channel OR a typed number
+             * ("MAP − 50"): the special __const__ option reveals a number
+             * input. C also offers "(none)", which is the plain two-operand
+             * expression this form has always produced. Units are handled
+             * firmware-side: differing channel units convert to a common
+             * unit, scaling by a number keeps the unit, and one channel
+             * divided by another drops it — the result is a dimension
+             * neither operand names, and yours to label. */
             return `
                 <div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--border);">
                     <div style="font-size:11px; color:var(--text-muted); margin-bottom:8px;">
-                        Calculate this channel from two others, or a channel and a number
-                        (Boost = MAP − Baro, or MAP − 50). Different units convert
-                        automatically; numbers are read in Channel A's unit.
+                        Calculate this channel from others, or from a channel and a number
+                        (Boost = MAP − Baro, or MAP − 50). The third term is optional and
+                        runs on the result, left to right — litres/100km is
+                        <b>Fuel flow ÷ Speed, then × 100</b>. Different units convert
+                        automatically; a number is read in whatever unit the sum is
+                        already in.
                     </div>
                     <div class="ch2-num-row">
                         <div class="ch2-num"><span class="ch2-num-label">Channel A</span>
@@ -24878,6 +24929,20 @@
                         <div class="ch2-num"><span class="ch2-num-label">Number</span>
                             <input type="number" step="any" id="chMathBConst" value="${bIsConst ? cur.b : ''}" placeholder="e.g. 50"></div>
                     </div>
+                    <div class="ch2-num-row" style="margin-top:8px;">
+                        <div class="ch2-num"><span class="ch2-num-label">Then</span>
+                            <select id="chMathOp2">${ops.map(([v, t]) => `<option value="${v}" ${String(cur.op2 ?? 2) === v ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+                        <div class="ch2-num"><span class="ch2-num-label">Channel C (optional)</span>
+                            <select id="chMathC" onchange="_chMathCModeSync()">
+                                <option value="" ${hasC ? '' : 'selected'}>(none)</option>
+                                <option value="__const__" ${cIsConst ? 'selected' : ''}>Number…</option>
+                                ${operandOpts(typeof cur.c === 'string' ? cur.c : '')}
+                            </select></div>
+                    </div>
+                    <div class="ch2-num-row" id="chMathConstRowC" style="margin-top:8px; ${cIsConst ? '' : 'display:none;'}">
+                        <div class="ch2-num"><span class="ch2-num-label">Number</span>
+                            <input type="number" step="any" id="chMathCConst" value="${cIsConst ? cur.c : ''}" placeholder="e.g. 100"></div>
+                    </div>
                     <div style="margin-top:10px; display:flex; gap:8px;">
                         <button class="btn btn-secondary" style="font-size:12px; padding:6px 12px;" onclick="_chMathApply('${c.id}')">Apply</button>
                         <button class="btn btn-secondary" style="font-size:12px; padding:6px 12px;" onclick="_chMathToggleForm()">Cancel</button>
@@ -24889,6 +24954,11 @@
             if (row) row.style.display =
                 document.getElementById('chMathB')?.value === '__const__' ? '' : 'none';
         }
+        function _chMathCModeSync() {
+            const row = document.getElementById('chMathConstRowC');
+            if (row) row.style.display =
+                document.getElementById('chMathC')?.value === '__const__' ? '' : 'none';
+        }
         async function _chMathApply(id) {
             const a = document.getElementById('chMathA')?.value;
             let b = document.getElementById('chMathB')?.value;
@@ -24899,11 +24969,23 @@
                 b = n;   /* typed operand: number = constant */
             }
             if (!a || b === '' || b == null) { alert('Pick both operands.'); return; }
+            /* Third term. "(none)" sends no "c" key at all rather than an
+             * empty one, so a two-operand expression posts byte for byte the
+             * request it has always posted. */
+            let cOp = document.getElementById('chMathC')?.value;
+            const op2 = Number(document.getElementById('chMathOp2')?.value || 2);
+            if (cOp === '__const__') {
+                const n = Number(document.getElementById('chMathCConst')?.value);
+                if (!Number.isFinite(n)) { alert('Enter a number for the third term.'); return; }
+                cOp = n;
+            }
+            const mathBody = { a, b, op };
+            if (cOp !== '' && cOp != null) { mathBody.c = cOp; mathBody.op2 = op2; }
             try {
                 const r = await fetch('/api/channels/update', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ id, fields: { math: { a, b, op } } }),
+                    body: JSON.stringify({ id, fields: { math: mathBody } }),
                 });
                 if (!r.ok) { alert('Calculation rejected: ' + await r.text()); return; }
             } catch (e) { console.warn('math apply failed', e); return; }

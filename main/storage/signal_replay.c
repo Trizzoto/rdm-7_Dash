@@ -11,6 +11,7 @@
  * logs both play smoothly.
  */
 #include "signal_replay.h"
+#include "esp_attr.h"
 #include "widgets/signal.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -41,14 +42,14 @@ typedef struct {
 static FILE       *s_file               = NULL;
 static lv_timer_t *s_timer              = NULL;
 static char        s_path[80]           = "";
-static replay_col_t s_cols[REPLAY_MAX_COLS];
+static EXT_RAM_BSS_ATTR replay_col_t s_cols[REPLAY_MAX_COLS];
 static uint16_t    s_col_count          = 0;
 static uint32_t    s_row_index          = 0;     /* 0-based row #, advances per emitted row */
 static uint32_t    s_total_rows         = 0;     /* counted on start by walking the file */
 static uint32_t    s_first_ts_ms        = 0;     /* timestamp of the first row */
 static uint32_t    s_next_ts_ms         = 0;     /* timestamp of the next row to emit (file-relative) */
 static uint64_t    s_replay_start_us    = 0;     /* esp_timer at replay start */
-static char        s_pending_line[REPLAY_LINE_MAX];
+static EXT_RAM_BSS_ATTR char        s_pending_line[REPLAY_LINE_MAX];
 static bool        s_have_pending       = false;  /* s_pending_line holds a row not yet emitted */
 static float       s_speed              = 1.0f;
 static bool        s_loop               = false;

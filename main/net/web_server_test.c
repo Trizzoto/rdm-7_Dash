@@ -10,6 +10,7 @@
  *   GET  /api/selftest     one-shot subsystem health report
  */
 #include "web_server_internal.h"
+#include "esp_attr.h"
 #include "cJSON.h"
 #include "can/rdm_bus.h"
 #include "can/rdm_bus_proto.h"
@@ -463,6 +464,12 @@ static esp_err_t _perf_handler(httpd_req_t *req) {
 	cJSON_AddNumberToObject(root, "avg_render_ms", p.avg_render_ms);
 	cJSON_AddNumberToObject(root, "flush_per_frame", p.flush_per_frame_x10 / 10.0);
 	cJSON_AddNumberToObject(root, "flush_us_per_frame", p.flush_us_per_frame);
+	/* Live ISR counters, not part of the render window — they advance even
+	 * when an idle screen publishes no windows. */
+	uint32_t v_cnt = 0, bb_cnt = 0;
+	panel_frame_counters_get(&v_cnt, &bb_cnt);
+	cJSON_AddNumberToObject(root, "panel_vsync", v_cnt);
+	cJSON_AddNumberToObject(root, "panel_bb_frames", bb_cnt);
 	return _send_json(req, root);
 }
 
@@ -473,7 +480,7 @@ static esp_err_t _perf_handler(httpd_req_t *req) {
  * per-window worst single-frame render time (max_ms) for spike hunting.
  * Streamed chunked: 180 entries would not fit a single send buffer. */
 static esp_err_t _perf_history_handler(httpd_req_t *req) {
-	static render_perf_hist_t hist[RENDER_PERF_HISTORY_LEN]; /* httpd task only */
+	static EXT_RAM_BSS_ATTR render_perf_hist_t hist[RENDER_PERF_HISTORY_LEN]; /* httpd task only */
 	uint16_t n = render_perf_history_get(hist, RENDER_PERF_HISTORY_LEN);
 
 	httpd_resp_set_type(req, "application/json");

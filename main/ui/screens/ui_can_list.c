@@ -15,6 +15,7 @@
  * LVGL task (from can_process_queued_frames), so no locking needed.
  */
 #include "ui_can_list.h"
+#include "esp_attr.h"
 #include "../theme.h"
 #include "screen_config.h"
 #include "can/can_id_tracker.h"
@@ -45,7 +46,7 @@ static lv_obj_t   *s_return_screen   = NULL;
 static lv_obj_t   *s_list_container  = NULL;
 static lv_obj_t   *s_empty_lbl       = NULL;
 static lv_timer_t *s_refresh_timer   = NULL;
-static can_row_t   s_rows[MAX_TRACKED];
+static EXT_RAM_BSS_ATTR can_row_t   s_rows[MAX_TRACKED];
 static uint16_t    s_row_count       = 0;
 static uint8_t     s_hz_tick_counter = 0;
 

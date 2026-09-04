@@ -39,6 +39,9 @@ int get_ota_progress(void);
 float get_update_file_size_mb(void);
 const char* get_release_notes(void);
 void initialize_sntp(void);
+/* Same, but runs on the esp_timer task. The only form the WiFi event handler
+ * may use — see the definition. */
+void initialize_sntp_async(void);
 void debug_ota_connectivity(void);
 
 /* Set a custom firmware download URL (plain HTTP recommended).

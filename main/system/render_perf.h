@@ -30,6 +30,16 @@ typedef struct {
  * `seq` across two reads if consistency matters. */
 void render_perf_get(render_perf_t *out);
 
+/* Live RGB-panel ISR counters, independent of the LVGL render window above:
+ * *vsync   — VSYNC interrupts since boot.
+ * *bb_frame — times the bounce-buffer refill has finished a whole frame's
+ *             worth of copying out of PSRAM (0 when bounce mode is off).
+ * Read straight from the ISR counters, so they keep advancing on an idle
+ * screen that publishes no render windows. Their RATIO is the diagnostic:
+ * measure it on a quiet dash, then watch for it moving under load. Both are
+ * plain 32-bit reads (atomic on ESP32-S3) and wrap harmlessly. */
+void panel_frame_counters_get(uint32_t *vsync, uint32_t *bb_frame);
+
 /* ── Boot-timeline history ────────────────────────────────────────────────
  * Compact per-second snapshots recorded from the very first rendered frame,
  * so the post-boot fps timeline (including the pre-WiFi seconds no HTTP

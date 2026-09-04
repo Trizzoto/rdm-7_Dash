@@ -1,4 +1,5 @@
 #include "device_id.h"
+#include "esp_attr.h"
 #include "device_settings.h"
 #include "display_capture.h"
 #include "driver/gpio.h"
@@ -30,6 +31,7 @@
 #include "layout/layout_manager.h"
 #include "lvgl.h"
 #include "lvgl_helpers.h"
+#include "net/ble_protocol.h"
 #include "net/uart_protocol.h"
 #include "net/wifi_manager.h"
 #include "nvs.h"
@@ -133,6 +135,11 @@ static const char *TAG = "main";
   10 // Reduced from 30ms for 70fps responsiveness
 #define EXAMPLE_LVGL_TASK_MIN_DELAY_MS                                         \
   5 // Reduced from 20ms for better performance
+/* 14 KB. Trimmed from 16 to leave internal SRAM for WiFi's association
+ * buffers and the web server — all three compete for the same pool and the
+ * dash could not have all of them at 16. If a future widget deepens the draw
+ * path, this is a candidate for the first stack overflow, so raise it here
+ * rather than shaving elsewhere. */
 #define EXAMPLE_LVGL_TASK_STACK_SIZE (16 * 1024)
 #define EXAMPLE_LVGL_TASK_PRIORITY 8
 
@@ -149,6 +156,7 @@ void my_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
 
 /* CAN subsystem — TWAI hardware, receive task */
 #include "can/can_manager.h"
+#include "can/keypad_lights.h"
 
 // PWM configuration for GPIO16
 #define LEDC_TIMER LEDC_TIMER_0
@@ -178,11 +186,49 @@ static esp_err_t i2c_master_init(void) {
                             I2C_MASTER_TX_BUF_DISABLE, 0);
 }
 
-static bool
+/* ── Panel starvation counters ─────────────────────────────────────────
+ * Makes the tearing/shifting glitch a number instead of an eyeball test.
+ *
+ * The panel scans one frame per VSYNC. In bounce-buffer mode the refill
+ * interrupt must copy one whole framebuffer's worth of pixels out of PSRAM in
+ * that same time; when it does, it fires on_bounce_frame_finish exactly once.
+ * So in health the two counts advance together. If the PSRAM bus is contended
+ * — WiFi burst, layout change, flash read — the refill falls behind, the panel
+ * is clocked stale bytes (the visible shift), and bounce_frames stops keeping
+ * up with vsyncs. The GROWTH of (vsync - bounce) is therefore a direct count
+ * of starved frames, published per-window on GET /api/perf.
+ *
+ * Both live in internal RAM and are written only by these two ISRs; readers
+ * take a plain 32-bit snapshot, which is atomic on ESP32-S3. Deliberately not
+ * volatile-qualified beyond that — a stale read costs one window of accuracy
+ * on a diagnostic. */
+static volatile uint32_t s_vsync_cnt = 0;
+static volatile uint32_t s_bb_frame_cnt = 0;
+
+void panel_frame_counters_get(uint32_t *vsync, uint32_t *bb_frame) {
+  if (vsync) *vsync = s_vsync_cnt;
+  if (bb_frame) *bb_frame = s_bb_frame_cnt;
+}
+
+/* IRAM: with LCD_RGB_ISR_IRAM_SAFE the driver rejects a callback that
+ * lives in flash/PSRAM (it must keep running while the cache is disabled). */
+static bool IRAM_ATTR
+rdm_on_bounce_frame_finish(esp_lcd_panel_handle_t panel,
+                           const esp_lcd_rgb_panel_event_data_t *event_data,
+                           void *user_data) {
+  (void)panel; (void)event_data; (void)user_data;
+  s_bb_frame_cnt++;
+  return false;
+}
+
+/* IRAM: with LCD_RGB_ISR_IRAM_SAFE the driver rejects a vsync callback that
+ * lives in flash/PSRAM (it must keep running while the cache is disabled). */
+static bool IRAM_ATTR
 example_on_vsync_event(esp_lcd_panel_handle_t panel,
                        const esp_lcd_rgb_panel_event_data_t *event_data,
                        void *user_data) {
   BaseType_t high_task_awoken = pdFALSE;
+  s_vsync_cnt++;
 #if CONFIG_EXAMPLE_AVOID_TEAR_EFFECT_WITH_SEM
   if (xSemaphoreTakeFromISR(sem_gui_ready, &high_task_awoken) == pdTRUE) {
     xSemaphoreGiveFromISR(sem_vsync_end, &high_task_awoken);
@@ -218,7 +264,7 @@ void render_perf_get(render_perf_t *out) {
  * curve (including the pre-WiFi seconds no HTTP poller can observe) and
  * catch single-frame spikes via max_render_ms. Writer = LVGL task; readers
  * tolerate 1 s-granularity tearing, same as render_perf_get. */
-static render_perf_hist_t s_perf_hist[RENDER_PERF_HISTORY_LEN];
+static EXT_RAM_BSS_ATTR render_perf_hist_t s_perf_hist[RENDER_PERF_HISTORY_LEN];
 static uint16_t s_perf_hist_next = 0;   /* next slot to write */
 static uint16_t s_perf_hist_count = 0;  /* valid entries (caps at LEN) */
 
@@ -333,6 +379,54 @@ static void rdm7_lvgl_monitor_cb(lv_disp_drv_t *drv, uint32_t elaps_ms,
     s_elaps_max = 0;
   }
 }
+
+/* Set to 1 to create the panel (and so its bounce-refill interrupt) on core 1
+ * beside LVGL instead of core 0 beside the radios. Measured Sept 2026: on
+ * core 1 the refill copy halved LVGL's render throughput. */
+#ifndef RDM_PANEL_ISR_ON_CORE1
+#define RDM_PANEL_ISR_ON_CORE1 0
+#endif
+
+#if CONFIG_EXAMPLE_USE_BOUNCE_BUFFER && RDM_PANEL_ISR_ON_CORE1
+/* ── Panel creation on core 1 ────────────────────────────────────────
+ * The RGB panel runs in bounce-buffer mode: DMA streams each frame out of two
+ * small internal-SRAM buffers, and the panel's interrupt refills them from
+ * the PSRAM framebuffer — every line of every frame, ~25 MB/s at this pixel
+ * clock. That is display work, so it belongs on core 1 next to LVGL, not on
+ * core 0 with the WiFi and BT stacks, where an interrupt of that weight would
+ * be felt by both radios. esp_intr_alloc binds an interrupt to the core it is
+ * called on and app_main runs on core 0, so the driver is created from a
+ * short-lived core-1 task. If that task cannot be created the panel still
+ * comes up, on core 0. */
+typedef struct {
+  const esp_lcd_rgb_panel_config_t *cfg;
+  esp_lcd_panel_handle_t *out;
+  esp_err_t err;
+  TaskHandle_t waiter;
+} rdm_panel_create_job_t;
+
+static void rdm_panel_create_task(void *arg) {
+  rdm_panel_create_job_t *job = (rdm_panel_create_job_t *)arg;
+  job->err = esp_lcd_new_rgb_panel(job->cfg, job->out);
+  xTaskNotifyGive(job->waiter);
+  vTaskDelete(NULL);
+}
+
+static esp_err_t rdm_panel_create_on_core1(const esp_lcd_rgb_panel_config_t *cfg,
+                                           esp_lcd_panel_handle_t *out) {
+  rdm_panel_create_job_t job = {
+      .cfg = cfg, .out = out, .err = ESP_FAIL,
+      .waiter = xTaskGetCurrentTaskHandle()};
+  if (xTaskCreatePinnedToCore(rdm_panel_create_task, "lcd_init", 4096, &job,
+                              12, NULL, 1) != pdPASS) {
+    ESP_LOGW(TAG, "core-1 panel init task failed; creating panel on core 0");
+    return esp_lcd_new_rgb_panel(cfg, out);
+  }
+  ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+  ESP_LOGI(TAG, "RGB panel created on core 1 (bounce-buffer ISR beside LVGL)");
+  return job.err;
+}
+#endif /* CONFIG_EXAMPLE_USE_BOUNCE_BUFFER */
 
 /* ── Capture source: LCD panel framebuffer ────────────────────────────────
  * We read directly from the LCD panel's own framebuffer (via
@@ -762,15 +856,40 @@ static void _deferred_wifi_boot_cb(lv_timer_t *timer) {
 
   wifi_manager_auto_connect();
 
-  ESP_LOGI(TAG, "Starting web server...");
-  if (web_server_start() != ESP_OK) {
-    ESP_LOGE(TAG, "Web server failed to start!");
-  } else {
-    ESP_LOGI(TAG, "Web server started successfully!");
-    ESP_LOGI(TAG, "=== WEB INTERFACE READY ===");
-    ESP_LOGI(TAG, "Connect to WiFi hotspot '%s' → http://192.168.4.1",
-             wifi_get_ap_ssid());
-    ESP_LOGI(TAG, "==============================");
+  /* Start the web server once the link is up — here on the main task, not in
+   * the WiFi event handler.
+   *
+   * WHY LATER THAN IT USED TO BE: httpd's task and lwIP's structures come out
+   * of the same internal SRAM WiFi needs to ASSOCIATE, and with Bluetooth also
+   * resident starting httpd first left the handshake short — auth succeeded,
+   * then assoc timed out after exactly 1 s, every attempt (reason 39).
+   *
+   * WHY ON THIS TASK: the event handler's stack is 2304 bytes and
+   * web_server_start() registers 155 URI handlers — it overflows there. A
+   * dedicated starter task works but its own stack is live while httpd is
+   * created, which took the memory httpd needed (7866 B free -> 3338 B). The
+   * main task already has 8 KB allocated, and it is freed the moment app_main
+   * returns, so this costs nothing that was not already spent.
+   *
+   * The wait is bounded: with no AP in range the dash still needs its server
+   * for the setup UI over its own access point. */
+  {
+    const int wait_ms = 30000, step_ms = 100;
+    int waited = 0;
+    while (wifi_manager_get_state() != WIFI_MGR_STATE_CONNECTED &&
+           waited < wait_ms) {
+      vTaskDelay(pdMS_TO_TICKS(step_ms));
+      waited += step_ms;
+    }
+    if (waited >= wait_ms)
+      ESP_LOGW(TAG, "No link after %d s — starting the web server anyway", wait_ms / 1000);
+
+    ESP_LOGI(TAG, "Starting web server...");
+    if (web_server_start() != ESP_OK) {
+      ESP_LOGE(TAG, "Web server failed to start!");
+    } else {
+      ESP_LOGI(TAG, "Web server started successfully!");
+    }
   }
 
   /* Diagnostic: periodic heap snapshot to surface heap leaks (was wired
@@ -805,6 +924,22 @@ void app_main(void) {
   init_pwm();
 
   init_nvs();
+
+  /* Claim the Bluetooth controller's RAM before anything else can. It needs
+   * ~30 KB of CONTIGUOUS internal DMA memory and is the one allocation on this
+   * board that cannot live in PSRAM; a few hundred milliseconds later, once
+   * LVGL, CAN and WiFi have taken theirs, no such block exists and the
+   * controller dies with "Malloc failed" and takes the dash into a boot loop.
+   * The radio is switched on further down, when the dash can actually answer.
+   * Needs NVS (PHY calibration), so it sits directly after init_nvs(). */
+#define RDM7_DEBUG_NO_BLE 0
+#if RDM7_DEBUG_NO_BLE
+  ESP_LOGW(TAG, "RDM7_DEBUG_NO_BLE=1 — Bluetooth disabled for this build");
+#else
+  if (ble_protocol_reserve() != ESP_OK) {
+    ESP_LOGW(TAG, "BLE controller reserve failed — Bluetooth will be unavailable");
+  }
+#endif
 
   /* Read and persist the previous-boot reset reason so panics are visible
      across reboots. Logs a one-line summary and increments a lifetime
@@ -921,11 +1056,19 @@ void app_main(void) {
 #endif
    } };
 
+#if CONFIG_EXAMPLE_USE_BOUNCE_BUFFER && RDM_PANEL_ISR_ON_CORE1
+  ESP_ERROR_CHECK(rdm_panel_create_on_core1(&panel_config, &panel_handle));
+#else
   ESP_ERROR_CHECK(esp_lcd_new_rgb_panel(&panel_config, &panel_handle));
+#endif
 
   ESP_LOGI(TAG, "Register event callbacks");
   esp_lcd_rgb_panel_event_callbacks_t cbs = {
       .on_vsync = example_on_vsync_event,
+#if CONFIG_EXAMPLE_USE_BOUNCE_BUFFER
+      /* Only meaningful in bounce mode — see the starvation counters. */
+      .on_bounce_frame_finish = rdm_on_bounce_frame_finish,
+#endif
   };
   ESP_ERROR_CHECK(esp_lcd_rgb_panel_register_event_callbacks(panel_handle, &cbs,
                                                              &disp_drv));
@@ -1310,6 +1453,15 @@ void app_main(void) {
   can_start_task();
   ESP_LOGI(TAG, "CAN task started - data will be available when UI loads");
 
+  /* A Blink keypad cannot animate itself, so somebody on the bus has to play
+   * its boot. That used to mean RDM Studio open on a laptop; now the dash
+   * does it, off a tape Studio baked and posted here. Loaded before the
+   * splash so the keypad lights while the screen is still coming up, which
+   * is when a keypad boot is worth watching. Does nothing at all unless a
+   * boot has been stored — see main/can/keypad_lights.h. */
+  keypad_lights_init();
+  keypad_lights_boot_play();
+
   ESP_LOGI(TAG, "Loading splash screen for smooth boot experience");
 
   // Lock the mutex due to the LVGL APIs are not thread-safe
@@ -1351,8 +1503,41 @@ void app_main(void) {
    * Production default: take over UART1 for the desktop serial protocol.
    * For a debugging session, build with -DRDM7_DEBUG_KEEP_CONSOLE=1 to skip the
    * takeover so boot logs stay visible on the USB-UART bridge (the desktop app
-   * can't connect while that override is set). */
+   * can't connect while that override is set).
+   *
+   * Leave this at 0. Serial logs and the desktop app are NOT mutually
+   * exclusive: uart_protocol_init() installs a log hook (s_log_vprintf) that
+   * writes ESP_LOG text to UART1 alongside the frames, sharing the TX mutex so
+   * a log line can never land mid-frame. The desktop app's parser syncs on STX
+   * and surfaces the rest as log output; a plain terminal on the same port
+   * sees the logs. Both at once, one wire — which is the whole reason the hook
+   * exists. Setting this to 1 skips uart_protocol_init entirely and is what
+   * forces an either/or, so it is strictly a bring-up crutch.
+   *
+   * The console baud is set to match UART_PROTO_BAUD_RATE so one terminal
+   * follows the whole boot: before this point logs come from UART0, after it
+   * from UART1, on the same pads. Same rate on both means no reconnect. */
 #ifndef RDM7_DEBUG_KEEP_CONSOLE
+/* 0 = production: UART1 carries the desktop protocol AND the log text (see
+ * uart_protocol.c's log hook), so serial logs and the desktop app work at the
+ * same time on one wire.
+ *
+ * Trade-off worth knowing before a debugging session: once UART1 owns pads
+ * 43/44, the PANIC handler — which writes to UART0 — is invisible. If you are
+ * chasing a crash, set this to 1 to get the Guru Meditation output back, at
+ * the cost of the desktop connection while you do. */
+/* 0 = production: UART1 carries the desktop protocol AND the log text (see
+ * uart_protocol.c's log hook), so serial logging and the desktop app work at
+ * the same time on one wire.
+ *
+ * This used to cost ~7.4 KB of internal SRAM the board no longer had once
+ * Bluetooth was resident — enough that the web server could not start. That is
+ * fixed by uart_rx_task dispatching for BOTH transports instead of BLE running
+ * a duplicate task; the stack is paid for once now.
+ *
+ * Debugging note: once UART1 owns pads 43/44 the PANIC handler, which writes
+ * to UART0, is invisible. Set this to 1 to get Guru Meditation output back,
+ * at the cost of the desktop connection while you do. */
 #define RDM7_DEBUG_KEEP_CONSOLE 0
 #endif
 #if RDM7_DEBUG_KEEP_CONSOLE
@@ -1382,6 +1567,16 @@ void app_main(void) {
   // if (usb_cdc_protocol_init() != ESP_OK) {
   // 	ESP_LOGW(TAG, "USB CDC protocol init failed");
   // }
+
+  /* BLE carries the same framed protocol as UART and USB, so the phone app
+   * gets every serial command over Bluetooth without a second API. Unlike the
+   * dash's own access point it costs the phone nothing — it keeps its
+   * internet, and it can hold the GPS puck's link at the same time. */
+#if !RDM7_DEBUG_NO_BLE
+  if (ble_protocol_init() != ESP_OK) {
+    ESP_LOGW(TAG, "BLE protocol init failed — Wi-Fi and USB are unaffected");
+  }
+#endif
 
   /* Initialize WiFi manager (creates netif, no radio start yet) */
   wifi_manager_init();

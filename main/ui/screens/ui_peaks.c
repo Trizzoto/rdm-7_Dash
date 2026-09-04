@@ -15,6 +15,7 @@
  * same constraints as ui_diagnostics.c.
  */
 #include "ui_peaks.h"
+#include "esp_attr.h"
 #include "../theme.h"
 #include "screen_config.h"
 #include "widgets/signal.h"
@@ -49,7 +50,7 @@ static lv_obj_t   *s_screen          = NULL;
 static lv_obj_t   *s_return_screen   = NULL;
 static lv_obj_t   *s_list_container  = NULL;
 static lv_timer_t *s_refresh_timer   = NULL;
-static peak_row_t  s_rows[MAX_TRACKED];
+static EXT_RAM_BSS_ATTR peak_row_t  s_rows[MAX_TRACKED];
 static uint16_t    s_row_count       = 0;
 static uint16_t    s_seen_signal_count = 0;  /* last-seen signal_get_count() */
 

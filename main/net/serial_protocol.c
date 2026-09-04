@@ -73,6 +73,7 @@ const char *serial_protocol_get_name(transport_id_t id)
     switch (id) {
     case TRANSPORT_UART:    return "uart";
     case TRANSPORT_USB_CDC: return "usb_cdc";
+    case TRANSPORT_BLE:     return "ble";
     default:                return "unknown";
     }
 }

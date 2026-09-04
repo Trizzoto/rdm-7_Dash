@@ -1,4 +1,5 @@
 #include "wifi_manager.h"
+#include "esp_attr.h"
 #include "system/rdm_lv_async.h"
 #include "ota_handler.h"
 #include "dns_hijack.h"
@@ -7,6 +8,9 @@
 #include "esp_netif.h"
 #include "esp_mac.h"
 #include "esp_log.h"
+#include "ble_protocol.h"
+#include "web_server.h"
+#include "esp_coexist.h"
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
@@ -90,7 +94,7 @@ static wifi_mgr_event_cb_t s_event_cb    = NULL;
 static void                *s_event_ud   = NULL;
 
 /* Scan result cache */
-static wifi_mgr_ap_record_t s_scan_results[DEFAULT_SCAN_LIST_SIZE];
+static EXT_RAM_BSS_ATTR wifi_mgr_ap_record_t s_scan_results[DEFAULT_SCAN_LIST_SIZE];
 static uint16_t             s_scan_count = 0;
 
 /* ── Forward declarations ─────────────────────────────────────────────── */
@@ -374,11 +378,15 @@ static void _process_scan_results(void)
      * suitable AP now!` because it has no target. Drop back to AP-only so
      * the radio can serve the hotspot reliably. If the user picks a network
      * next, `wifi_manager_connect` will re-upgrade. */
-    if (s_ap_enabled && s_connected_ssid[0] == '\0' && !_has_saved_sta_creds()) {
+    /* The scan BORROWED the STA interface while the hotspot owns the radio
+     * (see wifi_manager_scan). Hand it straight back unless a connection is
+     * actually in flight — modes are exclusive, so APSTA is only ever a
+     * transient state inside an operation, never something to be left in. */
+    if (s_ap_enabled && s_connected_ssid[0] == '\0' && !s_auto_connect_pending) {
         wifi_mode_t m = WIFI_MODE_NULL;
         esp_wifi_get_mode(&m);
         if (m == WIFI_MODE_APSTA) {
-            ESP_LOGI(TAG, "Scan complete — downgrading APSTA → AP-only (no saved STA)");
+            ESP_LOGI(TAG, "Scan complete — returning the radio to the hotspot");
             esp_wifi_set_mode(WIFI_MODE_AP);
         }
     }
@@ -414,6 +422,8 @@ static void _wifi_event_handler(void *arg, esp_event_base_t event_base,
             break;
 
         case WIFI_EVENT_STA_CONNECTED: {
+            /* Handshake done — Bluetooth may advertise again. */
+            ble_protocol_hold_advertising(false);
             wifi_event_sta_connected_t *ev = (wifi_event_sta_connected_t *)event_data;
             memset(s_connected_ssid, 0, sizeof(s_connected_ssid));
             /* Use the pending SSID we stored before calling esp_wifi_connect(),
@@ -453,6 +463,8 @@ static void _wifi_event_handler(void *arg, esp_event_base_t event_base,
         }
 
         case WIFI_EVENT_STA_DISCONNECTED: {
+            /* Attempt over (success or failure); do not leave BLE muted. */
+            ble_protocol_hold_advertising(false);
             wifi_event_sta_disconnected_t *ev = (wifi_event_sta_disconnected_t *)event_data;
             ESP_LOGI(TAG, "Disconnected (reason: %d)", ev->reason);
             bool was_connected = (s_connected_ssid[0] != '\0');
@@ -585,6 +597,11 @@ static void _wifi_event_handler(void *arg, esp_event_base_t event_base,
         }
     } else if (event_base == IP_EVENT) {
         if (event_id == IP_EVENT_STA_GOT_IP) {
+            /* The web server is NOT started here. This handler runs on the
+             * system event task (2304-byte stack) — standing up httpd and its
+             * 155 URI handlers on it overflows the stack and resets the dash.
+             * app_main waits for this state and starts it on the main task,
+             * which has 8 KB and is freed straight afterwards. */
             ip_event_got_ip_t *ev = (ip_event_got_ip_t *)event_data;
             snprintf(s_sta_ip, sizeof(s_sta_ip), IPSTR, IP2STR(&ev->ip_info.ip));
             ESP_LOGI(TAG, "Got IP: %s", s_sta_ip);
@@ -593,10 +610,40 @@ static void _wifi_event_handler(void *arg, esp_event_base_t event_base,
              * full retry budget again. */
             s_auth_failure_count = 0;
             _set_state(WIFI_MGR_STATE_CONNECTED);
+
+            /* Joined a network while the hotspot was up — the captive-portal
+             * flow: phone joins the dash, picks the house WiFi, dash connects.
+             * The AP had to stay up through that so the phone kept the portal
+             * while it could still fail. It has not failed, so hand the radio
+             * over: the dash is a client now, and leaving the hotspot on is
+             * the exact APSTA state the screen has no word for.
+             *
+             * Only on SUCCESS, so a wrong password never costs anyone the way
+             * back in. Persisted both places the boot path reads, or the next
+             * power cycle would come back up as a hotspot and drop off the LAN
+             * the user just put it on. */
+            if (s_ap_enabled) {
+                ESP_LOGI(TAG, "Connected while hosting — handing the radio to "
+                              "the client side, hotspot off");
+                wifi_manager_enable_ap(false);
+
+                rdm_ap_config_t ap_cfg;
+                config_store_load_ap_config(&ap_cfg);
+                ap_cfg.enabled = false;
+                config_store_save_ap_config(&ap_cfg);
+
+                wifi_boot_config_t boot_cfg = {0};
+                config_store_load_wifi_boot(&boot_cfg);
+                boot_cfg.ap_enabled   = false;
+                boot_cfg.wifi_on_boot = true;
+                config_store_save_wifi_boot(&boot_cfg);
+            }
             /* Kick off NTP now that we have a route. Idempotent — every
              * subsequent got-IP is a no-op. Required by Share Raw CAN
-             * uploads which sign an HMAC over a unix timestamp. */
-            initialize_sntp();
+             * uploads which sign an HMAC over a unix timestamp. Deferred
+             * off this task: it talks to lwIP, and this task must not
+             * (same reason httpd is started from app_main). */
+            initialize_sntp_async();
             /* Arm the one-shot OTA auto-check (15 s delay so SNTP +
              * routing settle). Internally a no-op after the first call
              * per boot, so reconnect storms don't trigger repeat dialogs. */
@@ -681,7 +728,32 @@ void wifi_manager_start(void)
         return;
     }
 
-    ESP_LOGI(TAG, "Starting WiFi radio");
+    /* esp_wifi_init() wants tens of KB of internal DMA RAM for its task stack
+     * and packet buffers, and it competes with LVGL, the BT controller and the
+     * layout parser for the ~90 KB this board has. When it loses, it fails with
+     * a bare ESP_ERR_NO_MEM inside an ESP_ERROR_CHECK — a boot loop with no
+     * clue attached. These two numbers are that clue. */
+    ESP_LOGI(TAG, "Starting WiFi radio (%u B internal DMA free, largest block %u B)",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
+
+#if CONFIG_BT_ENABLED
+    /* Give WiFi priority over Bluetooth for the antenna.
+     *
+     * Measured, not assumed: with BLE running, this dash dropped its link 4-5
+     * times a minute — reason 2 (AUTH_EXPIRE) and reason 39 (TIMEOUT) — with a
+     * strong AP in range and correct credentials. The identical build with
+     * Bluetooth compiled out held the link for the full test with zero
+     * disconnects. Association is a timed handshake, and the coexistence
+     * scheduler's default BALANCE mode hands BLE enough slots to break it.
+     *
+     * PREFER_WIFI costs Bluetooth throughput, which is the right way round
+     * here: WiFi carries the web UI and OTA, while BLE carries small JSON-RPC
+     * frames for the phone app. */
+    esp_err_t coex_err = esp_coex_preference_set(ESP_COEX_PREFER_WIFI);
+    if (coex_err != ESP_OK)
+        ESP_LOGW(TAG, "coex preference not applied: %s", esp_err_to_name(coex_err));
+#endif
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
@@ -694,11 +766,22 @@ void wifi_manager_start(void)
     config_store_load_wifi_boot(&boot_cfg);
     s_ap_enabled = boot_cfg.ap_enabled;
 
-    /* Pick mode. APSTA costs the AP radio time — the STA half keeps
-     * probing/retrying even when it has no target, which spams
-     * `Haven't to connect to a suitable AP now!` and drops AP frames.
-     * Only enable STA if there's at least one saved SSID to connect to. */
-    bool need_sta = _has_saved_sta_creds();
+    /* Pick the mode. The two settings are exclusive and the hotspot wins:
+     * picking Hotspot means hotspot, not "hotspot and also quietly joined to
+     * the house network", which is what this used to do — it ignored
+     * wifi_on_boot entirely and brought STA up whenever a network was saved.
+     *
+     * That is a real change for a dash whose boot setting says Hotspot and
+     * which has a saved network: it will stop appearing on the LAN. It stays
+     * reachable on its own hotspot at 192.168.4.1, and the WiFi screen now
+     * says which of the two it is doing, so the setting can be corrected in
+     * one tap by anyone who wanted the LAN address.
+     *
+     * Beyond honesty this is what the radio wants: APSTA splits one radio, and
+     * an STA half with nothing to talk to spams `Haven't to connect to a
+     * suitable AP now!` and drops AP frames. */
+    bool need_sta = !boot_cfg.ap_enabled && boot_cfg.wifi_on_boot
+                    && _has_saved_sta_creds();
 
     /* Safety net: with AP disabled AND no saved STA credentials the dash has
      * nothing to connect to and no hotspot to offer — it boots completely
@@ -713,14 +796,10 @@ void wifi_manager_start(void)
         config_store_save_wifi_boot(&boot_cfg);
     }
 
-    wifi_mode_t start_mode;
-    if (s_ap_enabled && need_sta)       start_mode = WIFI_MODE_APSTA;
-    else if (s_ap_enabled)              start_mode = WIFI_MODE_AP;
-    else                                start_mode = WIFI_MODE_STA;
+    wifi_mode_t start_mode = s_ap_enabled ? WIFI_MODE_AP : WIFI_MODE_STA;
     ESP_ERROR_CHECK(esp_wifi_set_mode(start_mode));
-    ESP_LOGI(TAG, "Mode: %s (AP=%d saved_sta=%d)",
-             start_mode == WIFI_MODE_APSTA ? "APSTA" :
-             start_mode == WIFI_MODE_AP    ? "AP-only" : "STA-only",
+    ESP_LOGI(TAG, "Mode: %s (AP=%d sta_wanted=%d)",
+             start_mode == WIFI_MODE_AP ? "AP-only" : "STA-only",
              s_ap_enabled, need_sta);
 
     /* Configure AP if enabled */
@@ -854,9 +933,22 @@ void wifi_manager_scan(void)
         .channel     = 0,
         .show_hidden = false,
         .scan_type   = WIFI_SCAN_TYPE_ACTIVE,
+#if !CONFIG_BT_ENABLED
         .scan_time.active.min = 120,
         .scan_time.active.max = 1500
+#endif
     };
+#if CONFIG_BT_ENABLED
+    /* The long dwell above is deliberately NOT used when Bluetooth is on.
+     * esp_wifi logs "Should use default active scan time parameter for WiFi
+     * scan when Bluetooth is enabled" and means it: coexistence gives the two
+     * radios interleaved slots, and a 1500 ms dwell holds the antenna long
+     * enough to starve the BT controller's ISR, which trips the interrupt
+     * watchdog and panics the dash mid-scan. Zero here means "IDF default",
+     * which the coexistence scheduler is built around. The cost is the thing
+     * the long window was added for — phone hotspots with lazy beacons may
+     * take an extra scan cycle to appear. */
+#endif
 
     esp_err_t err = esp_wifi_scan_start(&scan_cfg, false);
     if (err != ESP_OK) {
@@ -891,6 +983,10 @@ void wifi_manager_connect(const char *ssid, const char *password)
     s_auth_failure_count = 0;
 
     ESP_LOGI(TAG, "Connecting to '%s'", ssid);
+
+    /* An explicit join cancels a previous user-initiated disconnect, or the
+     * event handler would treat the next disconnect as intentional. */
+    s_user_disconnect = false;
 
     /* If we booted in AP-only mode (no saved credentials at boot) and the
      * user is now trying to connect to a network, upgrade the mode so the
@@ -939,11 +1035,18 @@ void wifi_manager_connect(const char *ssid, const char *password)
         return;
     }
 
+    /* Take Bluetooth off the air for the handshake. See ble_protocol.h — with
+     * BLE advertising this association fails repeatedly against a good AP, and
+     * a coexistence preference alone did not fix it. Released again on
+     * STA_CONNECTED or when the attempt fails. */
+    ble_protocol_hold_advertising(true);
+
     /* Disconnect first (safe even if not connected) */
     esp_wifi_disconnect();
 
     err = esp_wifi_connect();
     if (err != ESP_OK) {
+        ble_protocol_hold_advertising(false);
         ESP_LOGE(TAG, "esp_wifi_connect failed: %s", esp_err_to_name(err));
         _set_state(WIFI_MGR_STATE_FAILED);
         return;
@@ -1035,10 +1138,21 @@ void wifi_manager_enable_ap(bool enable)
     s_ap_enabled = enable;
 
     if (enable) {
-        /* AP-only when no saved STA — see _has_saved_sta_creds comment */
-        wifi_mode_t new_mode = _has_saved_sta_creds() ? WIFI_MODE_APSTA : WIFI_MODE_AP;
+        /* Turning the hotspot on turns the client side OFF — one radio, one
+         * job. This used to pick APSTA whenever credentials were saved, so
+         * "Hotspot" left the dash on the house network with nothing on screen
+         * to say so. Stop the reconnect machinery first: dropping the STA out
+         * of the mode while a retry timer is armed just brings it back. */
+        _stop_reconnect();
+        s_should_reconnect = false;
+        s_auto_connect_pending = false;
+        s_user_disconnect = true;
+        esp_wifi_disconnect();
+        s_connected_ssid[0] = '\0';
+        memset(s_sta_ip, 0, sizeof(s_sta_ip));
+
         /* Web/UI/event-reachable — soft-fail, never abort() while driving. */
-        esp_err_t err = esp_wifi_set_mode(new_mode);
+        esp_err_t err = esp_wifi_set_mode(WIFI_MODE_AP);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "AP enable: set_mode failed: %s", esp_err_to_name(err));
             s_ap_enabled = false;
@@ -1077,7 +1191,7 @@ void wifi_manager_enable_ap(bool enable)
             s_ap_enabled = true;   /* mode didn't change — keep flag truthful */
             return;
         }
-        ESP_LOGI(TAG, "AP disabled");
+        ESP_LOGI(TAG, "AP disabled — client side only");
     }
 }
 

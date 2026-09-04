@@ -1286,6 +1286,13 @@ static cJSON *channel_to_json(const channel_t *c) {
 			if (c->math_b_is_const) cJSON_AddNumberToObject(m, "b", c->math_b_const);
 			else                    cJSON_AddStringToObject(m, "b", c->math_b);
 			cJSON_AddNumberToObject(m, "op", c->math_op);
+			/* Third term only when there is one, so a two-operand
+			 * expression round-trips through older firmware unchanged. */
+			if (c->math_c_enabled) {
+				if (c->math_c_is_const) cJSON_AddNumberToObject(m, "c", c->math_c_const);
+				else                    cJSON_AddStringToObject(m, "c", c->math_c);
+				cJSON_AddNumberToObject(m, "op2", c->math_op2);
+			}
 		}
 	}
 
@@ -1381,11 +1388,18 @@ static bool channel_from_json(channel_t *c, cJSON *j) {
 		cJSON *a  = cJSON_GetObjectItemCaseSensitive(m, "a");
 		cJSON *b  = cJSON_GetObjectItemCaseSensitive(m, "b");
 		cJSON *op = cJSON_GetObjectItemCaseSensitive(m, "op");
+		/* Optional third term. Absent, or present but not a usable
+		 * operand, simply leaves the two-operand form — which is also how
+		 * a channels.json written by older firmware reads. */
+		cJSON *cc  = cJSON_GetObjectItemCaseSensitive(m, "c");
+		cJSON *op2 = cJSON_GetObjectItemCaseSensitive(m, "op2");
 		bool a_ch    = cJSON_IsString(a) && a->valuestring && a->valuestring[0];
 		bool a_const = cJSON_IsNumber(a);
 		bool b_ch    = cJSON_IsString(b) && b->valuestring && b->valuestring[0];
 		bool b_const = cJSON_IsNumber(b);
-		if ((a_ch || a_const) && (b_ch || b_const) && (a_ch || b_ch)) {
+		bool c_ch    = cJSON_IsString(cc) && cc->valuestring && cc->valuestring[0];
+		bool c_const = cJSON_IsNumber(cc);
+		if ((a_ch || a_const) && (b_ch || b_const) && (a_ch || b_ch || c_ch)) {
 			if (a_ch) safe_strcpy(c->math_a, a->valuestring, sizeof(c->math_a));
 			else      { c->math_a[0] = '\0'; c->math_a_is_const = true;
 			            c->math_a_const = (float)a->valuedouble; }
@@ -1393,6 +1407,13 @@ static bool channel_from_json(channel_t *c, cJSON *j) {
 			else      { c->math_b[0] = '\0'; c->math_b_is_const = true;
 			            c->math_b_const = (float)b->valuedouble; }
 			c->math_op = cJSON_IsNumber(op) ? (uint8_t)op->valueint : 0;
+			if (c_ch || c_const) {
+				if (c_ch) safe_strcpy(c->math_c, cc->valuestring, sizeof(c->math_c));
+				else      { c->math_c[0] = '\0'; c->math_c_is_const = true;
+				            c->math_c_const = (float)cc->valuedouble; }
+				c->math_op2 = cJSON_IsNumber(op2) ? (uint8_t)op2->valueint : 0;
+				c->math_c_enabled = true;
+			}
 			c->math_enabled = true;
 		}
 	}

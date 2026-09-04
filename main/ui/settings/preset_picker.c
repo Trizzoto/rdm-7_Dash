@@ -1,4 +1,5 @@
 #include "preset_picker.h"
+#include "esp_attr.h"
 #include "theme.h"
 #include <stdio.h>
 #include "lvgl.h"
@@ -33,8 +34,8 @@
  * compromise: covers all built-ins + ~27 custom, without bloating BSS
  * by 48 × sizeof(preconfig_item_t) ≈ 2 KB. */
 #define OBD2_PICKER_MAX 96
-static preconfig_item_t s_obd2_items[OBD2_PICKER_MAX];
-static char             s_obd2_labels[OBD2_PICKER_MAX][OBD2_LABEL_BUF_LEN];
+static EXT_RAM_BSS_ATTR preconfig_item_t s_obd2_items[OBD2_PICKER_MAX];
+static EXT_RAM_BSS_ATTR char             s_obd2_labels[OBD2_PICKER_MAX][OBD2_LABEL_BUF_LEN];
 static int              s_obd2_count = 0;
 
 /* Map an OBD2 PID definition to a (brand, version) pair for picker

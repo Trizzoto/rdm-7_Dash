@@ -1,5 +1,6 @@
 #include "web_server.h"
 #include "esp_http_server.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "system/crash_log.h"
 #include "esp_system.h"
@@ -339,9 +340,13 @@ esp_err_t web_server_start(void) {
 	web_server_uri_register_attempts = 0;
 	web_server_uri_register_failures = 0;
 
+	ESP_LOGI(TAG, "Starting web server (%u B internal DMA free, largest block %u B)",
+	         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
+	         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
+
 	httpd_config_t config = HTTPD_DEFAULT_CONFIG();
 	config.server_port = WEB_SERVER_PORT;
-	config.stack_size = 5120;
+	config.stack_size = 4096; /* IDF default; 5120 no longer fits alongside BLE */
 	/* Pin httpd to core 0. LVGL runs on core 1; if httpd also lands on
 	 * core 1 and then jpeg_enc_process() runs for 10+ seconds (happens
 	 * under load: CONTROL mode + stream + widget rebuild + layout save
@@ -351,17 +356,20 @@ esp_err_t web_server_start(void) {
 	 * and IDLE0 is less loaded than IDLE1. Observed in serial log:
 	 * back-to-back WDT hits during /api/screenshot encode stalls. */
 	config.core_id    = 0;
-	/* 160 slots: 148 actual REGISTER_URI calls today (count with
-	 * `grep -rn "REGISTER_URI\b" main/net/ | wc -l`), leaving ~12 slots
+	/* 192 slots: 153 actual REGISTER_URI calls today (count with
+	 * `grep -rn "REGISTER_URI(server" main/net/ | wc -l`), leaving ~39 slots
 	 * of headroom -- re-count before adding new endpoints and bump this
-	 * cap if headroom is running low. ESP-IDF silently drops handlers registered
+	 * cap if headroom is running low. Was 160 against a count of 148, and
+	 * the CAN gateway's three endpoints took that to 7 slots spare, which is
+	 * one feature away from the silent failure described below.
+	 * ESP-IDF silently drops handlers registered
 	 * past max_uri_handlers -- when we ran with 80, the last ~6 POST/OPTIONS
 	 * handlers fell through to the wildcard CORS preflight and returned 405
 	 * (e.g. `/api/signal/simulate` POST). Each slot is ~32 bytes of static
-	 * RAM, so 160 costs ~5 KB. The REGISTER_URI macro tallies failures and
+	 * RAM, so 192 costs ~6 KB. The REGISTER_URI macro tallies failures and
 	 * logs at the end of web_server_start; a non-zero tally in the boot log
 	 * means we hit the cap and need to bump it again. */
-	config.max_uri_handlers = 160;
+	config.max_uri_handlers = 192;
 	config.max_resp_headers = 8;
 	config.lru_purge_enable = true;
 	config.recv_wait_timeout = 30; /* 30s for image uploads */
@@ -404,6 +412,8 @@ esp_err_t web_server_start(void) {
 	web_server_signals_register(server);
 	web_server_obd2_register(server);
 	web_server_channels_register(server);
+	web_server_can_register(server);
+	web_server_keypad_register(server);
 	web_server_test_register(server);
 
 	/* Final registration tally. If any registration failed (almost always

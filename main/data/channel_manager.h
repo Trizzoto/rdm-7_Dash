@@ -109,21 +109,34 @@ struct channel {
 	uint32_t color_high_warn;
 
 	/* Math/derived source (boost = MAP − BARO, oil − 50, MAP × 1.6 …).
-	 * When enabled, the channel_math evaluator computes  <a> <op> <b>  and
-	 * pushes the result into this channel's own synthetic signal (MATH_<ID>,
-	 * registered at load — see channel_math.h). Each operand is either a
-	 * CHANNEL id (not a signal name, so re-decoding an operand doesn't break
-	 * the math) or a numeric CONSTANT. Unit handling lives in the evaluator:
-	 * channel operands commensurate to a common unit and the result converts
-	 * to this channel's units_native when the conversion is known. */
+	 * When enabled, the channel_math evaluator computes
+	 *     (<a> <op> <b>) <op2> <c>
+	 * and pushes the result into this channel's own synthetic signal
+	 * (MATH_<ID>, registered at load — see channel_math.h). The third term
+	 * is OPTIONAL (math_c_enabled); with it off this is the original
+	 * two-operand form. There is no precedence — it evaluates strictly left
+	 * to right, which is how the form on screen reads. The third term is here
+	 * because the fuel figure people actually want needs it: fuel flow ÷
+	 * speed is L/km, and L/100km is that × 100.
+	 *
+	 * Each operand is either a CHANNEL id (not a signal name, so re-decoding
+	 * an operand doesn't break the math) or a numeric CONSTANT. Unit handling
+	 * lives in the evaluator: channel operands commensurate to a common unit
+	 * and the result converts to this channel's units_native while the running
+	 * dimension is still one a unit can name. */
 	bool     math_enabled;
 	char     math_a[32];             /* operand channel id ("" when const) */
 	char     math_b[32];             /* operand channel id ("" when const) */
+	char     math_c[32];             /* operand channel id ("" when const) */
 	bool     math_a_is_const;
 	bool     math_b_is_const;
+	bool     math_c_is_const;
 	float    math_a_const;
 	float    math_b_const;
+	float    math_c_const;
 	uint8_t  math_op;                /* channel_math_op_t: 0 + / 1 - / 2 * / 3 ÷ */
+	uint8_t  math_op2;               /* same enum, applied to the third term */
+	bool     math_c_enabled;         /* false = the original two-operand form */
 
 	/* Live state */
 	float    current_value;

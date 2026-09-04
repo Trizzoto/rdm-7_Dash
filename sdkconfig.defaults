@@ -124,3 +124,165 @@ CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 #
 # If a second raw-flash writer is ever added, reconsider this.
 CONFIG_SPI_FLASH_DANGEROUS_WRITE_ALLOWED=y
+
+# ── Bluetooth Low Energy ────────────────────────────────────────────────────
+# Enabled 2026-09 so the phone app can reach the dash without taking over the
+# phone's network. BLE is a transport for the existing STX/CRC serial protocol
+# (main/net/ble_protocol.c), not a second API.
+#
+# Peripheral only, one connection: the dash is never a central and never talks
+# to two phones at once, and switching the unused roles off is most of what
+# keeps NimBLE inside the ~400 KB of headroom left in the 3.5 MB OTA slot.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
+CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+# A layout is tens of kilobytes. At the 23-byte default MTU that is thousands
+# of notifications; asking for the maximum lets a phone that agrees move it in
+# one second rather than fifteen.
+CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=517
+CONFIG_BT_NIMBLE_GATT_MAX_PROCS=8
+
+# ── Internal-SRAM budget for running BLE and WiFi together ──────────────────
+# The ESP32-S3 has 512 KB of internal SRAM no matter how much PSRAM is fitted,
+# and it is the only memory the BT controller, the WiFi driver and DMA can use.
+# Adding BLE cost ~35 KB of it and left WiFi unable to start — esp_wifi_init()
+# returning ESP_ERR_NO_MEM inside an ESP_ERROR_CHECK, i.e. a boot loop. These
+# settings are what make both radios fit. Measured on an 8 MB unit; internal
+# SRAM is identical across PSRAM variants, so they carry over unchanged.
+#
+# Caches come out of that same 512 KB, and they were halved (I 32->16 KB,
+# D 64->16 KB) to make BLE fit. That was a mistake worth recording: LVGL
+# renders into PSRAM framebuffers THROUGH the data cache, and all code runs
+# from PSRAM (XIP), so a 16 KB cache meant slow rendering and far more PSRAM
+# bus traffic from the radios — which is what the panel DMA competes with. The
+# full caches are back; the RAM came from SPIRAM_MALLOC_ALWAYSINTERNAL=0 and
+# the external .bss segment instead.
+CONFIG_ESP32S3_DATA_CACHE_64KB=y
+CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
+
+# Keep internal SRAM for the things that can only live there. Generic malloc()
+# goes to PSRAM FIRST, at every size: ALWAYSINTERNAL=0. The old value of 1024
+# sent every allocation of 1 KB or less into internal SRAM ahead of the radios,
+# and that is almost every allocation the firmware makes — LVGL uses malloc for
+# its whole widget graph (main/lv_conf.h), httpd mallocs 155 URI entries, cJSON
+# is nothing but small nodes. With BLE resident that drained internal SRAM to
+# zero by the time SNTP started and lwIP's per-thread semaphore could not be
+# created (NULL deref in sys_arch_sem_wait, every boot). Things that must be
+# internal — FreeRTOS objects, WiFi/BT buffers, DMA — ask for it explicitly
+# through heap_caps_malloc and are unaffected. RESERVE_INTERNAL holds this
+# much back for them regardless.
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=131072
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=0
+
+# NimBLE's host pools go to PSRAM; only the controller truly needs internal.
+CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
+# The dash is a peripheral holding one phone. It never scans and never acts as
+# a central, so the controller does not need state for six simultaneous
+# activities or a 100-entry duplicate-advertisement cache.
+CONFIG_BT_CTRL_BLE_MAX_ACT=2
+CONFIG_BT_CTRL_SCAN_DUPL_CACHE_SIZE=10
+CONFIG_BT_NIMBLE_TRANSPORT_ACL_FROM_LL_COUNT=12
+CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=3072
+
+# WiFi buffers: DO NOT trim the association path to buy internal RAM.
+#
+# Measured the hard way. Cutting MGMT_SBUF_NUM to 16 and STATIC_TX_BUFFER_NUM
+# to 4 made the dash unable to join a strong AP with correct credentials — the
+# driver logged "m f auth" and the link died with reason 2 (AUTH_EXPIRE) then
+# reason 39 (TIMEOUT), four or five times a minute. Auth and assoc are
+# management frames on a timed handshake; starve their buffers and association
+# fails while everything else looks healthy. The values that work are the ones
+# set earlier in this file (STATIC_RX 6, STATIC_TX 8, MGMT_SBUF 32) — this
+# block deliberately no longer overrides them.
+#
+# Throughput-only buffers are still fair game, and CACHE_TX_BUFFER_NUM has a
+# Kconfig range of 16-128: anything below 16 is silently replaced by the
+# default of 32, which is how an earlier "saving" here turned out to be
+# imaginary. Always confirm against build/config/sdkconfig.h, never sdkconfig.
+CONFIG_ESP_WIFI_CACHE_TX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_RX_BA_WIN=3
+CONFIG_LWIP_TCPIP_RECVMBOX_SIZE=16
+# Leave these ON. Moving WiFi's hot path out of IRAM buys ~15 KB but starves
+# the BT controller's ISR during a scan, which trips the interrupt watchdog
+# and panics the dash. Tried, measured, reverted.
+CONFIG_ESP_WIFI_IRAM_OPT=y
+CONFIG_ESP_WIFI_RX_IRAM_OPT=y
+
+# ── WiFi association path — authoritative, keep last ────────────────────────
+# These are repeated at the end of the file on purpose: this project's build
+# applies sdkconfig.defaults over sdkconfig, and later entries win, so an
+# earlier block silently overrode these and cost hours of misdiagnosis. If a
+# value here disagrees with build/config/sdkconfig.h, trust the header.
+#
+# Starving these breaks joining a known-good AP: the driver logs "m f auth"
+# and the link fails with reason 2 (AUTH_EXPIRE) then reason 39 (TIMEOUT).
+# TX buffer TYPE is deliberately left STATIC — see the measured rationale
+# further up this file (16 buffers pinned ~25 KB and starved OTA across four
+# dashes). Switching to dynamic looks tempting because those buffers could
+# then live in PSRAM, but dynamic TX from PSRAM needs internal CACHE TX
+# buffers to DMA from, and CACHE_TX_BUFFER_NUM has a Kconfig minimum of 16 at
+# ~1.6 KB each — trading ~13 KB of pinned internal for ~26 KB. Not a win.
+#
+# With Bluetooth resident the driver does log "m f null" under load: it is out
+# of TX buffers for the null-data frames it must send each time BT takes the
+# antenna. That is a throughput symptom, not a fault — the link stays up. If
+# it ever needs fixing, measure the cache-TX cost first.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6
+CONFIG_ESP_WIFI_MGMT_SBUF_NUM=32
+
+# Display: bounce-buffer mode. This is what stops the screen tearing/shifting
+# whenever something else gets busy — WiFi traffic, a layout change, anything
+# that hits the PSRAM bus.
+#
+# Why it happens without this: the RGB panel's DMA reads pixels straight out of
+# the PSRAM framebuffer, in real time, and that same bus carries all code
+# execution (XIP), the WiFi/lwIP buffers and LVGL's own rendering. A burst of
+# traffic starves the DMA for a few hundred microseconds, the panel is clocked
+# dummy bytes, and the image shifts until LCD_RGB_RESTART_IN_VSYNC snaps it
+# back at the next frame. Bounce buffers (esp_lcd docs, "Bounce Buffer with
+# Single PSRAM Frame Buffer") put two small internal-SRAM buffers between the
+# two: DMA reads those, and an interrupt keeps them topped up from PSRAM, so a
+# bus stall is absorbed instead of reaching the panel.
+#
+# Two things this mode needs, both non-obvious:
+#   * The refill interrupt must stay on CORE 0. On core 1 it competes with
+#     LVGL for the same core and full-screen renders went 82 ms -> 165 ms.
+#     (main.c keeps the core-1 variant behind RDM_PANEL_ISR_ON_CORE1 = 0.)
+#   * The full data cache. Measured with the caches halved it looked like
+#     bounce mode itself was the problem; with D-cache back at 64 KB the same
+#     config costs nothing measurable (81 ms first frame, 47 fps, vs 82/47
+#     without bounce).
+#
+# ISR_IRAM_SAFE on both the LCD and GDMA interrupts, plus XIP
+# (SPIRAM_FETCH_INSTRUCTIONS + SPIRAM_RODATA above), are what keep the refill
+# running while the cache is disabled for a flash write — without them an NVS
+# or OTA write stops the panel.
+#
+# Cost: ~58 KB of internal SRAM (two 20-line buffers + the IRAM-safe code),
+# leaving ~19.6 KB free at web-server start. That is the tightest margin of the
+# configs tried; if internal SRAM gets scarce again, shrink
+# bounce_buffer_size_px in main.c (20 lines today, Espressif's example uses 10)
+# before giving up anything else — but re-check the glitch on a real panel
+# afterwards, because that buffer IS the headroom this fix depends on.
+# CONFIG_EXAMPLE_DOUBLE_FB is not set
+CONFIG_EXAMPLE_USE_BOUNCE_BUFFER=y
+# CONFIG_EXAMPLE_AVOID_TEAR_EFFECT_WITH_SEM is not set
+CONFIG_LCD_RGB_ISR_IRAM_SAFE=y
+CONFIG_GDMA_ISR_IRAM_SAFE=y
+CONFIG_LCD_RGB_RESTART_IN_VSYNC=y
+
+# LVGL keeps its 120-line PSRAM draw bands and the cross-core flush worker.
+# Direct mode into the panel framebuffers was tried and rejected: the RGB
+# driver only flips buffers at the end of a DMA frame while LVGL starts the
+# next frame immediately, so every scrolled frame tore.
+CONFIG_LV_DISP_DEF_REFR_PERIOD=16
+
+# Large UI-only static arrays live in PSRAM (EXT_RAM_BSS_ATTR). Enabling the
+# segment also lets IDF's own components use it: .dram0.bss fell 118 -> 28 KB,
+# which is most of what pays for the bounce buffers above.
+CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y

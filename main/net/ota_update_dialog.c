@@ -2,6 +2,7 @@
 #include "theme.h"
 #include "storage/config_store.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <string.h>
@@ -27,6 +28,7 @@ static char s_offered_version[32] = {0};
 
 // Forward declarations
 static void install_btn_event_cb(lv_event_t *e);
+static void reboot_and_update_btn_cb(lv_event_t *e);
 static void cancel_btn_event_cb(lv_event_t *e);
 static void skip_btn_event_cb(lv_event_t *e);
 static void progress_timer_cb(lv_timer_t *timer);
@@ -34,8 +36,44 @@ void show_ota_check_failed_dialog(void);
 
 // Install button event handler
 static void install_btn_event_cb(lv_event_t *e) {
+    (void)e;
+    ota_update_dialog_begin_install();
+}
+
+/* "Reboot & Update" — offered only after an install died at task creation.
+ *
+ * The 6 KB download task needs one CONTIGUOUS internal-RAM block, and the
+ * internal heap fragments as the dash runs; the same firmware that fails now
+ * usually installs fine on a fresh boot. Writing the version down and
+ * restarting turns "reboot and try again", which asks the user to remember
+ * to come back, into one tap: the boot OTA check finds the request and
+ * starts the install itself, at the point in the dash's life when internal
+ * RAM is least fragmented. */
+static void reboot_and_update_btn_cb(lv_event_t *e) {
+    (void)e;
+    if (s_offered_version[0] != '\0') {
+        esp_err_t err = config_store_save_ota_resume_version(s_offered_version);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Could not record the resume request (%s) — not "
+                          "rebooting, that would just lose the dialog",
+                     esp_err_to_name(err));
+            if (status_label && lv_obj_is_valid(status_label))
+                lv_label_set_text(status_label,
+                    "Could not save the update request.\n"
+                    "Update from RDM Studio instead.");
+            return;
+        }
+    }
+    ESP_LOGI(TAG, "Rebooting to install %s with a fresh heap", s_offered_version);
+    esp_restart();
+}
+
+/* Run the install. Split out of the button handler so the boot-time resume
+ * path can do exactly what pressing Install does, rather than a near-copy
+ * that drifts. */
+void ota_update_dialog_begin_install(void) {
     if (update_in_progress) return;
-    
+
     ESP_LOGI(TAG, "Starting OTA update...");
     update_in_progress = true;
     
@@ -85,15 +123,29 @@ static void install_btn_event_cb(lv_event_t *e) {
             lv_obj_add_flag(progress_label, LV_OBJ_FLAG_HIDDEN);
         }
         if (status_label && lv_obj_is_valid(status_label)) {
+            /* Name the cause. "Not enough memory" reads like the dash is out
+             * of storage and the update is too big for it, which is what it
+             * was taken to mean in the field; the flash slot is fine, it is
+             * RAM, and only because it has fragmented while running. */
             lv_label_set_text(status_label,
-                              "Not enough memory to update.\nReboot and try again.");
+                "The dash has been running too long to start the download.\n"
+                "Reboot & Update restarts and installs straight away.");
             lv_obj_set_style_text_color(status_label, lv_color_hex(0xFF6060),
                                         LV_PART_MAIN | LV_STATE_DEFAULT);
         }
         /* Restore the dismiss/retry buttons hidden above — nothing is
-         * flashing, so leaving them hidden would strand the dialog. */
-        if (install_btn && lv_obj_is_valid(install_btn))
+         * flashing, so leaving them hidden would strand the dialog. The
+         * install button becomes the reboot-and-install action: pressing
+         * Install again from here would fail for exactly the same reason. */
+        if (install_btn && lv_obj_is_valid(install_btn)) {
             lv_obj_clear_flag(install_btn, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_event_cb(install_btn, install_btn_event_cb);
+            lv_obj_add_event_cb(install_btn, reboot_and_update_btn_cb,
+                                LV_EVENT_CLICKED, NULL);
+            lv_obj_t *lbl = lv_obj_get_child(install_btn, 0);
+            if (lbl && lv_obj_check_type(lbl, &lv_label_class))
+                lv_label_set_text(lbl, "Reboot & Update");
+        }
         if (cancel_btn && lv_obj_is_valid(cancel_btn))
             lv_obj_clear_flag(cancel_btn, LV_OBJ_FLAG_HIDDEN);
         if (skip_btn && lv_obj_is_valid(skip_btn))

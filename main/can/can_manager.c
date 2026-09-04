@@ -1213,10 +1213,17 @@ void can_resume(void) {
 		build_twai_filter_from_signals(&f_config);
 	}
 
-	/* Load saved bitrate */
+	/* Load saved bitrate. g_bitrate_index moves WITH g_t_config: this is the
+	 * one path that installs a rate without going through
+	 * can_change_bitrate(), and can_change_bitrate() deliberately defers to
+	 * here while suspended. Leaving the index behind meant
+	 * can_get_bitrate_index() reported the rate from BEFORE the scan to
+	 * everything that asks what the bus is actually running at. */
 	uint8_t saved_bitrate = 2;
 	config_store_load_bitrate(&saved_bitrate);
+	if (saved_bitrate > 3) saved_bitrate = 2;
 	g_t_config = _bitrate_to_timing(saved_bitrate);
+	g_bitrate_index = saved_bitrate;
 
 	/* Defensive teardown before the FIRST install attempt. Both calls
 	 * are harmless if nothing's installed/running — the driver returns

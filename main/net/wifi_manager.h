@@ -39,7 +39,12 @@ void wifi_manager_disconnect(void);
 void wifi_manager_forget(void);        /* Disconnect + clear saved creds */
 void wifi_manager_auto_connect(void);  /* Connect to saved creds if available */
 
-/* AP operations */
+/* AP operations.
+ *
+ * The AP and the STA are MUTUALLY EXCLUSIVE — enable_ap(true) takes the
+ * client side down, enable_ap(false) brings it back. One radio, one job, and
+ * one answer when the screen asks what is running. The chip can do both at
+ * once and the dash used to, invisibly; see the note in ui_wifi.c. */
 void wifi_manager_enable_ap(bool enable);
 bool wifi_manager_is_ap_enabled(void);
 void wifi_manager_set_ap_password(const char *password);

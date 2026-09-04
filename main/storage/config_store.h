@@ -64,10 +64,17 @@ typedef struct {
 esp_err_t config_store_save_ap_config(const rdm_ap_config_t *cfg);
 esp_err_t config_store_load_ap_config(rdm_ap_config_t *cfg);
 
-/* ── WiFi boot settings ───────────────────────────────────────────────── */
+/* ── WiFi boot settings ─────────────────────────────────────────────────
+ *
+ * The two flags are MUTUALLY EXCLUSIVE, and ap_enabled wins: the dash is a
+ * client, or a hotspot, or off. It is physically capable of both at once
+ * (one radio, ESP32 APSTA) and used to come up that way whenever the hotspot
+ * was on and a network was saved — but nothing on the screen could say so,
+ * which is how a dash sitting on the house network came to report "Hotspot".
+ * Exclusive is the simpler promise and the one the modes are named for. */
 typedef struct {
 	bool wifi_on_boot;      /* Start WiFi (STA) on boot (default: true) */
-	bool ap_enabled;        /* Also enable AP on boot (default: false) */
+	bool ap_enabled;        /* Hotspot instead (default: false); wins if set */
 } wifi_boot_config_t;
 
 esp_err_t config_store_save_wifi_boot(const wifi_boot_config_t *cfg);
@@ -256,6 +263,21 @@ esp_err_t config_store_load_odometer_km(float *out);
  * semver strings like "1.2.3" or "1.2.3-rc1" — 32 bytes is plenty. */
 esp_err_t config_store_save_ota_skip_version(const char *version);
 esp_err_t config_store_load_ota_skip_version(char *out, size_t out_len);
+
+/* ── OTA resume-after-reboot ───────────────────────────────────────────────
+ * An install can fail before it opens a socket, because the download task's
+ * 6 KB stack must be ONE contiguous internal-RAM allocation and the internal
+ * heap fragments as the dash runs. A reboot is the actual cure — internal RAM
+ * is at its least fragmented right after WiFi comes up — but "reboot and try
+ * again" asks the user to remember to come back and find the update screen.
+ *
+ * Storing the version here instead makes it one tap: the boot OTA check sees
+ * the request, confirms the offered version still matches, and starts the
+ * install itself. Cleared as soon as it is read, whatever the outcome, so a
+ * dash can never sit in a reboot-and-install loop. */
+esp_err_t config_store_save_ota_resume_version(const char *version);
+esp_err_t config_store_load_ota_resume_version(char *out, size_t out_len);
+esp_err_t config_store_clear_ota_resume_version(void);
 
 /* ── ECU preset-picker mode (Auto vs Manual filter) ────────────────────── */
 

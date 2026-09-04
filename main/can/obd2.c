@@ -23,6 +23,7 @@
  * LVGL). No locks needed inside; can_transmit_frame is thread-safe.
  */
 #include "obd2.h"
+#include "esp_attr.h"
 
 #include "can_manager.h"
 #include "signal.h"
@@ -89,7 +90,7 @@ typedef struct {
     bool     was_alive;        /* previous _refresh_periods verdict (flap detect) */
 } obd2_poll_state_t;
 
-static obd2_poll_state_t s_poll[OBD2_MAX_ENABLED];
+static EXT_RAM_BSS_ATTR obd2_poll_state_t s_poll[OBD2_MAX_ENABLED];
 static uint8_t           s_poll_count = 0;
 static lv_timer_t       *s_poll_timer = NULL;
 static bool              s_running    = false;
@@ -159,7 +160,7 @@ typedef struct {
     char            category[16];
 } obd2_custom_entry_t;
 
-static obd2_custom_entry_t s_custom[OBD2_MAX_CUSTOM_PIDS];
+static EXT_RAM_BSS_ATTR obd2_custom_entry_t s_custom[OBD2_MAX_CUSTOM_PIDS];
 static uint8_t             s_custom_count = 0;
 
 /* ── One-shot test state ───────────────────────────────────────────────

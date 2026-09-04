@@ -1,4 +1,5 @@
 #include "signal_sim.h"
+#include "esp_attr.h"
 #include "signal.h"
 #include "widget_types.h"
 #include "widget_registry.h"
@@ -38,7 +39,7 @@ typedef struct {
 
 static bool         s_sim_active   = false;
 static lv_timer_t  *s_sim_timer    = NULL;
-static sim_bounds_t s_bounds[SIM_MAX_SIGNALS];
+static EXT_RAM_BSS_ATTR sim_bounds_t s_bounds[SIM_MAX_SIGNALS];
 /* Which signals the active layout actually displays — only these get driven.
  * Lets the sim animate placeholder (can_id==0) signals on a fresh/bench device
  * while NOT touching internal signals (gear calc, fuel sender, DTC count, …)
