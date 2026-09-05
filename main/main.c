@@ -3,7 +3,7 @@
 #include "device_settings.h"
 #include "display_capture.h"
 #include "driver/gpio.h"
-#include "driver/i2c.h"
+#include "driver/i2c_master.h"
 #include "driver/ledc.h"
 #include "driver/twai.h"
 #include "esp32s3/rom/cache.h"
@@ -77,10 +77,17 @@ SemaphoreHandle_t lvgl_mux = NULL;
 #define I2C_MASTER_NUM                                                         \
   0 /*!< I2C master i2c port number, the number of i2c peripheral interfaces   \
            available will depend on the chip */
-#define I2C_MASTER_FREQ_HZ 400000   /*!< I2C master clock frequency */
-#define I2C_MASTER_TX_BUF_DISABLE 0 /*!< I2C master doesn't need buffer */
-#define I2C_MASTER_RX_BUF_DISABLE 0 /*!< I2C master doesn't need buffer */
+#define I2C_MASTER_FREQ_HZ 400000 /*!< I2C master clock frequency */
 #define I2C_MASTER_TIMEOUT_MS 1000
+
+/* The bus, and the two registers of the CH422G IO expander that hang off it:
+ * 0x24 is its mode register, 0x38 its output register (which carries the SD
+ * card CS line and the GT911's reset). The touch controller itself is not
+ * here — it is reached through esp_lcd_panel_io, which is handed the bus
+ * handle below. */
+static i2c_master_bus_handle_t s_i2c_bus = NULL;
+static i2c_master_dev_handle_t s_ch422g_mode = NULL; /* 0x24 */
+static i2c_master_dev_handle_t s_ch422g_out = NULL;  /* 0x38 */
 
 #define GPIO_INPUT_IO_4 4
 #define GPIO_INPUT_PIN_SEL (1ULL << GPIO_INPUT_IO_4)
@@ -167,23 +174,70 @@ void my_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
 #define LEDC_FREQUENCY 5000 // Frequency in Hz (matches device_settings.c)
 #define LEDC_DUTY (8191)
 
-static esp_err_t i2c_master_init(void) {
-  int i2c_master_port = I2C_MASTER_NUM;
+/** One byte to a CH422G register. Errors are logged, not fatal: the caller is
+ *  boot-time setup that has its own retry and probe logic. */
+static esp_err_t i2c_write_byte(i2c_master_dev_handle_t dev, uint8_t value)
+{
+  if (!dev) return ESP_ERR_INVALID_STATE;
+  esp_err_t err = i2c_master_transmit(dev, &value, 1, I2C_MASTER_TIMEOUT_MS);
+  if (err != ESP_OK)
+    ESP_LOGW(TAG, "I2C write 0x%02X failed: %s", value, esp_err_to_name(err));
+  return err;
+}
 
-  i2c_config_t conf = {
-      .mode = I2C_MODE_MASTER,
+/* Bring up the I2C bus on the CURRENT driver (driver/i2c_master.h), not the
+ * legacy one (driver/i2c.h).
+ *
+ * This is not housekeeping. The legacy driver's interrupt handler hangs the
+ * dash. In master mode i2c_isr_handler_default() only clears the interrupt
+ * along the paths where the transfer is still running: it reads the mask,
+ * and if p_i2c->status is neither I2C_STATUS_WRITE nor I2C_STATUS_READ, no
+ * event matches, and it takes a bare `return` that leaves the interrupt
+ * asserted. The line stays high, the handler is re-entered immediately, and
+ * core 0 never makes progress again.
+ *
+ * Getting into that state is easy, because the driver leaves the I2C
+ * interrupts ENABLED after a transaction ends: i2c_master_cmd_begin() sets
+ * status to I2C_STATUS_DONE and returns, and on a NACK or a timeout
+ * i2c_master_cmd_begin_static() posts its DONE event and returns, in neither
+ * case disabling the interrupt. Any further edge from the peripheral then
+ * arrives with a status the handler has no case for. This board NACKs
+ * deliberately — the GT911 address probe below tries 0x5D and 0x14 knowing
+ * one of them will not answer.
+ *
+ * Symptom, captured twice on the bench: "Interrupt wdt timeout on CPU0" with
+ * core 0 in the I2C handler and core 1 idle, seconds after a layout load over
+ * Bluetooth or a WiFi scan — anything that loads the CPU enough to make an
+ * I2C transaction time out. The nested exception PCs in the dump sit at the
+ * first instruction of the handler and at its last, which is re-entry, not a
+ * stuck loop. On screen it showed as the display freezing into horizontal
+ * bands, because nothing was left to refill the panel's bounce buffer while
+ * its DMA kept scanning, and then a reboot.
+ *
+ * The current driver does not share that handler design. Nothing else about
+ * the bus changes: same pins, same 400 kHz, same devices. */
+static esp_err_t i2c_master_init(void) {
+  i2c_master_bus_config_t bus_cfg = {
+      .i2c_port = I2C_MASTER_NUM,
       .sda_io_num = I2C_MASTER_SDA_IO,
       .scl_io_num = I2C_MASTER_SCL_IO,
-      .sda_pullup_en = GPIO_PULLUP_ENABLE,
-      .scl_pullup_en = GPIO_PULLUP_ENABLE,
-      .master.clk_speed = I2C_MASTER_FREQ_HZ,
+      .clk_source = I2C_CLK_SRC_DEFAULT,
+      .glitch_ignore_cnt = 7,
+      .flags.enable_internal_pullup = true,
   };
+  esp_err_t err = i2c_new_master_bus(&bus_cfg, &s_i2c_bus);
+  if (err != ESP_OK) return err;
 
-  i2c_param_config(i2c_master_port, &conf);
+  i2c_device_config_t dev_cfg = {
+      .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+      .scl_speed_hz = I2C_MASTER_FREQ_HZ,
+  };
+  dev_cfg.device_address = 0x24;
+  err = i2c_master_bus_add_device(s_i2c_bus, &dev_cfg, &s_ch422g_mode);
+  if (err != ESP_OK) return err;
 
-  return i2c_driver_install(i2c_master_port, conf.mode,
-                            I2C_MASTER_RX_BUF_DISABLE,
-                            I2C_MASTER_TX_BUF_DISABLE, 0);
+  dev_cfg.device_address = 0x38;
+  return i2c_master_bus_add_device(s_i2c_bus, &dev_cfg, &s_ch422g_out);
 }
 
 /* ── Panel starvation counters ─────────────────────────────────────────
@@ -1091,14 +1145,10 @@ void app_main(void) {
   // Set initial configuration for I2C device at 0x24 (CH422G mode register)
   // 0x24 = mode config, 0x38 = output register (pins 0-7)
   // USB_SEL (EXIO5) is set via 0x38 writes below (bit 5 in 0x2C = HIGH)
-  uint8_t write_buf = 0x01;
-  i2c_master_write_to_device(I2C_MASTER_NUM, 0x24, &write_buf, 1,
-                             I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
+  i2c_write_byte(s_ch422g_mode, 0x01);
 
   // Additional configuration for SD card CS pin at address 0x38
-  write_buf = 0x0A;
-  i2c_master_write_to_device(I2C_MASTER_NUM, 0x38, &write_buf, 1,
-                             I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
+  i2c_write_byte(s_ch422g_out, 0x0A);
   vTaskDelay(pdMS_TO_TICKS(10));
 
   /* GPIO4 carries the GT911 INT line. We drive it LOW during the RST
@@ -1137,16 +1187,11 @@ void app_main(void) {
   static const int GT911_POST_RST_DELAY_MS = 80; /* datasheet min 55 ms */
 #define GT911_RESET_SEQ()                                                      \
   do {                                                                         \
-    uint8_t _b;                                                                \
-    _b = 0x2C; /* assert RST low via CH422G */                                 \
-    i2c_master_write_to_device(I2C_MASTER_NUM, 0x38, &_b, 1,                   \
-                               I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);    \
+    i2c_write_byte(s_ch422g_out, 0x2C); /* assert RST low via CH422G */        \
     vTaskDelay(pdMS_TO_TICKS(10));                                             \
     gpio_set_level(GPIO_INPUT_IO_4, 0); /* INT low → addr 0x5D */            \
     vTaskDelay(pdMS_TO_TICKS(10));                                             \
-    _b = 0x2E; /* release RST */                                               \
-    i2c_master_write_to_device(I2C_MASTER_NUM, 0x38, &_b, 1,                   \
-                               I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);    \
+    i2c_write_byte(s_ch422g_out, 0x2E); /* release RST */                      \
     vTaskDelay(pdMS_TO_TICKS(GT911_POST_RST_DELAY_MS));                        \
   } while (0)
 
@@ -1159,11 +1204,16 @@ void app_main(void) {
 
   esp_lcd_panel_io_i2c_config_t tp_io_config =
       ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();
+  /* The GT911 config macro predates the current I2C driver and leaves
+   * scl_speed_hz at 0, which the legacy bus ignored (the speed belonged to the
+   * port) but the new one rejects outright: "invalid scl frequency", the touch
+   * IO fails to open, and ESP_ERROR_CHECK turns that into a boot loop. */
+  tp_io_config.scl_speed_hz = I2C_MASTER_FREQ_HZ;
 
   ESP_LOGI(TAG, "Initialize touch IO (I2C)");
   /* Touch IO handle */
   ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c(
-      (esp_lcd_i2c_bus_handle_t)I2C_MASTER_NUM, &tp_io_config, &tp_io_handle));
+      s_i2c_bus, &tp_io_config, &tp_io_handle));
   esp_lcd_touch_config_t tp_cfg = {
       .x_max = EXAMPLE_LCD_V_RES,
       .y_max = EXAMPLE_LCD_H_RES,
@@ -1184,11 +1234,8 @@ void app_main(void) {
   ESP_LOGI(TAG, "Initialize touch controller GT911");
   esp_err_t touch_ret = ESP_FAIL;
   for (int attempt = 1; attempt <= 3; ++attempt) {
-    uint8_t probe_byte = 0;
-    esp_err_t ack_5d = i2c_master_read_from_device(
-        I2C_MASTER_NUM, 0x5D, &probe_byte, 1, 50 / portTICK_PERIOD_MS);
-    esp_err_t ack_14 = i2c_master_read_from_device(
-        I2C_MASTER_NUM, 0x14, &probe_byte, 1, 50 / portTICK_PERIOD_MS);
+    esp_err_t ack_5d = i2c_master_probe(s_i2c_bus, 0x5D, 50);
+    esp_err_t ack_14 = i2c_master_probe(s_i2c_bus, 0x14, 50);
     /* Kept at DEBUG level so production logs stay clean; flip to INFO
      * (or raise the global log level) if a field unit fails this step
      * and we need the address-latch evidence again. */
