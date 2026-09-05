@@ -14,6 +14,7 @@
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
+#include "freertos/event_groups.h"
 #include "storage/config_store.h"
 #include "lvgl.h"
 #include <stdatomic.h>
@@ -71,6 +72,13 @@ static int              s_auth_failure_count = 0;   /* counts AUTH_EXPIRE / AUTH
 static bool             s_should_reconnect   = false;
 static bool             s_user_disconnect    = false;
 static TimerHandle_t    s_reconnect_timer    = NULL;
+
+/* Set from _wifi_event_handler when the driver's STOP events have been
+ * dispatched; wifi_manager_stop() waits on these before esp_wifi_deinit().
+ * See the comment there for the crash this prevents. */
+#define WIFI_STOPPED_STA_BIT BIT0
+#define WIFI_STOPPED_AP_BIT  BIT1
+static EventGroupHandle_t s_stop_events = NULL;
 
 static esp_netif_t     *s_sta_netif     = NULL;
 static esp_netif_t     *s_ap_netif      = NULL;
@@ -412,6 +420,46 @@ static void _ap_enable_captive_dns(void)
     esp_netif_dhcps_start(s_ap_netif);
 }
 
+/* Clear the air for a WiFi association, and give it back afterwards.
+ *
+ * Two things happen together here because they are the same decision.
+ *
+ * Advertising is held: association is a timed handshake and the two radios
+ * share one antenna. Measured on this board, with BLE advertising the dash
+ * dropped its link 4-5 times a minute against a strong AP with correct
+ * credentials, and the same build with Bluetooth compiled out held it with
+ * zero disconnects. A connected central is never disturbed.
+ *
+ * The coexistence preference moves with it. It used to be set to PREFER_WIFI
+ * once, in wifi_manager_start(), and left there for as long as the radio was
+ * up — which is every moment the dash is on a network. ble_protocol.h already
+ * records that the preference did not fix the handshake on its own (the
+ * advertising hold did), so all that permanent setting bought was a Bluetooth
+ * controller denied radio slots indefinitely.
+ *
+ * It cost a hard crash. With WiFi connected, connecting a phone over BLE and
+ * loading a layout wedged the controller's own interrupt handler: an
+ * "Interrupt wdt timeout on CPU0" panic with core 0 stuck in
+ * r_rwbtdm_isr_wrapper for the full 800 ms the interrupt watchdog allows,
+ * while core 0's other work and core 1 sat idle. On screen it showed as the
+ * display freezing into horizontal bands — nothing was left to refill the
+ * panel's bounce buffer while the DMA kept scanning — and then a reboot.
+ *
+ * So PREFER_WIFI now lasts only the couple of seconds the handshake takes,
+ * and the rest of the time coexistence runs BALANCE, which is what a link
+ * carrying both a web UI and a phone app wants. */
+static void _yield_radio_to_wifi(bool yield)
+{
+    ble_protocol_hold_advertising(yield);
+
+#if CONFIG_BT_ENABLED
+    esp_coex_prefer_t pref = yield ? ESP_COEX_PREFER_WIFI : ESP_COEX_PREFER_BALANCE;
+    esp_err_t err = esp_coex_preference_set(pref);
+    if (err != ESP_OK)
+        ESP_LOGW(TAG, "coex preference not applied: %s", esp_err_to_name(err));
+#endif
+}
+
 static void _wifi_event_handler(void *arg, esp_event_base_t event_base,
                                 int32_t event_id, void *event_data)
 {
@@ -421,9 +469,17 @@ static void _wifi_event_handler(void *arg, esp_event_base_t event_base,
             ESP_LOGI(TAG, "STA started");
             break;
 
+        case WIFI_EVENT_STA_STOP:
+            /* Our handler was registered after the default netif glue, so by
+             * the time this runs, esp_netif has already taken the STA
+             * interface down for both the DISCONNECTED and STOP events. That
+             * is what wifi_manager_stop() is waiting to hear. */
+            if (s_stop_events) xEventGroupSetBits(s_stop_events, WIFI_STOPPED_STA_BIT);
+            break;
+
         case WIFI_EVENT_STA_CONNECTED: {
-            /* Handshake done — Bluetooth may advertise again. */
-            ble_protocol_hold_advertising(false);
+            /* Handshake done — Bluetooth may have the radio back. */
+            _yield_radio_to_wifi(false);
             wifi_event_sta_connected_t *ev = (wifi_event_sta_connected_t *)event_data;
             memset(s_connected_ssid, 0, sizeof(s_connected_ssid));
             /* Use the pending SSID we stored before calling esp_wifi_connect(),
@@ -463,8 +519,8 @@ static void _wifi_event_handler(void *arg, esp_event_base_t event_base,
         }
 
         case WIFI_EVENT_STA_DISCONNECTED: {
-            /* Attempt over (success or failure); do not leave BLE muted. */
-            ble_protocol_hold_advertising(false);
+            /* Attempt over (success or failure); do not leave BLE starved. */
+            _yield_radio_to_wifi(false);
             wifi_event_sta_disconnected_t *ev = (wifi_event_sta_disconnected_t *)event_data;
             ESP_LOGI(TAG, "Disconnected (reason: %d)", ev->reason);
             bool was_connected = (s_connected_ssid[0] != '\0');
@@ -576,6 +632,7 @@ static void _wifi_event_handler(void *arg, esp_event_base_t event_base,
 
         case WIFI_EVENT_AP_STOP:
             dns_hijack_stop();
+            if (s_stop_events) xEventGroupSetBits(s_stop_events, WIFI_STOPPED_AP_BIT);
             break;
 
         case WIFI_EVENT_AP_STACONNECTED: {
@@ -709,6 +766,10 @@ void wifi_manager_init(void)
     ESP_ERROR_CHECK(esp_event_handler_register(
         IP_EVENT, IP_EVENT_STA_LOST_IP, &_wifi_event_handler, NULL));
 
+    if (!s_stop_events) {
+        s_stop_events = xEventGroupCreate();
+    }
+
     _build_ap_ssid();
 
     s_initialized = true;
@@ -738,19 +799,10 @@ void wifi_manager_start(void)
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
 
 #if CONFIG_BT_ENABLED
-    /* Give WiFi priority over Bluetooth for the antenna.
-     *
-     * Measured, not assumed: with BLE running, this dash dropped its link 4-5
-     * times a minute — reason 2 (AUTH_EXPIRE) and reason 39 (TIMEOUT) — with a
-     * strong AP in range and correct credentials. The identical build with
-     * Bluetooth compiled out held the link for the full test with zero
-     * disconnects. Association is a timed handshake, and the coexistence
-     * scheduler's default BALANCE mode hands BLE enough slots to break it.
-     *
-     * PREFER_WIFI costs Bluetooth throughput, which is the right way round
-     * here: WiFi carries the web UI and OTA, while BLE carries small JSON-RPC
-     * frames for the phone app. */
-    esp_err_t coex_err = esp_coex_preference_set(ESP_COEX_PREFER_WIFI);
+    /* Start balanced. The antenna is only handed to WiFi for the duration of
+     * an association — see _yield_radio_to_wifi(), which explains why leaving
+     * it on PREFER_WIFI for the whole session crashed the BT controller. */
+    esp_err_t coex_err = esp_coex_preference_set(ESP_COEX_PREFER_BALANCE);
     if (coex_err != ESP_OK)
         ESP_LOGW(TAG, "coex preference not applied: %s", esp_err_to_name(coex_err));
 #endif
@@ -867,9 +919,43 @@ void wifi_manager_stop(void)
 
     _stop_reconnect();
 
+    /* esp_wifi_stop() returns before the driver is actually torn down as far
+     * as the rest of the system is concerned: it posts STA_DISCONNECTED and
+     * STA_STOP (AP_STOP for the hotspot) to the default event loop, and the
+     * netif glue handles them later, on the event task. For a station that
+     * holds a DHCP lease, that handling is esp_netif_down() -> dhcp_stop(),
+     * which sends a DHCP RELEASE through the WiFi driver.
+     *
+     * This used to call esp_wifi_deinit() straight after esp_wifi_stop(), so
+     * the driver was freed by the time that RELEASE went out, and the TX path
+     * dereferenced it: "LoadProhibited, EXCVADDR 0x18" inside
+     * ieee80211_output_do, from dhcp_release_and_stop on the tcpip thread.
+     * Every WiFi -> Off from the touch screen while connected did this.
+     *
+     * So: stop, then wait for our own STA_STOP / AP_STOP handlers to have
+     * run. They are registered after the default netif handlers, and the
+     * loop dispatches in order, so seeing them means the netif teardown for
+     * every earlier event has finished too. Only then deinit. */
+    wifi_mode_t mode = WIFI_MODE_NULL;
+    esp_wifi_get_mode(&mode);
+    EventBits_t wanted = 0;
+    if (mode == WIFI_MODE_STA || mode == WIFI_MODE_APSTA) wanted |= WIFI_STOPPED_STA_BIT;
+    if (mode == WIFI_MODE_AP  || mode == WIFI_MODE_APSTA) wanted |= WIFI_STOPPED_AP_BIT;
+    if (s_stop_events) xEventGroupClearBits(s_stop_events, WIFI_STOPPED_STA_BIT | WIFI_STOPPED_AP_BIT);
+
     esp_err_t err = esp_wifi_stop();
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "esp_wifi_stop: %s", esp_err_to_name(err));
+    } else if (wanted && s_stop_events) {
+        EventBits_t got = xEventGroupWaitBits(s_stop_events, wanted, pdFALSE, pdTRUE,
+                                              pdMS_TO_TICKS(3000));
+        if ((got & wanted) != wanted) {
+            /* Deinit anyway - the alternative is a radio we can never restart.
+             * If this ever logs, the event task is wedged, which is a bigger
+             * problem than this one. */
+            ESP_LOGW(TAG, "stop events not seen within 3 s (have 0x%x, wanted 0x%x)",
+                     (unsigned)got, (unsigned)wanted);
+        }
     }
     err = esp_wifi_deinit();
     if (err != ESP_OK) {
@@ -1039,14 +1125,14 @@ void wifi_manager_connect(const char *ssid, const char *password)
      * BLE advertising this association fails repeatedly against a good AP, and
      * a coexistence preference alone did not fix it. Released again on
      * STA_CONNECTED or when the attempt fails. */
-    ble_protocol_hold_advertising(true);
+    _yield_radio_to_wifi(true);
 
     /* Disconnect first (safe even if not connected) */
     esp_wifi_disconnect();
 
     err = esp_wifi_connect();
     if (err != ESP_OK) {
-        ble_protocol_hold_advertising(false);
+        _yield_radio_to_wifi(false);
         ESP_LOGE(TAG, "esp_wifi_connect failed: %s", esp_err_to_name(err));
         _set_state(WIFI_MGR_STATE_FAILED);
         return;
