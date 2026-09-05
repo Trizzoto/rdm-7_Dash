@@ -4292,10 +4292,15 @@
                 padding:2px 8px; opacity:0.8; flex:0 0 auto;">×</button>
     </div>
 
-    <!-- Finish-update banner. The CAN boot-window fix lives in the bootloader
-         (ADR-0047) and an OTA cannot carry it, so after the firmware update
-         lands there is one more step. Amber rather than blue: this one has a
-         consequence if it is interrupted, and should not read as routine. -->
+    <!-- CAN-park banner. The boot-window fix lives in the bootloader (ADR-0047)
+         and an OTA cannot carry it, so it is a separate, deliberate step.
+         Shown whenever the bootloader in flash lacks the fix, which has nothing
+         to do with having just updated - see bootloader_selfupdate.c. The copy
+         offers an improvement rather than reporting a fault: most dashes are on
+         bus systems that never minded, and telling every one of them their dash
+         misbehaves invites support mail we do not need. Amber rather than blue:
+         interrupting this write costs the customer a cable, and it should not
+         read as routine. -->
     <div id="blFinishBanner" style="display:none; position:sticky; top:0; z-index:1499;
          background:linear-gradient(90deg, hsl(35,85%,40%), hsl(35,85%,50%));
          color:white; padding:10px 16px; font-size:12px; font-family:'Sora',sans-serif;
@@ -4306,12 +4311,12 @@
             <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
         </svg>
         <span style="flex:1 1 auto; line-height:1.35;">
-            <strong>One more step to finish the update</strong>
-            <span style="opacity:0.85; margin-left:4px;">Applies the CAN bus startup fix.</span>
+            <strong>CAN bus graceful start-up</strong>
+            <span style="opacity:0.85; margin-left:4px;">An improvement for sensitive CAN bus systems.</span>
         </span>
         <button onclick="_blShowFinish()" style="background:white; color:hsl(35,85%,35%); border:none;
                 font-weight:600; padding:6px 14px; border-radius:4px; cursor:pointer; font-size:12px; flex:0 0 auto;">
-            Finish Update
+            Apply Fix
         </button>
     </div>
 
@@ -4321,10 +4326,13 @@
         <div style="background:var(--panel-elevated); border:1px solid var(--border);
              border-radius:var(--radius-lg); padding:24px; width:min(460px, 92vw);
              display:flex; flex-direction:column; gap:14px; box-shadow:var(--shadow-md);">
-            <div style="font-weight:600; font-size:14px;">Finish the update</div>
+            <div style="font-weight:600; font-size:14px;">CAN bus graceful start-up</div>
             <div id="blFinishBody" style="font-size:12px; color:var(--text-muted); line-height:1.6;">
-                This replaces the small piece of startup code that was holding the CAN bus
-                down while the dash boots. The normal firmware update cannot reach it.
+                This updates the small piece of startup code that brings the CAN bus up, so
+                the dash joins the bus gracefully as it powers on. It helps on systems that are
+                sensitive about what is on the bus while everything starts together. It sits
+                outside the firmware, so an ordinary update cannot reach it &mdash; which is why
+                it is its own step.
                 <br><br>
                 <b style="color:var(--text);">Keep the dash powered.</b> It takes about half a
                 second. If power is lost during it, the dash will not start again until it is
@@ -20250,13 +20258,19 @@
             ro.observe(vp);
         })();
 
-        /* Finish-update (bootloader).
+        /* CAN-park banner (bootloader).
          *
          * The CAN boot-window park has to run before the app exists, so it
          * lives in the bootloader, and esp_ota_* writes app partitions only
          * (ADR-0047). The dash therefore writes its own bootloader, and this
-         * banner is the one deliberate action that triggers it. Never
-         * automatic, and never shown unless the dash says one is pending. */
+         * banner is the one deliberate action that triggers it - never
+         * automatic.
+         *
+         * update_available means the bootloader in flash carries a lower
+         * feature version than the one this app holds, so it is answering "is
+         * the fix missing", not "did you just update". A dash that has never
+         * had the fix keeps being offered it on every firmware version until
+         * someone applies it. */
         async function _blCheckFinish() {
             try {
                 const r = await fetch('/api/bootloader/status');
@@ -20312,7 +20326,7 @@
             }
 
             if (res && res.ok) {
-                body.innerHTML = '<b style="color:var(--text);">Done - the update is applied.</b><br><br>' +
+                body.innerHTML = '<b style="color:var(--text);">Done - graceful start-up is applied.</b><br><br>' +
                     'The dash needs one restart to start using it.';
                 status.textContent = res.detail || 'written and verified';
                 go.disabled = false; go.style.opacity = '1';
