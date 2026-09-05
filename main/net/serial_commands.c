@@ -87,7 +87,14 @@ void _send_response(int id, cJSON *result, const char *error)
     char *json = cJSON_PrintUnformatted(resp);
     cJSON_Delete(resp);
     if (json) {
-        serial_protocol_send_json(json);
+        esp_err_t err = serial_protocol_send_json(json);
+        /* Temporary: chasing replies that leave the dash but never reach the
+         * phone. Says which transport carried it and whether the transport
+         * accepted it, so "the dash did not answer X" can be pinned to the
+         * dash, the link, or the app. */
+        ESP_LOGI(TAG, "reply id=%d via %s len=%u -> %s", id,
+                 serial_protocol_get_name(serial_protocol_get_active()),
+                 (unsigned)strlen(json), esp_err_to_name(err));
         free(json);
     }
 }
@@ -354,6 +361,9 @@ esp_err_t serial_commands_dispatch(const char *json_str, size_t len)
         params = cJSON_CreateObject(); /* empty params — owned separately */
         params_owned = true;
     }
+
+    ESP_LOGI(TAG, "dispatch id=%d %s via %s", id, method,
+             serial_protocol_get_name(serial_protocol_get_active()));
 
     /* Look up handler in dispatch table */
     bool found = false;
