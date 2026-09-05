@@ -258,10 +258,24 @@ CONFIG_ESP_WIFI_MGMT_SBUF_NUM=32
 #     config costs nothing measurable (81 ms first frame, 47 fps, vs 82/47
 #     without bounce).
 #
-# ISR_IRAM_SAFE on both the LCD and GDMA interrupts, plus XIP
-# (SPIRAM_FETCH_INSTRUCTIONS + SPIRAM_RODATA above), are what keep the refill
-# running while the cache is disabled for a flash write — without them an NVS
-# or OTA write stops the panel.
+# XIP (SPIRAM_FETCH_INSTRUCTIONS + SPIRAM_RODATA above) is what keeps the cache
+# alive through esp_flash writes and erases, so NVS saves and the OTA download
+# do not stop the refill. That guarantee does NOT extend to memory MAPPING:
+# esp_mmu_map() switches the cache off unconditionally to rewrite MMU entries,
+# and esp_ota_get_state_partition() (called by /api/selftest and by the
+# rollback confirmation), esp_image_verify() at the end of an OTA, and anything
+# else that goes through esp_partition_mmap() all do that.
+#
+# LCD_RGB_ISR_IRAM_SAFE and GDMA_ISR_IRAM_SAFE therefore stay OFF. With them on,
+# the refill interrupt keeps running through those windows and its memcpy from
+# the PSRAM framebuffer faults: "Cache disabled but cached memory region
+# accessed", core 0, ~1 boot in 8 on the bench, because the first thing polled
+# after the web server starts is /api/selftest. With them off, the interrupt is
+# masked for the window (a few tens of microseconds), the DMA underruns, and
+# LCD_RGB_RESTART_IN_VSYNC re-syncs at the next frame. One missed refill on a
+# rare event, instead of a panic. This is the configuration esp_lcd documents
+# for bounce mode; the IRAM-safe variant was a wrong turn recorded here so it is
+# not taken again.
 #
 # Cost: ~58 KB of internal SRAM (two 20-line buffers + the IRAM-safe code),
 # leaving ~19.6 KB free at web-server start. That is the tightest margin of the
@@ -272,8 +286,8 @@ CONFIG_ESP_WIFI_MGMT_SBUF_NUM=32
 # CONFIG_EXAMPLE_DOUBLE_FB is not set
 CONFIG_EXAMPLE_USE_BOUNCE_BUFFER=y
 # CONFIG_EXAMPLE_AVOID_TEAR_EFFECT_WITH_SEM is not set
-CONFIG_LCD_RGB_ISR_IRAM_SAFE=y
-CONFIG_GDMA_ISR_IRAM_SAFE=y
+# CONFIG_LCD_RGB_ISR_IRAM_SAFE is not set
+# CONFIG_GDMA_ISR_IRAM_SAFE is not set
 CONFIG_LCD_RGB_RESTART_IN_VSYNC=y
 
 # LVGL keeps its 120-line PSRAM draw bands and the cross-core flush worker.

@@ -1,4 +1,5 @@
 #include "web_server.h"
+#include "system/safe_restart.h"
 #include "esp_http_server.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -123,7 +124,7 @@ static void _reboot_timer_cb(void *arg) {
 	 * this one did not, and it is the path a user hits after any settings
 	 * change or a bootloader self-update. */
 	crash_log_mark_clean_shutdown();
-	esp_restart();
+	rdm_safe_restart();
 }
 
 bool web_server_schedule_reboot(uint32_t delay_ms) {

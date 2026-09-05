@@ -9,6 +9,7 @@
  * dimmer.set.
  */
 #include "serial_commands_internal.h"
+#include "system/safe_restart.h"
 #include "system/rdm_lv_async.h"
 
 #include "cJSON.h"
@@ -163,7 +164,7 @@ void _handle_system_reboot(int id, cJSON *params)
     (void)params;
     _send_ok(id);
     vTaskDelay(pdMS_TO_TICKS(500));
-    esp_restart();
+    rdm_safe_restart();
 }
 
 /* ── WiFi config serial commands ────────────────────────────────────────── */

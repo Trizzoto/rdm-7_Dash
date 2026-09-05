@@ -22,6 +22,7 @@
  */
 
 #include "web_server_internal.h"
+#include "system/safe_restart.h"
 #include "data/channel_manager.h"
 #include "data/channel_math.h"
 #include "data/channel_source_apply.h"  /* shared bind-preconfig path */
@@ -1551,7 +1552,7 @@ static esp_err_t channels_export_handler(httpd_req_t *req) {
 static void _deferred_chimport_reboot(void *arg) {
 	(void)arg;
 	vTaskDelay(pdMS_TO_TICKS(800));
-	esp_restart();
+	rdm_safe_restart();
 }
 
 static esp_err_t channels_import_handler(httpd_req_t *req) {

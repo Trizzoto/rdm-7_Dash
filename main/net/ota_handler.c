@@ -1,4 +1,5 @@
 #include "ota_handler.h"
+#include "system/safe_restart.h"
 #include "system/rdm_lv_async.h"
 #include "ota_update_dialog.h"
 #include "version.h"
@@ -752,7 +753,7 @@ static void ota_update_task(void *pvParameter) {
         // Wait a bit for UI to show completion, then reboot
         vTaskDelay(pdMS_TO_TICKS(3000));
         crash_log_mark_clean_shutdown();
-        esp_restart();
+        rdm_safe_restart();
     } else {
         ESP_LOGE(TAG, "OTA update failed: %s", esp_err_to_name(ret));
         ota_status = OTA_UPDATE_FAILED;

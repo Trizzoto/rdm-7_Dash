@@ -20,6 +20,7 @@ idf_component_register(
         "lap/lap_engine.c"
         "storage/boot_assets.c"
         "storage/bootloader_selfupdate.c"
+        "system/safe_restart.c"
         "storage/config_store.c"
         "storage/sd_manager.c"
         "storage/data_logger.c"

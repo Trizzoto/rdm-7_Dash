@@ -1,4 +1,5 @@
 #include "device_settings.h"
+#include "system/safe_restart.h"
 #include "esp_attr.h"
 #include "theme.h"
 #include "lvgl.h"
@@ -2494,7 +2495,7 @@ static void _factory_reset_confirm_cb(lv_event_t *e) {
     if (strcmp(btn_txt, "RESET") == 0) {
         ESP_LOGW("RESET", "User confirmed factory reset");
         config_store_factory_reset();
-        esp_restart();
+        rdm_safe_restart();
     }
     /* Cancel — just close the dialog */
     lv_msgbox_close(mbox);

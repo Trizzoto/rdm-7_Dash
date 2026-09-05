@@ -1,4 +1,5 @@
 #include "ota_update_dialog.h"
+#include "system/safe_restart.h"
 #include "theme.h"
 #include "storage/config_store.h"
 #include "esp_log.h"
@@ -65,7 +66,7 @@ static void reboot_and_update_btn_cb(lv_event_t *e) {
         }
     }
     ESP_LOGI(TAG, "Rebooting to install %s with a fresh heap", s_offered_version);
-    esp_restart();
+    rdm_safe_restart();
 }
 
 /* Run the install. Split out of the button handler so the boot-time resume
