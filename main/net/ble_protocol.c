@@ -175,7 +175,17 @@ static uint16_t chunk_size(void)
 {
     uint16_t mtu = ble_att_mtu(s_conn);
     if (mtu < 23) mtu = 23; /* the default, if the exchange has not happened */
-    return mtu - 3;         /* ATT notification header */
+    uint16_t chunk = mtu - 3; /* ATT notification header */
+
+    /* An attribute value is at most 512 octets, whatever the MTU. Phones
+     * negotiate 517, MTU minus three is 514, and Android drops every
+     * notification that size on the floor without a word — measured on the
+     * bench: of a 5 KB layout reply sent as ten 514-byte notifications and
+     * one of 325, the phone received only the 325. Windows tolerated the
+     * oversize, which is why a PC never reproduced it. Cap at the limit;
+     * the cost is two bytes per notification. */
+    if (chunk > 512) chunk = 512;
+    return chunk;
 }
 
 static esp_err_t notify_all(const uint8_t *data, size_t len)
