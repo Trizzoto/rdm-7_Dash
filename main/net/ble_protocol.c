@@ -84,6 +84,21 @@ void ble_store_config_init(void);
  * payload and makes the difference between a screenshot and a reboot. */
 #define BLE_TX_YIELD_EVERY  8
 
+/* Buffer-pool headroom to leave for the OTHER direction while we transmit.
+ *
+ * notify_all() used to take mbufs until the pool was dry, then sleep for
+ * more. That is fine for our own sends — they wait — but an ATT write from
+ * the phone arriving in that window has nothing to be received into, and
+ * NimBLE answers it with ATT error 0x11, INSUFFICIENT_RESOURCES. The phone
+ * reported exactly that, on the request it sent while a 5 KB layout reply
+ * was still streaming out in eleven notifications: "layout.list failed ...
+ * att 17 GATT_INSUF_RESOURCE". The dash never saw that request at all.
+ *
+ * A full-MTU write needs three 256-byte blocks; keep twice that free so the
+ * host can also service its own housekeeping. Costs nothing in throughput
+ * — a 24-block pool still carries several notifications in flight. */
+#define BLE_TX_POOL_RESERVE 6
+
 static StreamBufferHandle_t s_rx_stream;
 static frame_parser_t       s_parser;
 static TaskHandle_t         s_rx_task;
@@ -177,6 +192,15 @@ static esp_err_t notify_all(const uint8_t *data, size_t len)
 
         int rc = BLE_HS_ENOMEM;
         for (int attempt = 0; attempt < BLE_TX_RETRIES; attempt++) {
+            /* Leave room for an incoming write before taking blocks for
+             * this notification (see BLE_TX_POOL_RESERVE). Blocks needed:
+             * the payload rounded up to the block size, plus one for the
+             * header mbuf. */
+            int need = (int)((take + 255) / 256) + 1;
+            if (os_msys_num_free() < need + BLE_TX_POOL_RESERVE) {
+                vTaskDelay(pdMS_TO_TICKS(BLE_TX_RETRY_MS));
+                continue;
+            }
             struct os_mbuf *om = ble_hs_mbuf_from_flat(data + offset, take);
             if (!om) {
                 vTaskDelay(pdMS_TO_TICKS(BLE_TX_RETRY_MS));
