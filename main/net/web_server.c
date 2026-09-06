@@ -347,7 +347,20 @@ esp_err_t web_server_start(void) {
 
 	httpd_config_t config = HTTPD_DEFAULT_CONFIG();
 	config.server_port = WEB_SERVER_PORT;
-	config.stack_size = 4096; /* IDF default; 5120 no longer fits alongside BLE */
+	/* 8 KB. This was 4096 — the IDF default, cut from 5120 when internal
+	 * SRAM ran short alongside Bluetooth — and POST /api/layout/save
+	 * overflowed it: "A stack overflow in task httpd has been detected",
+	 * reproduced from a PC with a 5.4 KB layout, every time. The body is on
+	 * the heap; what needs the stack is cJSON parsing and printing a nested
+	 * document, the channel-config import, and the LittleFS write beneath
+	 * it, all called from this task. Saving a layout from the phone over
+	 * Wi-Fi therefore rebooted the dash, and the app saw "Aborted".
+	 *
+	 * The room exists now: the Sept 2026 display and memory work moved
+	 * ~60 KB of static buffers out to PSRAM, and internal SRAM shows ~22 KB
+	 * free with WiFi, the web server and Bluetooth all up (largest block
+	 * ~14 KB), so a 4 KB larger stack allocates cleanly. */
+	config.stack_size = 8192;
 	/* Pin httpd to core 0. LVGL runs on core 1; if httpd also lands on
 	 * core 1 and then jpeg_enc_process() runs for 10+ seconds (happens
 	 * under load: CONTROL mode + stream + widget rebuild + layout save
