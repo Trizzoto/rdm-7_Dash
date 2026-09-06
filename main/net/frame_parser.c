@@ -10,6 +10,7 @@
 #include "uart_protocol.h"     /* UART_PROTO_STX/ETX/MAX_PAYLOAD, UART_PAYLOAD_*, uart_protocol_crc16() */
 #include "serial_commands.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -80,6 +81,33 @@ static void _process_complete_frame(frame_parser_t *p, transport_id_t transport,
 void frame_parser_feed(frame_parser_t *p, const uint8_t *data, size_t len,
                        transport_id_t transport, const char *tag)
 {
+    /* Give up on a frame that went quiet.
+     *
+     * The length field is a promise, and this parser used to hold the sender
+     * to it without limit: mid-payload it consumes every byte it is given
+     * until the count is met. Over Bluetooth a frame can stop short — the
+     * phone's stack refuses a chunk partway through, and the app re-sends the
+     * whole frame from the start. Those fresh bytes, STX and all, were then
+     * eaten as the tail of the half-frame, the CRC failed, and the re-send was
+     * gone too. The requester saw "the dash did not answer".
+     *
+     * A frame in flight is a continuous stream: at the default 23-byte MTU a
+     * chunk lands every connection interval, tens of milliseconds apart at
+     * worst. Silence of FRAME_PARSER_STALL_MS mid-frame therefore means the
+     * rest is not coming, and the right move is back to IDLE, hunting for the
+     * next STX. The sender side waits longer than this before re-sending, so
+     * the retry always meets a parser that is ready for it. */
+    if (p->state != FRAME_STATE_IDLE && len > 0) {
+        int64_t now = esp_timer_get_time();
+        if (now - p->last_byte_us > (int64_t)FRAME_PARSER_STALL_MS * 1000) {
+            ESP_LOGW(tag, "frame abandoned: %u of %u payload bytes, then %lld ms of silence",
+                     (unsigned)p->payload_pos, (unsigned)p->payload_len,
+                     (long long)((now - p->last_byte_us) / 1000));
+            frame_parser_reset(p);
+        }
+    }
+    if (len > 0) p->last_byte_us = esp_timer_get_time();
+
     for (size_t i = 0; i < len; i++) {
         uint8_t byte = data[i];
 

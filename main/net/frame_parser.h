@@ -30,7 +30,13 @@ typedef struct {
     uint32_t payload_pos;
     uint8_t  crc_buf[2];
     uint8_t  crc_pos;
+    int64_t  last_byte_us;   /* esp_timer time of the last byte fed mid-frame */
 } frame_parser_t;
+
+/* A frame that stops arriving is abandoned after this long, so the parser
+ * goes back to hunting for STX instead of waiting forever for bytes that were
+ * lost with a dropped chunk. See frame_parser_feed(). */
+#define FRAME_PARSER_STALL_MS 400
 
 /**
  * @brief Reset parser state to idle, freeing any in-flight payload buffer.
