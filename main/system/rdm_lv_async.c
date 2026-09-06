@@ -9,6 +9,9 @@
 #include "system/rdm_lv_async.h"
 #include "ui/lvgl_helpers.h"   /* rdm_lvgl_lock / rdm_lvgl_unlock */
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
 
 static void _cancel_on_delete_cb(lv_event_t *e);   /* fwd decl */
 
@@ -24,7 +27,12 @@ void rdm_async_call(lv_async_cb_t cb, void *user_data)
         lv_async_call(cb, user_data);
         rdm_lvgl_unlock();
     } else {
-        ESP_LOGW("rdm_async", "LVGL lock timeout — posting async call unguarded");
+        /* Name the holder. This fires once per boot, two seconds after the
+         * WiFi scan completes, and nothing else says who has the lock. */
+        extern SemaphoreHandle_t lvgl_mux;
+        TaskHandle_t holder = lvgl_mux ? xSemaphoreGetMutexHolder(lvgl_mux) : NULL;
+        ESP_LOGW("rdm_async", "LVGL lock timeout — posting async call unguarded (held by %s, we are %s)",
+                 holder ? pcTaskGetName(holder) : "nobody", pcTaskGetName(NULL));
         lv_async_call(cb, user_data);
     }
 }

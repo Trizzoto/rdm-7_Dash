@@ -712,11 +712,23 @@ void rdm_lvgl_port_task(void *pvParameter) {
       consecutive_failures = 0;
 
       // Handle any pending LVGL tasks
+      int64_t t_lv0 = esp_timer_get_time();
       lv_timer_handler();
+      int64_t t_lv1 = esp_timer_get_time();
       // Drain any queued CAN frames while we hold the LVGL mutex so all
       // widget/UI work stays single-threaded.
       can_process_queued_frames();
+      int64_t t_can1 = esp_timer_get_time();
       rdm_lvgl_unlock();
+
+      /* Diagnostic: one iteration of this loop held the LVGL lock for ~4 s
+       * at the ten-second mark of every boot, and nothing said which part.
+       * Log any locked section over 300 ms, split by what it was doing. */
+      if (t_can1 - t_lv0 > 300 * 1000) {
+        ESP_LOGW(TAG, "LVGL loop held the lock %lld ms at t=%lld ms: lv_timer_handler %lld ms, CAN drain %lld ms",
+                 (long long)((t_can1 - t_lv0) / 1000), (long long)(t_lv0 / 1000),
+                 (long long)((t_lv1 - t_lv0) / 1000), (long long)((t_can1 - t_lv1) / 1000));
+      }
 
       // Arm + pet the watchdog now that a full frame succeeded.
       if (!wdt_subscribed) {
@@ -726,8 +738,13 @@ void rdm_lvgl_port_task(void *pvParameter) {
       esp_task_wdt_reset();
 
       // Confirm the OTA image after ~10 s of healthy rendering (H11).
-      if ((esp_timer_get_time() - boot_us) >= 10LL * 1000 * 1000)
+      if ((esp_timer_get_time() - boot_us) >= 10LL * 1000 * 1000) {
+        int64_t t_ota0 = esp_timer_get_time();
         rdm_mark_app_valid_once();
+        int64_t took = esp_timer_get_time() - t_ota0;
+        if (took > 100 * 1000)
+          ESP_LOGW(TAG, "rdm_mark_app_valid_once took %lld ms", (long long)(took / 1000));
+      }
 
       // Calculate remaining time in the refresh period
       uint32_t elapsed = (esp_timer_get_time() / 1000) - start_time;
@@ -771,26 +788,95 @@ void gpio_init(void) {
   gpio_config(&io_conf);
 }
 
+/* ── Touch: read on its own task, never on LVGL's ─────────────────────────
+ *
+ * The GT911 is read over I2C, and the read used to happen inside LVGL's
+ * input callback — on the LVGL task, under the LVGL lock, every 30 ms.
+ * With the legacy I2C driver that read gave up after a second. The current
+ * driver, reached through esp_lcd's panel IO, waits on a transfer FOREVER
+ * (esp_lcd_panel_io_i2c_v2.c passes -1 for every timeout, and there is no
+ * way through that API to pass anything else). So a touch controller that
+ * did not answer — it is slow to wake after its reset at boot, and any
+ * glitch on the bus can leave a transaction hanging — stopped the LVGL
+ * task dead, holding the lock: first "LVGL lock timeout" from everything
+ * that wanted the UI, then a task-watchdog reset with both CPUs idle. Seen
+ * on the bench six seconds into a boot. Even when it did answer, a slow
+ * first read was the several seconds after the screen came up during which
+ * nothing responded to a finger.
+ *
+ * The read now lives on a small task of its own. It polls at 20 ms, times
+ * every read, and publishes only the result: the LVGL callback copies the
+ * latest point out from under a spinlock and never touches the bus. A read
+ * that takes over a second is logged; three in a row and the bus is reset
+ * (i2c_master_bus_reset — the driver's own bus recovery). LVGL keeps
+ * drawing throughout, and the task watchdog stays fed. */
+typedef struct {
+  uint16_t x, y;
+  bool     pressed;
+} rdm_touch_point_t;
+
+static rdm_touch_point_t s_touch_now;
+static portMUX_TYPE      s_touch_mux = portMUX_INITIALIZER_UNLOCKED;
+static esp_lcd_touch_handle_t s_touch_handle = NULL;
+
+#define TOUCH_POLL_MS        20
+#define TOUCH_SLOW_READ_US   (1000 * 1000)
+#define TOUCH_STALLS_TO_RESET 3
+
+static void rdm_touch_poll_task(void *arg) {
+  (void)arg;
+  unsigned stalls = 0;
+  for (;;) {
+    uint16_t x[1] = {0}, y[1] = {0};
+    uint8_t  n = 0;
+
+    int64_t t0 = esp_timer_get_time();
+    esp_err_t err = esp_lcd_touch_read_data(s_touch_handle);
+    int64_t took = esp_timer_get_time() - t0;
+
+    bool pressed = (err == ESP_OK) &&
+                   esp_lcd_touch_get_coordinates(s_touch_handle, x, y, NULL, &n, 1) &&
+                   n > 0;
+
+    taskENTER_CRITICAL(&s_touch_mux);
+    s_touch_now.x = x[0];
+    s_touch_now.y = y[0];
+    s_touch_now.pressed = pressed;
+    taskEXIT_CRITICAL(&s_touch_mux);
+
+    if (err != ESP_OK || took > TOUCH_SLOW_READ_US) {
+      stalls++;
+      ESP_LOGW(TAG, "touch read %s after %lld ms (%u in a row)",
+               err == ESP_OK ? "slow" : esp_err_to_name(err),
+               (long long)(took / 1000), stalls);
+      if (stalls >= TOUCH_STALLS_TO_RESET && s_i2c_bus) {
+        ESP_LOGW(TAG, "touch: resetting the I2C bus");
+        i2c_master_bus_reset(s_i2c_bus);
+        stalls = 0;
+      }
+    } else {
+      stalls = 0;
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(TOUCH_POLL_MS));
+  }
+}
+
 // extern lv_obj_t *scr;
 static void rdm_lvgl_touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
+  (void)drv;
   // Always set to released state first
   data->state = LV_INDEV_STATE_REL;
 
   // If no touch controller is available, just return with released state
-  if (drv->user_data == NULL) {
+  if (s_touch_handle == NULL) {
     return;
   }
 
-  uint16_t touchpad_x[1] = {0};
-  uint16_t touchpad_y[1] = {0};
-  uint8_t touchpad_cnt = 0;
-
-  /* Read touch controller data */
-  esp_lcd_touch_read_data(drv->user_data);
-
-  /* Get coordinates */
-  bool touchpad_pressed = esp_lcd_touch_get_coordinates(
-      drv->user_data, touchpad_x, touchpad_y, NULL, &touchpad_cnt, 1);
+  rdm_touch_point_t now;
+  taskENTER_CRITICAL(&s_touch_mux);
+  now = s_touch_now;
+  taskEXIT_CRITICAL(&s_touch_mux);
 
   /* Rising edge on the physical panel — clear any latched virtual press
    * from CONTROL mode. A real finger always wins over a possibly-stuck
@@ -798,15 +884,14 @@ static void rdm_lvgl_touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
    * stuck virtual press can hold a widget captured and make the device
    * feel dead until the 350 ms watchdog fires. */
   static bool s_prev_phys_pressed = false;
-  bool now_pressed = (touchpad_pressed && touchpad_cnt > 0);
-  if (now_pressed && !s_prev_phys_pressed) {
+  if (now.pressed && !s_prev_phys_pressed) {
     remote_touch_force_release();
   }
-  s_prev_phys_pressed = now_pressed;
+  s_prev_phys_pressed = now.pressed;
 
-  if (now_pressed) {
-    data->point.x = touchpad_x[0];
-    data->point.y = touchpad_y[0];
+  if (now.pressed) {
+    data->point.x = now.x;
+    data->point.y = now.y;
     data->state = LV_INDEV_STATE_PR;
   }
 }
@@ -895,8 +980,27 @@ float fuel_sender_read_voltage(void) {
   return (raw / 4095.0f) * 3.3f;
 }
 
-static void _deferred_wifi_boot_cb(lv_timer_t *timer) {
-  (void)timer;
+/* Bring WiFi up a few seconds after the dashboard, then the web server once
+ * the link is there.
+ *
+ * ON ITS OWN TASK. This used to be an LVGL timer callback — so it ran on the
+ * LVGL task, inside lv_timer_handler(), holding the LVGL lock — and its
+ * bounded wait below is up to thirty seconds of vTaskDelay. The comment that
+ * said "here on the main task" was wrong. Measured: one pass of
+ * lv_timer_handler() held the lock for 7.9 s from the 4.6 s mark of boot,
+ * ending the instant WiFi associated. That was the several seconds after
+ * the screen came up during which nothing answered a finger; and with no
+ * access point in range the wait ran past the 15 s task watchdog and the
+ * dash rebooted, TASK_WDT, LVGL named as the task that stopped feeding it.
+ *
+ * A one-shot task costs a stack while it runs and gives it back when it
+ * exits. 6 KB, because web_server_start() registers 155 URI handlers and
+ * overflowed the 2.3 KB event-handler stack once; internal, because the
+ * path writes NVS. The earlier objection to a starter task — that its stack
+ * was live while httpd was being created and took the memory httpd needed —
+ * dates from when internal SRAM had ~8 KB spare; the display and memory work
+ * has since moved ~60 KB of statics to PSRAM and it sits at ~22 KB. */
+static void _wifi_boot_body(void) {
   wifi_manager_start();
 
   /* Honour boot config for AP mode — on first-run we explicitly set
@@ -962,6 +1066,16 @@ static void _deferred_wifi_boot_cb(lv_timer_t *timer) {
 #if RDM_HEAP_MONITOR_ENABLED
   heap_monitor_start();
 #endif
+}
+
+#define WIFI_BOOT_DELAY_MS 4000
+
+static void rdm_wifi_boot_task(void *arg) {
+  (void)arg;
+  /* Let the dashboard land first — the same 4 s the LVGL timer used to give it. */
+  vTaskDelay(pdMS_TO_TICKS(WIFI_BOOT_DELAY_MS));
+  _wifi_boot_body();
+  vTaskDelete(NULL);
 }
 
 
@@ -1441,6 +1555,16 @@ void app_main(void) {
     indev_drv.user_data = tp;
 
     lv_indev_drv_register(&indev_drv);
+
+    /* The bus read runs here, not in the callback above — see
+     * rdm_touch_poll_task. Core 0, beside the I2C interrupt; a 3 KB
+     * internal stack, since the read path must survive the cache going
+     * away for a flash write. */
+    s_touch_handle = tp;
+    if (xTaskCreatePinnedToCore(rdm_touch_poll_task, "touch", 3072, NULL, 4, NULL, 0) != pdPASS) {
+      ESP_LOGE(TAG, "touch poll task failed to start — touch will not work");
+      s_touch_handle = NULL;
+    }
     ESP_LOGI(TAG, "Touch input device registered successfully");
   } else {
     ESP_LOGW(TAG,
@@ -1667,14 +1791,10 @@ void app_main(void) {
 
   if (boot_cfg.wifi_on_boot) {
     ESP_LOGI(TAG, "WiFi-on-boot enabled, starting WiFi after 4s delay...");
-    /* Start WiFi with a 4-second delay to let dashboard load first. Hold the
-     * LVGL lock — the LVGL task is already running lv_timer_handler() on the
-     * other core, and lv_timer_create() mutates the shared global timer list. */
-    if (rdm_lvgl_lock(-1)) {
-      lv_timer_t *wifi_boot_timer =
-          lv_timer_create(_deferred_wifi_boot_cb, 4000, NULL);
-      lv_timer_set_repeat_count(wifi_boot_timer, 1);
-      rdm_lvgl_unlock();
+    /* Not an LVGL timer: see _wifi_boot_body. Core 0, away from LVGL. */
+    if (xTaskCreatePinnedToCore(rdm_wifi_boot_task, "wifi_boot", 6144, NULL, 5,
+                                NULL, 0) != pdPASS) {
+      ESP_LOGE(TAG, "wifi_boot task failed to start — WiFi stays off until Settings > Wi-Fi");
     }
   } else {
     ESP_LOGI(TAG, "WiFi disabled at boot — enable from Settings > Wi-Fi");
