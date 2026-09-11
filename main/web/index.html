@@ -2048,6 +2048,50 @@
          * page, so it loses its indent and gains the row's baseline. */
         #chShared.ch2-page .ch2-row-sub { margin-top: 0; font-size: 12px; }
         #chShared.ch2-page .ch2-group-header { padding-left: 20px; }
+        /* ── Narrow screens ──────────────────────────────────────────────
+         * Two separate things break as the window narrows, at two different
+         * widths, so they get two blocks.
+         *
+         * 1. The table. Five columns need 710px of grid tracks
+         *    (160+120+110+130+150 + 4 gaps) plus the row's 24px padding and
+         *    40px margins, so the warning column starts falling off the right
+         *    edge below ~780px and is gone entirely by 375px. It is not
+         *    scrollable to either: the tracks overflow the row box, not the
+         *    list. Below that width the row falls back to the modal's stacked
+         *    layout (name over source, value right).
+         *
+         * 2. The drawer. It is floored at 520px and capped at 92vw, so the
+         *    strip of list left beside it is (viewport - 520) and stops being
+         *    readable well before it reaches zero — 29px at 375px wide. Below
+         *    640px it goes full-bleed instead. It keeps its own close button
+         *    in .ch2-drawer-head, which is then the only way back to the list.
+         *
+         * Both are wider than the 720px .ch2-srcp block above; that one is
+         * about the source picker's rail, not these columns. */
+        @media (max-width: 780px) {
+            #chShared.ch2-page .ch2-row {
+                grid-template-columns: 1fr auto;
+                grid-template-areas: "name val" "src val";
+                align-items: baseline;
+                margin: 4px 8px;
+                padding: 10px 12px;
+            }
+            #chShared.ch2-page .ch2-cell-range,
+            #chShared.ch2-page .ch2-cell-warn { display: none; }
+            /* The headings describe columns that no longer exist. */
+            #chShared.ch2-page .ch2-thead.ch2-page-only { display: none; }
+            #chShared.ch2-page .ch2-row-sub { font-size: 11px; margin-top: 2px; }
+            #chShared.ch2-page .ch2-group-header { padding-left: 12px; }
+        }
+        @media (max-width: 640px) {
+            #chShared.ch2-page .ch2-editor {
+                width: 100%; max-width: none;
+                border-left: none;
+            }
+            #chShared.ch2-page .ch2-list-tools { padding: 10px 12px; }
+            #chShared.ch2-page .ch2-topbar { padding: 12px 12px; }
+        }
+
         .ch2-row:hover {
             border-color: var(--border-light);
             background: rgba(255,255,255,0.025);
