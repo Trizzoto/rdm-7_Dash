@@ -2630,7 +2630,19 @@
         /* ── Source picker: rail + list ───────────────────────────────────
          * Replaces the three-column ECU / Version / Signal drilldown. Which
          * ECU the car runs is a car-level fact you set once, so it gets a
-         * narrow rail; the version is a chip; the signals get the room. */
+         * narrow rail; the version is a plain dropdown; the signals get the
+         * room.
+         *
+         * Deliberately plain. The first cut had eight accent devices in this
+         * one panel — left bars on the rail and on rows, an underline on the
+         * version buttons, accent text for "in use", "on this car" and the
+         * pick count, an accent-filled tick, an accent border on the mobile
+         * chips — and the effect was a panel that looked busier than the job
+         * it does. Selection is a lighter background and heavier text;
+         * everything else is greys and native controls. The accent survives
+         * in exactly one place on this surface, the probe's byte highlight,
+         * because there it is data (which bytes your window covers) rather
+         * than chrome. */
         .ch2-srcp {
             display: grid;
             grid-template-columns: 210px minmax(0, 1fr);
@@ -2652,29 +2664,20 @@
         }
         .ch2-srcp-make {
             padding: 7px 12px; cursor: pointer;
-            border-left: 2px solid transparent;
-            transition: background .12s, border-color .12s;
+            transition: background .12s;
         }
         .ch2-srcp-make:hover { background: rgba(255,255,255,0.04); }
-        /* Selection is an accent LEFT BAR on an elevated neutral row, never a
-         * solid accent fill — ADR-0014 rule 2. The old picker filled the row
-         * with --accent and inverted the text, which made a list of ECUs look
-         * like a list of buttons. */
-        .ch2-srcp-make.active {
-            background: rgba(255,255,255,0.06);
-            border-left-color: var(--accent);
-        }
-        .ch2-srcp-make .nm { font-size: 12px; color: var(--text); }
-        .ch2-srcp-make.active .nm { font-weight: 600; }
+        .ch2-srcp-make.active { background: rgba(255,255,255,0.08); }
+        .ch2-srcp-make .nm { font-size: 12px; color: var(--text-muted); }
+        .ch2-srcp-make.active .nm { color: var(--text); font-weight: 600; }
         .ch2-srcp-make .sub {
-            font-size: 9px; color: var(--text-muted); margin-top: 2px;
+            font-size: 9px; color: var(--text-ghost); margin-top: 2px;
             font-family: 'JetBrains Mono', monospace;
         }
-        .ch2-srcp-make .tickn { color: var(--accent); }
 
         .ch2-srcp-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
         .ch2-srcp-vers {
-            display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+            display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
             padding: 8px 12px;
             border-bottom: 1px solid var(--border);
             background: var(--bg-toolbar);
@@ -2684,40 +2687,27 @@
             font-size: 11px; font-weight: 600; color: var(--text-muted);
             text-transform: uppercase; letter-spacing: .05em;
         }
-        .ch2-srcp-ver {
-            background: transparent; border: 1px solid var(--border);
-            color: var(--text-muted);
-            padding: 4px 12px; border-radius: var(--radius-sm);
-            font-size: 11px; font-family: inherit; cursor: pointer;
-            display: inline-flex; align-items: center; gap: 6px;
-        }
-        .ch2-srcp-ver:hover { border-color: var(--border-light); color: var(--text); }
-        .ch2-srcp-ver.active {
-            background: rgba(255,255,255,0.06);
-            color: var(--text); font-weight: 600;
-            box-shadow: inset 0 -2px 0 var(--accent);
-        }
-        /* Scoped name, not `.badge`: the global .badge is an accent-filled
-         * pill, which painted this as a solid blue block with its own text
-         * invisible inside it. Chrome stays monochrome; the accent marks the
-         * active thing rather than painting it (ADR-0014). */
-        .ch2-srcp-ver .ver-on {
-            font-size: 8px; letter-spacing: .06em; text-transform: uppercase;
-            color: var(--accent); font-weight: 700;
+        /* A native select, styled only enough to sit in the dark toolbar. */
+        .ch2-srcp-vers select {
+            background: var(--bg); color: var(--text);
+            border: 1px solid var(--border); border-radius: var(--radius-sm);
+            padding: 4px 8px; font-size: 12px; font-family: inherit;
+            max-width: 100%;
         }
 
         .ch2-srcp-list { overflow-y: auto; flex: 1; min-height: 0; }
         .ch2-srcp-row {
             display: flex; align-items: center; gap: 10px;
             padding: 7px 14px; cursor: pointer;
-            border-left: 2px solid transparent;
             transition: background .12s;
         }
-        .ch2-srcp-row:nth-child(even) { background: rgba(255,255,255,0.02); }
         .ch2-srcp-row:hover { background: rgba(255,255,255,0.05); }
-        .ch2-srcp-row.active {
-            background: rgba(255,255,255,0.07);
-            border-left-color: var(--accent);
+        .ch2-srcp-row.active { background: rgba(255,255,255,0.09); }
+        /* Native checkbox in add mode: no custom box to draw, no state to get
+         * wrong, and it reads as tickable without being told. Pointer events
+         * off so the row's own click handles it — one target, one toggle. */
+        .ch2-srcp-row input[type="checkbox"] {
+            flex-shrink: 0; margin: 0; pointer-events: none;
         }
         .ch2-srcp-row .txt { min-width: 0; flex: 1; }
         .ch2-srcp-row .nm {
@@ -2735,31 +2725,32 @@
             font-size: 9px; color: var(--text-ghost); margin-left: 6px;
             text-transform: uppercase; letter-spacing: .05em;
         }
-        .ch2-srcp-row .inuse {
-            font-size: 8px; letter-spacing: .06em; text-transform: uppercase;
-            color: var(--accent); margin-left: 6px;
-        }
+        .ch2-srcp-row .inuse { font-size: 11px; color: var(--text-muted); margin-left: 6px; }
         .ch2-srcp-row .val {
             font-family: 'JetBrains Mono', monospace; font-size: 12px;
             color: var(--text); flex-shrink: 0;
         }
         .ch2-srcp-row .val .u { font-size: 9px; color: var(--text-muted); margin-left: 2px; }
-        /* Add mode's tick: a small neutral square, filled when picked. Greys,
-         * calm — it is state, not a call to action (ADR-0018). */
-        .ch2-srcp-row .tick {
-            width: 14px; height: 14px; flex-shrink: 0;
-            border: 1px solid var(--border-light); border-radius: 3px;
-            display: inline-flex; align-items: center; justify-content: center;
-            font-size: 10px; color: var(--text);
-        }
-        .ch2-srcp-row.ticked .tick {
-            background: var(--accent); border-color: var(--accent); color: #1a1a1a;
-        }
         .ch2-srcp-note {
             padding: 20px; text-align: center;
             color: var(--text-muted); font-size: 11px;
         }
         /* Phone: the rail becomes a scrolling chip row above the list. */
+        @media (max-width: 720px) {
+            .ch2-srcp { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0,1fr); }
+            .ch2-srcp-rail {
+                display: flex; gap: 6px; overflow-x: auto; overflow-y: hidden;
+                border-right: none; border-bottom: 1px solid var(--border);
+                padding: 6px 8px; align-items: center;
+            }
+            .ch2-srcp-grouphead { display: none; }
+            .ch2-srcp-make {
+                border: 1px solid var(--border); border-radius: 4px;
+                padding: 5px 12px; white-space: nowrap; flex-shrink: 0;
+            }
+            .ch2-srcp-make.active { border-color: var(--border-light); }
+            .ch2-srcp-make .sub { display: none; }
+        }
         /* The footer's three items do not fit a phone. The primary action and
          * the author button both have to stay reachable, so the breadcrumb is
          * what goes: the highlighted row already says what is selected, and a
@@ -2790,28 +2781,6 @@
             .ch2-srcp-make .sub { display: none; }
         }
 
-        /* preset-col-item variants for the source picker — value + zone
-         * tinting on the right side. */
-        #chSrcColSignal .preset-col-item {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 8px;
-        }
-        #chSrcColSignal .preset-col-item .sig-val {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 11px;
-            color: var(--text-muted);
-            white-space: nowrap;
-        }
-        #chSrcColSignal .preset-col-item.active .sig-val { color: rgba(0,0,0,0.7); }
-        #chSrcColSignal .preset-col-item .sig-current {
-            font-size: 9px;
-            color: var(--accent);
-            margin-left: 6px;
-            text-transform: uppercase;
-            font-weight: 700;
-        }
         .ch2-picker-head {
             display: flex;
             justify-content: space-between;
@@ -25967,27 +25936,34 @@
                             <div class="nm">${_textEscape(m.make)}</div>
                             <div class="sub">${q ? (hits[m.make] + ' match' + (hits[m.make] === 1 ? '' : 'es'))
                                                  : (total + ' signal' + (total === 1 ? '' : 's'))}${
-                                ticked ? ` · <span class="tickn">${ticked} picked</span>` : ''}</div>
+                                ticked ? ` · ${ticked} picked` : ''}</div>
                         </div>`);
                 });
             });
             document.getElementById('srcPRail').innerHTML =
                 rail.join('') || '<div class="ch2-srcp-note">No matches.</div>';
 
-            /* ── Version chips ── one question you answer once, not a column
-             * you scroll. Hidden when there is nothing to choose. */
+            /* ── Version: a plain dropdown. ── One question you answer once,
+             * and a native <select> answers it in one control that needs no
+             * styling and no explaining. It was a row of segmented buttons
+             * with an accent underline and an accent "on this car" badge —
+             * three visual devices for a choice most cars make once. */
             const m = makes.find(x => x.make === _srcP.make);
             const vers = (m && m.versions) || [];
             const vbox = document.getElementById('srcPVersions');
-            if (q || vers.length < 2) {
-                vbox.innerHTML = q
-                    ? `<div class="ch2-srcp-vershead">Matches across every source</div>`
-                    : (m ? `<div class="ch2-srcp-vershead">${_textEscape((vers[0] && (vers[0].display || vers[0].version)) || m.make)}</div>` : '');
+            if (q) {
+                vbox.innerHTML = `<span class="ch2-srcp-vershead">Matches across every source</span>`;
+            } else if (vers.length < 2) {
+                vbox.innerHTML = m
+                    ? `<span class="ch2-srcp-vershead">${_textEscape((vers[0] && (vers[0].display || vers[0].version)) || m.make)}</span>`
+                    : '';
             } else {
-                vbox.innerHTML = vers.map(v =>
-                    `<button class="ch2-srcp-ver${v.version === _srcP.version ? ' active' : ''}"
-                             onclick="_srcPPickVersion('${_escJs(v.version)}')">${_textEscape(v.version)}${
-                        v.is_active ? '<span class="ver-on">on this car</span>' : ''}</button>`).join('');
+                vbox.innerHTML = `<label class="ch2-srcp-vershead" for="srcPVerSel">Version</label>`
+                    + `<select id="srcPVerSel" onchange="_srcPPickVersion(this.value)">`
+                    + vers.map(v =>
+                        `<option value="${_escAttr(v.version)}"${v.version === _srcP.version ? ' selected' : ''}>`
+                        + `${_textEscape(v.version)}${v.is_active ? ' (on this car)' : ''}</option>`).join('')
+                    + `</select>`;
             }
 
             /* ── Signal list ── */
@@ -26002,13 +25978,13 @@
                 const val = e.s.live_value;
                 const live = !!(e.s.exists_in_layout && !e.s.is_stale && val != null && !isNaN(val));
                 const meta = _srcPRowMeta(e.s);
-                return `<div class="ch2-srcp-row${sel ? ' active' : ''}${on ? ' ticked' : ''}${cur ? ' current' : ''}"
+                return `<div class="ch2-srcp-row${sel ? ' active' : ''}${cur ? ' current' : ''}"
                              onclick="${addMode ? `_srcPToggle('${_escJs(key)}')` : `_srcPPickSig('${_escJs(key)}')`}">
-                    ${addMode ? `<span class="tick">${on ? '&#10003;' : ''}</span>` : ''}
+                    ${addMode ? `<input type="checkbox" tabindex="-1"${on ? ' checked' : ''}>` : ''}
                     <div class="txt">
                         <div class="nm">${_textEscape(e.s.label)}${
                             q ? `<span class="mk">${_textEscape(e.m.make)} &rsaquo; ${_textEscape(e.v.version)}</span>` : ''}${
-                            cur ? '<span class="inuse">in use</span>' : ''}</div>
+                            cur ? '<span class="inuse">· in use</span>' : ''}</div>
                         ${meta ? `<div class="meta">${_textEscape(meta)}</div>` : ''}
                     </div>
                     ${live ? `<span class="val">${Number(val).toFixed(e.s.decimals ?? 0)}<span class="u">${_textEscape(e.s.unit || '')}</span></span>` : ''}
