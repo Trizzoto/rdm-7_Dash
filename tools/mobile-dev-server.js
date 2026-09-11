@@ -199,57 +199,110 @@ const MOCK = {
  * fall back to the built-in mock set. */
 const SAVED_CHANNELS = path.join(ROOT, 'tools', 'dev_channels.json');
 
-/* Stand-in ECU catalog for /api/channels/source-options. Real makes with real
- * frames, trimmed to a few signals each — enough to drive the ECU column, the
- * version column, the tick list and the frame/bit line in each row. Only
- * kind:"ecu" rows carry a decode, which is what the picker filters on. */
-const _ecuSig = (label, signal_name, can_id, bit_start, bit_length, scale, unit, decimals) =>
-  ({ kind: 'ecu', label, signal_name, can_id, bit_start, bit_length,
-     scale, offset: 0, is_signed: false, endian: 0, decimals, unit });
-const DEV_ECU_MAKES = [
-  { make: 'MaxxECU', is_active: true, versions: [
-    { version: '1.3', display: 'MaxxECU 1.3', is_active: true, signals: [
-      _ecuSig('RPM', 'RPM', 0x520, 0, 16, 1, 'rpm', 0),
-      _ecuSig('Coolant Temp', 'COOLANT_TEMP', 0x521, 0, 16, 0.1, 'C', 1),
-      _ecuSig('Manifold Pressure', 'MAP', 0x522, 16, 16, 0.1, 'kPa', 1),
-      _ecuSig('Lambda', 'LAMBDA', 0x523, 0, 16, 0.001, '', 3),
-      _ecuSig('Battery Voltage', 'BATTERY_VOLTAGE', 0x524, 0, 16, 0.01, 'V', 2),
-      _ecuSig('Total Fuel Trim', 'TOTAL_FUEL_TRIM', 0x525, 0, 16, 0.1, '%', 1),
-    ] },
-    { version: '1.2', display: 'MaxxECU 1.2', is_active: false, signals: [
-      _ecuSig('RPM', 'RPM', 0x520, 0, 16, 1, 'rpm', 0),
-      _ecuSig('Coolant Temp', 'COOLANT_TEMP', 0x521, 0, 16, 0.1, 'C', 1),
-    ] },
-  ] },
-  { make: 'Haltech', is_active: false, versions: [
-    { version: 'Nexus', display: 'Haltech Nexus', is_active: false, signals: [
-      _ecuSig('Engine RPM', 'ENGINE_RPM', 0x360, 0, 16, 1, 'rpm', 0),
-      _ecuSig('Manifold Pressure', 'MANIFOLD_PRESSURE', 0x360, 16, 16, 0.1, 'kPa', 1),
-      _ecuSig('Throttle Position', 'THROTTLE_POSITION', 0x360, 32, 16, 0.1, '%', 1),
-      _ecuSig('Oil Pressure', 'OIL_PRESSURE', 0x372, 0, 16, 0.1, 'kPa', 1),
-      _ecuSig('Battery Volt', 'BATTERY_VOLT', 0x372, 16, 16, 0.1, 'V', 1),
-      _ecuSig('Ambient Air Temp', 'AMBIENT_AIR_TEMP', 0x3E0, 48, 16, 0.1, 'C', 1),
-    ] },
-  ] },
-  { make: 'Link', is_active: false, versions: [
-    { version: 'G4X', display: 'Link G4X', is_active: false, signals: [
-      _ecuSig('Engine Speed', 'ENGINE_SPEED', 0x3E8, 0, 16, 1, 'rpm', 0),
-      _ecuSig('MGP', 'MGP', 0x3E8, 16, 16, 0.1, 'kPa', 1),
-      _ecuSig('TPS', 'TPS', 0x3E9, 0, 16, 0.1, '%', 1),
-      _ecuSig('IAT', 'IAT', 0x3E9, 16, 16, 0.1, 'C', 1),
-      _ecuSig('Gear Position', 'GEAR_POSITION', 0x3EA, 0, 8, 1, '', 0),
-    ] },
-  ] },
-  /* Virtual buckets the real endpoint also returns. The picker must filter
-   * these OUT — they carry no importable decode. */
-  { make: 'OBD2', is_active: false, versions: [
+/* ECU catalog for /api/channels/source-options, built from the SAME baked
+ * catalogue the page itself carries (window.RDM_BAKED_CATALOG, ADR-0033),
+ * which is codegen output from the firmware's real preconfig_items[].
+ *
+ * This used to be a hand-typed stand-in "trimmed to a few signals each". It
+ * rotted: its Link entry was one version called "G4X" with 5 signals spread
+ * over 0x3E8/0x3E9/0x3EA — the pre-1.4.1 model of Link as consecutive ids,
+ * which the firmware fixed because it made a Link undetectable AND decoded
+ * garbage. Reviewing the source picker against that mock in 2026-09 produced
+ * exactly the wrong conclusion ("Generic Dash is missing, the catalogue isn't
+ * populated") about a firmware that has had all 41 Generic Dash rows for
+ * months. A mock that can teach you a fixed bug is worse than no mock.
+ *
+ * Parsing the served HTML means it cannot drift again: that block is codegen
+ * output guarded by `--check` in schema-check.yml, so it IS the firmware
+ * table. Re-read per request — one file read, and editing the catalogue
+ * mid-session then shows up without a server restart. */
+function _bakedPresets() {
+  try {
+    const html = fs.readFileSync(INDEX_HTML, 'utf8');
+    const m = html.match(/window\.RDM_BAKED_CATALOG\s*=\s*(\{[\s\S]*?\});/);
+    if (!m) return [];
+    return JSON.parse(m[1]).presets || [];
+  } catch (e) {
+    console.warn('[mock] could not read baked catalogue:', e.message);
+    return [];
+  }
+}
+
+/* Which ECU the mock pretends the car runs. Deliberately a MULTIPLEXED one:
+ * the frame-gate UI is the part most likely to be wrong, so the default view
+ * should exercise it rather than hide it. */
+const DEV_ACTIVE_MAKE = 'Link ECU';
+const DEV_ACTIVE_VERSION = 'Generic Dash';
+
+/* A few live values so the picker's value column isn't all dashes. Keyed by
+ * derived signal name (the firmware's _derive_signal_name: label uppercased,
+ * runs of non-alphanumerics to underscore). */
+const DEV_LIVE = {
+  ENGINE_SPEED: 3120, RPM: 3120, COOLANT_TEMP: 88, ECT: 88,
+  OIL_TEMP: 95, OIL_PRESSURE: 412, IAT: 24, MAP: 101, TPS: 14.2,
+  BATTERY_VOLTAGE: 13.9, ECU_VOLTS: 13.9, LAMBDA_1: 0.99, MGP: 1,
+};
+
+const _deriveSigName = (label) =>
+  String(label || '').toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+
+/* Group the flat preset rows into the makes -> versions -> signals shape
+ * channels_source_options_handler() emits. */
+function _devEcuMakes() {
+  const makes = [];
+  _bakedPresets().forEach((p) => {
+    let m = makes.find((x) => x.make === p.ecu);
+    if (!m) {
+      m = { make: p.ecu, is_active: p.ecu === DEV_ACTIVE_MAKE, versions: [] };
+      makes.push(m);
+    }
+    let v = m.versions.find((x) => x.version === p.version);
+    if (!v) {
+      const active = p.ecu === DEV_ACTIVE_MAKE && p.version === DEV_ACTIVE_VERSION;
+      v = { version: p.version, display: p.display || (p.ecu + ' ' + p.version),
+            is_active: active, signals: [] };
+      m.versions.push(v);
+    }
+    const sname = _deriveSigName(p.label);
+    const row = {
+      kind: 'ecu', label: p.label, signal_name: sname,
+      can_id: parseInt(p.can_id, 16) >>> 0,
+      bit_start: p.bit_start, bit_length: p.bit_length,
+      scale: p.scale, offset: p.offset,
+      is_signed: !!p.is_signed, endian: p.endian, decimals: p.decimals,
+      unit: p.unit || '',
+    };
+    /* The frame gate rides along exactly as the firmware sends it, so the
+     * picker can print "frame N" and a bind installs the same decode. */
+    if (p.mux_bit_length) {
+      row.mux_bit_start = p.mux_bit_start || 0;
+      row.mux_bit_length = p.mux_bit_length;
+      row.mux_value = p.mux_value || 0;
+    }
+    if (v.is_active && DEV_LIVE[sname] != null) {
+      row.exists_in_layout = true;
+      row.is_stale = false;
+      row.live_value = DEV_LIVE[sname];
+    }
+    v.signals.push(row);
+  });
+
+  /* The two virtual makes the real endpoint synthesises. The ECU-import
+   * picker filters them out, but "Pick a source" shows them, so leaving them
+   * out would be its own lie. */
+  makes.push({ make: 'OBD2', is_active: false, versions: [
     { version: 'Standard', display: 'OBD2 Standard (any 2008+ car)', is_active: false,
-      signals: [{ kind: 'obd2', label: 'Engine RPM', signal_name: 'RPM', service: 1, pid: 0x0C, unit: 'rpm' }] },
-  ] },
-  { make: 'Custom', is_active: false, versions: [
-    { version: 'User-defined', display: 'Custom CAN + DBC imports', is_active: false, signals: [] },
-  ] },
-];
+      signals: DEV_OBD2_MAP.map((d) => ({
+        kind: 'obd2', label: d.label, signal_name: d.sig,
+        unit: d.units, service: 1, pid: d.pid, polled: false,
+      })) },
+  ] });
+  makes.push({ make: 'Custom', is_active: false, versions: [
+    { version: 'User-defined', display: 'Custom CAN + DBC imports', is_active: false,
+      signals: [] },
+  ] });
+  return makes;
+}
 
 /* Trimmed mirror of the firmware's CANONICAL_OBD2_MAP, for browser dev
  * only (see the /api/obd2/scan mock). The shipping page never reads this —
@@ -272,19 +325,36 @@ const DEV_OBD2_MAP = [
  * offered count exactly as it does on a real car. */
 const DEV_OBD2_ANSWERS = [0x04, 0x05, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x1F, 0x21, 0x2F, 0x42, 0x45];
 
+/* Seed channels carry a real `decode`, and the CAN-sourced ones are aimed at
+ * the SAME multiplexed Link stream the source-options mock and the
+ * /api/can/monitor mock describe (0x3E8, frame index in byte 0). That makes
+ * the drawer's decode editor and its live bus probe exercisable off-device:
+ * without a decode the probe has no id to watch and sits on its placeholder,
+ * which reads as a broken bus view rather than an empty one. */
 const DEFAULT_CHANNELS = [
   { id: 'oil_pressure', label: 'Oil Pressure', group: 0, tier: 0, is_canonical: true,
-    signal: 'OIL_PRES', source: 'can', units_native: 'kPa', units_display: 'bar', decimals: 2,
-    min: 0, max: 1000, low_warn: 80, high_warn: 650, current_value: 203.9, is_stale: false },
+    signal: 'OIL_PRESSURE', source: 'can', units_native: 'kPa', units_display: 'bar', decimals: 2,
+    min: 0, max: 1000, low_warn: 80, high_warn: 650, current_value: 203.9, is_stale: false,
+    decode: { can_id: 0x3E8, bit_start: 32, bit_length: 16, scale: 1, offset: 0,
+              is_signed: false, endian: 1, unit: 'kPa',
+              mux_bit_start: 0, mux_bit_length: 8, mux_value: 8 } },
   { id: 'coolant_temp', label: 'Coolant Temp', group: 0, tier: 0, is_canonical: true,
-    signal: 'COOLANT', source: 'can', units_native: '°C', units_display: '°C', decimals: 0,
-    min: -40, max: 150, low_warn: null, high_warn: 105, current_value: 88, is_stale: false },
+    signal: 'COOLANT_TEMP', source: 'can', units_native: '°C', units_display: '°C', decimals: 0,
+    min: -40, max: 150, low_warn: null, high_warn: 105, current_value: 88, is_stale: false,
+    decode: { can_id: 0x3E8, bit_start: 48, bit_length: 16, scale: 1, offset: -50,
+              is_signed: false, endian: 1, unit: '°C',
+              mux_bit_start: 0, mux_bit_length: 8, mux_value: 2 } },
   { id: 'vehicle_speed', label: 'Vehicle Speed', group: 2, tier: 0, is_canonical: true,
     signal: 'SPEED', source: 'can', units_native: 'km/h', units_display: 'km/h', decimals: 0,
-    min: 0, max: 300, low_warn: null, high_warn: null, current_value: 67.4, is_stale: false },
+    min: 0, max: 300, low_warn: null, high_warn: null, current_value: 67.4, is_stale: false,
+    decode: { can_id: 0x5F0, bit_start: 48, bit_length: 16, scale: 0.01, offset: 0,
+              is_signed: false, endian: 1, unit: 'km/h' } },
   { id: 'custom_lambda', label: 'Lambda', group: 99, tier: 1, is_canonical: false,
-    signal: 'LAMBDA', source: 'can', units_native: 'λ', units_display: '', decimals: 2,
-    min: 0.6, max: 1.4, low_warn: 0.75, high_warn: 1.1, current_value: 0.98, is_stale: false }
+    signal: 'LAMBDA_1', source: 'can', units_native: 'λ', units_display: '', decimals: 2,
+    min: 0.6, max: 1.4, low_warn: 0.75, high_warn: 1.1, current_value: 0.98, is_stale: false,
+    decode: { can_id: 0x3E8, bit_start: 32, bit_length: 16, scale: 0.001, offset: 0,
+              is_signed: false, endian: 1, unit: 'λ',
+              mux_bit_start: 0, mux_bit_length: 8, mux_value: 6 } }
 ];
 
 /* Fuel-over-CAN forward config (dev, in-memory). Mirrors the firmware
@@ -590,13 +660,70 @@ const server = http.createServer((req, res) => {
      * Link rows stand in, and import-preset just mints a channel per label
      * so the picker's counts and refresh path are honest. */
     if (url.startsWith('/api/channels/source-options') && req.method === 'GET') {
-      return sendJson(res, { makes: DEV_ECU_MAKES, current_signal: '' });
+      /* Answer the ?id= the way the firmware does: report which signal that
+       * channel is bound to, and mark the matching row is_current. Without it
+       * no row ever showed "in use", so the picker's most important state —
+       * "this is where it comes from today" — could not be seen in dev. */
+      const q = new URLSearchParams((req.url.split('?')[1] || ''));
+      const want = q.get('id');
+      const ch = want ? channelStore.find(c => c.id === want) : null;
+      const cur = ch ? (ch.signal || '') : '';
+      const makes = _devEcuMakes();
+      if (cur) makes.forEach(m => (m.versions || []).forEach(v =>
+        (v.signals || []).forEach(sg => { if (sg.signal_name === cur) sg.is_current = true; })));
+      return sendJson(res, { makes, current_signal: cur });
+    }
+    /* Bind one channel to one source. Mirrors channels_bind_source_handler:
+     * an ecu_preset bind INSTALLS that preset row's decode on the channel —
+     * which is the whole point, and the reason this could not be left to the
+     * catch-all {ok:true}. It answered 200 while changing nothing, so the
+     * picker looked like it worked and the channel kept its old decode. */
+    if (url === '/api/channels/bind-source' && req.method === 'POST') {
+      return readBody(req, (body) => {
+        let d;
+        try { d = JSON.parse(body || '{}'); }
+        catch (e) { return sendJson(res, { error: 'bad json' }, 400); }
+        const ch = channelStore.find(c => c.id === d.channel_id);
+        if (!ch) return sendJson(res, { error: 'no such channel' }, 404);
+        const type = d.source_type
+          || ((d.obd2_service != null && d.obd2_pid != null) ? 'obd2' : 'custom');
+
+        if (type === 'ecu_preset') {
+          const mk = _devEcuMakes().find(m => m.make === d.make);
+          const vr = mk && (mk.versions || []).find(v => v.version === d.version);
+          const row = vr && (vr.signals || []).find(sg => sg.label === d.label);
+          if (!row) return sendJson(res, { error: 'no such preset row' }, 404);
+          ch.signal = row.signal_name;
+          ch.source = 'can';
+          ch.decode = {
+            can_id: row.can_id, bit_start: row.bit_start, bit_length: row.bit_length,
+            scale: row.scale, offset: row.offset, is_signed: !!row.is_signed,
+            endian: row.endian, unit: row.unit || ch.units_native || '',
+          };
+          if (row.mux_bit_length) {
+            ch.decode.mux_bit_start  = row.mux_bit_start || 0;
+            ch.decode.mux_bit_length = row.mux_bit_length;
+            ch.decode.mux_value      = row.mux_value || 0;
+          }
+        } else if (type === 'obd2') {
+          ch.signal = d.signal_name || ch.signal;
+          ch.source = 'obd2';
+          delete ch.decode;
+        } else {
+          ch.signal = d.signal_name || ch.signal;
+          ch.source = 'can';
+        }
+        ch.is_stale = false;
+        persistChannelStore();
+        console.log(`[channels] bind ${d.channel_id} <- ${type} ${ch.signal}`);
+        return sendJson(res, { ok: true, channel: ch });
+      });
     }
     if (url === '/api/channels/import-preset' && req.method === 'POST') {
       return readBody(req, (body) => {
         try {
           const d = JSON.parse(body || '{}');
-          const mk = DEV_ECU_MAKES.find(m => m.make === d.make);
+          const mk = _devEcuMakes().find(m => m.make === d.make);
           const vr = mk && (mk.versions || []).find(v => v.version === d.version);
           if (!vr) return sendJson(res, { error: 'no such make/version' }, 404);
           const want = Array.isArray(d.labels) && d.labels.length
@@ -614,6 +741,15 @@ const server = http.createServer((req, res) => {
                 can_id: s.can_id, bit_start: s.bit_start,
                 bit_length: s.bit_length, scale: s.scale,
                 offset: s.offset, is_signed: !!s.is_signed, endian: s.endian,
+                /* Carry the frame gate. Without it a bulk import off a
+                 * multiplexed ECU mints channels that decode every frame on
+                 * the id — the convincing-garbage failure, reproduced in the
+                 * mock instead of caught by it. */
+                ...(s.mux_bit_length ? {
+                  mux_bit_start: s.mux_bit_start || 0,
+                  mux_bit_length: s.mux_bit_length,
+                  mux_value: s.mux_value || 0,
+                } : {}),
               },
             });
             applied++;
@@ -724,6 +860,73 @@ const server = http.createServer((req, res) => {
       const idx = customPresetStore.findIndex(p => p.ecu === ecu && p.version === version);
       if (idx >= 0) customPresetStore.splice(idx, 1);
       return sendJson(res, { ok: true });
+    }
+    /* Live bus monitor, including the per-mux-value focus block.
+     *
+     * Mirrors main/net/web_server_test.c: "ids" holds ONE frame per id (the
+     * most recent, whatever its mux value) and ?focus=<id> adds a "focus"
+     * block holding the latest frame for EACH mux value. Without this the
+     * multiplexed-channel form cannot be exercised at all off-device — its
+     * whole point is watching the right frame decode, and a dev server that
+     * answers {ok:true} shows "not seen on the bus" forever.
+     *
+     * The synthetic stream is Link Generic Dash shaped: everything on 0x3E8,
+     * frame index in byte 0, three 16-bit Intel words after it. */
+    if (url === '/api/can/monitor' && req.method === 'GET') {
+      const q = new URLSearchParams(req.url.split('?')[1] || '');
+      const t = Date.now() / 1000;
+      const w = (v) => {
+        const n = Math.max(0, Math.round(v)) & 0xFFFF;
+        return [(n & 0xFF), (n >> 8)];   /* Intel: low byte first */
+      };
+      const frame = (idx, a, b, c) => {
+        const bytes = [idx, 0, ...w(a), ...w(b), ...w(c)];
+        return bytes.map(x => x.toString(16).toUpperCase().padStart(2, '0')).join('');
+      };
+      /* Values wander so the readout visibly lives. */
+      const LINK = {
+        0: () => frame(0, 3200 + Math.sin(t) * 900, 101 + Math.sin(t * 0.7) * 12, 0),
+        2: () => frame(2, 0, 0, 88 + 50 + Math.sin(t * 0.3) * 4),   /* coolant +50 */
+        3: () => frame(3, 24 + 50, 1420, 0),                        /* IAT +50 */
+        4: () => frame(4, 3, 0, 1000 + Math.sin(t) * 120),          /* gear, timing */
+        6: () => frame(6, 0, 995 + Math.sin(t * 1.3) * 40, 0),      /* lambda x1000 */
+        8: () => frame(8, 95 + 50, 410 + Math.sin(t * 0.5) * 30, 0),/* oil T/P */
+      };
+      const keys = Object.keys(LINK).map(Number);
+      /* The main table keeps whichever arrived last — emulate that by
+       * cycling, so an ungated preview flickers here exactly as on a car. */
+      const last = keys[Math.floor(t * 8) % keys.length];
+
+      const out = {
+        ids: [
+          { id: 0x3E8, dlc: 8, data: LINK[last](), count: 41000 + Math.floor(t * 8),
+            age_ms: 12,
+            /* bits set for every frame index this id has carried */
+            mux_seen: keys.reduce((m, k) => m | (1 << k), 0) },
+          { id: 0x5F0, dlc: 8, data: frame(0, 3200, 0, 0), count: 20500, age_ms: 9 },
+        ],
+        capacity: 64,
+      };
+
+      const focusId = q.get('focus');
+      if (focusId && Number(focusId) !== 0) {
+        const fid = /^0x/i.test(focusId) ? parseInt(focusId, 16) : parseInt(focusId, 10);
+        if (fid === 0x3E8) {
+          const muxLen = parseInt(q.get('mux_len') || '0', 10);
+          out.focus = {
+            id: fid,
+            capacity: 16,
+            frames: muxLen > 0
+              ? keys.map(k => ({ mux: k, data: LINK[k](), dlc: 8,
+                                 count: 6800 + k, age_ms: 20 + k }))
+              /* mux_len 0 = focused but not split: one bucket, like the device */
+              : [{ mux: 0, data: LINK[last](), dlc: 8, count: 41000, age_ms: 12 }],
+          };
+        } else {
+          out.focus = { id: fid, capacity: 16, frames: [] };
+        }
+      }
+      return sendJson(res, out);
     }
     if (handler) return sendJson(res, handler());
     console.log(`[mock] no handler for ${key} — returning {ok:true}`);

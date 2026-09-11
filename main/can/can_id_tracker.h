@@ -35,12 +35,14 @@ typedef struct {
      * score those frames individually. Values above 15 are not tracked: no
      * catalogued stream uses them, and 16 bits keeps the entry small.
      *
-     * Deliberately placed here, in the two bytes of padding that already sat
-     * between `extended` and `rx_count`: this table is 64 entries of static
-     * INTERNAL .bss, and internal RAM on this board is scarce enough that
-     * TLS fails when it runs short (see the OTA notes in docs/). Sitting in
-     * the hole costs nothing; below `last_seen_us` it would have grown the
-     * struct by 8 bytes each, 512 in total. */
+     * Assumes the mux field is byte 0. That is the near-universal convention
+     * and all that preset auto-detect needs, but it is NOT what the decoder
+     * supports — channel_manager_set_mux() accepts any start/length within
+     * the frame. For an arbitrary mux field, use the focus buffer below.
+     *
+     * Sits in the two bytes of padding that already sat between `extended`
+     * and `rx_count`, so it costs nothing; below `last_seen_us` it would
+     * have grown the struct by 8 bytes each, 512 in total. */
     uint16_t mux_seen;
 
     uint32_t rx_count;
@@ -73,6 +75,58 @@ const can_id_entry_t *can_id_tracker_get(uint16_t idx);
 /** Recompute the rolling Hz for every entry. Cheap (linear over count).
  *  Call once per second from the UI before refreshing labels. */
 void can_id_tracker_recompute_hz(void);
+
+/* ── Focus buffer: per-mux-value payloads for ONE id ──────────────────────
+ *
+ * The main table keeps a single data[8] per ID — the most recent frame,
+ * whatever its mux value. That is fine for a bus overview and useless for
+ * building a multiplexed channel: on a stream cycling 14 payloads through
+ * one ID, a poll catches a random one, so a live decode preview flickers
+ * across unrelated quantities instead of showing the field being edited.
+ *
+ * The focus buffer fixes that for the ID the user is currently working on:
+ * point it at (can_id, mux geometry) and it retains the latest payload for
+ * each distinct mux value separately. One ID at a time, because holding
+ * this for all 64 would cost 64x — and only one is ever being edited.
+ *
+ * The mux field is read with can_extract_bits(..., endian, false), matching
+ * signal_dispatch_frame() exactly, so what the preview decodes is what the
+ * running decoder will decode.
+ * ────────────────────────────────────────────────────────────────────── */
+
+#define CAN_ID_TRACKER_MAX_MUX_SLOTS 16
+
+typedef struct {
+    uint16_t mux_value;
+    uint8_t  data[8];
+    uint8_t  dlc;
+    uint32_t rx_count;      /* frames seen carrying this mux value */
+    int64_t  last_seen_us;
+} can_mux_slot_t;
+
+/** Point the focus buffer at an ID and mux geometry, discarding whatever it
+ *  held. Pass mux_bit_length 0 to focus an ID without splitting by mux (one
+ *  slot, mux_value 0). Safe to call from any task: this only publishes a
+ *  request, which the recording task adopts on its next frame. Calling it
+ *  with the same arguments is a no-op and does NOT discard collected slots,
+ *  so a UI can call it on every poll. */
+void can_id_tracker_set_focus(uint32_t can_id, bool extended,
+                              uint8_t mux_bit_start, uint8_t mux_bit_length,
+                              int endian);
+
+/** Stop focusing. The buffer is emptied on the next recorded frame. */
+void can_id_tracker_clear_focus(void);
+
+/** The focused ID, or 0 when focus is off. */
+uint32_t can_id_tracker_focus_id(void);
+
+/** Number of distinct mux values collected for the focused ID (<= MAX). */
+uint8_t can_id_tracker_focus_count(void);
+
+/** Slot at idx, or NULL when out of range. Like can_id_tracker_get(), the
+ *  pointer is only stable on the recording task; a reader on another task
+ *  accepts the same benign torn read the bus monitor already documents. */
+const can_mux_slot_t *can_id_tracker_focus_get(uint8_t idx);
 
 #ifdef __cplusplus
 }

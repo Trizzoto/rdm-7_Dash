@@ -13,6 +13,7 @@ Reading the codebase cold? Open the docs by the **question you have**, not by wh
 | Question | Open |
 |---|---|
 | How does a CAN frame become a widget update? | [`docs/handover/04-signal-and-can.md`](handover/04-signal-and-can.md) |
+| How do I decode an ID that carries several payloads (Link Generic Dash, a muxed DBC)? | [`docs/MULTIPLEXED_CAN.md`](MULTIPLEXED_CAN.md) |
 | How do I add a new widget type? | [`docs/handover/03-widget-system.md`](handover/03-widget-system.md) + the existing widget files in `main/widgets/` |
 | What's the LVGL mutex / threading rule? | [`CLAUDE.md`](../CLAUDE.md) § "Threading" |
 | What does the JSON layout look like? | [`docs/handover/03-widget-system.md`](handover/03-widget-system.md) + a saved `.json` in `data/layouts/` |
@@ -31,6 +32,7 @@ Reading the codebase cold? Open the docs by the **question you have**, not by wh
 | What analysis features does Studio have vs. AiM/RaceStudio-class tools? | [`docs/STUDIO_ANALYSIS_PLAN_2026-07.md`](STUDIO_ANALYSIS_PLAN_2026-07.md) (shipped; historical) → `rdm7-desktop/docs/LAP_ANALYSIS_REDESIGN_2026-07.md` for what's current |
 | How would a CAN keypad be configured from Studio? | [`docs/KEYPAD_WORKSPACE_PLAN.md`](KEYPAD_WORKSPACE_PLAN.md) (proposal, unbuilt) |
 | How would the GPS puck control an action camera? | [`docs/CAMERA_CONTROL_PLAN_2026-07.md`](CAMERA_CONTROL_PLAN_2026-07.md) (research, unbuilt) |
+| Why is there one source picker with two modes, and why is the decode editor not in "More"? | [`docs/adr/0069-one-source-picker-and-a-decode-editor-you-can-see.md`](adr/0069-one-source-picker-and-a-decode-editor-you-can-see.md) for the decision; [`docs/CHANNEL_SOURCE_UX_PLAN_2026-09.md`](CHANNEL_SOURCE_UX_PLAN_2026-09.md) for the analysis behind it |
 
 ## The four doc families
 
@@ -44,6 +46,8 @@ RDM-7_Dash/
 └── docs/
     ├── README.md        ← you are here
     ├── WASM_PREVIEW_BUILD_GUIDE.md   one-off: WASM offline preview build
+    ├── MULTIPLEXED_CAN.md              reference: mux decode contract + import from other CAN tooling
+    ├── CHANNEL_SOURCE_UX_PLAN_2026-09.md  shipped 2026-09-12 (ADR-0069); kept as the analysis
     ├── PLATFORM_PLAN_2026-07.md        proposal: dash -> device suite (keypad/GPS/IO)
     ├── STUDIO_SHELL_PLAN_2026-07.md    Studio nav/shell redesign; in progress
     ├── STUDIO_ANALYSIS_PLAN_2026-07.md shipped — analysis-gap closure; historical

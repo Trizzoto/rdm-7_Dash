@@ -418,7 +418,8 @@ static esp_err_t _signal_inject_handler(httpd_req_t *req) {
 
 /* ── Signal decode update (live, no layout reload) ──────────────────────────
  * POST /api/signal/update { name, can_id, bit_start, bit_length, scale,
- *   offset, is_signed, endian|is_little_endian, unit? }
+ *   offset, is_signed, endian|is_little_endian, unit?,
+ *   mux_bit_start?, mux_bit_length?, mux_value? }
  * Upsert: patches an existing signal's decode params in the runtime registry,
  * or registers it if new (covers the per-channel decode "fork"). Persistence
  * still rides on the layout save; this only makes the change take effect
@@ -434,6 +435,11 @@ typedef struct {
 	bool     is_signed;
 	uint8_t  endian;
 	bool     has_unit;
+	/* Frame gate for a multiplexed id. mux_bit_length 0 = not multiplexed,
+	 * which is also what an older editor that sends no mux keys produces. */
+	uint8_t  mux_bit_start;
+	uint8_t  mux_bit_length;
+	uint16_t mux_value;
 } signal_decode_req_t;
 
 static void _deferred_signal_update(void *arg) {
@@ -450,6 +456,10 @@ static void _deferred_signal_update(void *arg) {
 			s->is_signed  = r->is_signed;
 			s->endian     = r->endian;
 			if (r->has_unit) { strncpy(s->unit, r->unit, sizeof(s->unit) - 1); s->unit[sizeof(s->unit) - 1] = '\0'; }
+			/* Push the gate unconditionally, cleared form included: editing a
+			 * signal back to non-multiplexed has to REMOVE the gate, not
+			 * leave the previous one silently filtering every frame. */
+			signal_set_mux(idx, r->mux_bit_start, r->mux_bit_length, r->mux_value);
 		}
 	} else {
 		/* New signal (e.g. a per-channel decode fork) — register it so it
@@ -457,6 +467,11 @@ static void _deferred_signal_update(void *arg) {
 		signal_register_with_source(r->name, r->can_id, r->bit_start, r->bit_length,
 		                            r->scale, r->offset, r->is_signed, r->endian,
 		                            r->has_unit ? r->unit : "", SIGNAL_SOURCE_CAN);
+		if (r->mux_bit_length) {
+			int16_t nidx = signal_find_by_name(r->name);
+			if (nidx >= 0)
+				signal_set_mux(nidx, r->mux_bit_start, r->mux_bit_length, r->mux_value);
+		}
 	}
 	free(r);
 }
@@ -517,6 +532,29 @@ static esp_err_t _signal_update_handler(httpd_req_t *req) {
 	else r->endian = 1;
 	cJSON *ju = cJSON_GetObjectItemCaseSensitive(root, "unit");
 	if (cJSON_IsString(ju) && ju->valuestring) { strncpy(r->unit, ju->valuestring, sizeof(r->unit) - 1); r->has_unit = true; }
+	/* Frame gate. Bounds-checked the same way as the decode geometry above;
+	 * signal_set_mux() re-checks, but rejecting here keeps the error visible
+	 * to the caller instead of being a log line on the LVGL task. */
+	it = cJSON_GetObjectItemCaseSensitive(root, "mux_bit_length");
+	int mux_len = cJSON_IsNumber(it) ? it->valueint : 0;
+	if (mux_len > 0) {
+		it = cJSON_GetObjectItemCaseSensitive(root, "mux_bit_start");
+		int mux_start = cJSON_IsNumber(it) ? it->valueint : 0;
+		it = cJSON_GetObjectItemCaseSensitive(root, "mux_value");
+		int mux_val = cJSON_IsNumber(it) ? it->valueint : 0;
+		if (mux_len > 16 || mux_start < 0 || mux_start > 63 ||
+		    mux_start + mux_len > 64 || mux_val < 0 || mux_val > 0xFFFF) {
+			cJSON_Delete(root);
+			free(r);
+			httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+				"mux out of range (mux_bit_length 1-16, mux_bit_start 0-63, "
+				"start+length<=64, mux_value 0-65535)");
+			return ESP_FAIL;
+		}
+		r->mux_bit_start  = (uint8_t)mux_start;
+		r->mux_bit_length = (uint8_t)mux_len;
+		r->mux_value      = (uint16_t)mux_val;
+	}
 	cJSON_Delete(root);
 
 	rdm_async_call(_deferred_signal_update, r);

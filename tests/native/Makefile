@@ -18,7 +18,7 @@ LDFLAGS ?= -lm
 # the two drifted apart — test_obd2_pid_table and test_widget_warning_precedence
 # existed for a while but only ever ran on Windows. If you add a test, add it
 # here as well as writing the file.
-TESTS = test_can_decode test_widget_rules test_layout_migration test_widget_arc_precedence test_obd2_freeze_frame test_obd2_one_shot_decode test_obd2_pid_table test_ota_skip_version test_calculated_gear test_web_path_safety test_ecu_preset_match test_widget_fields test_widget_warning_precedence test_hardening_fixes test_meter_display_units test_arc_display_units test_widget_decimals_follow_channel test_track_map_geo test_meter_sweep_angles test_rdm_bus_proto test_can_mux test_ecu_preset_rebase test_channel_math_fold test_keypad_lights
+TESTS = test_can_decode test_widget_rules test_layout_migration test_widget_arc_precedence test_obd2_freeze_frame test_obd2_one_shot_decode test_obd2_pid_table test_ota_skip_version test_calculated_gear test_web_path_safety test_ecu_preset_match test_widget_fields test_widget_warning_precedence test_hardening_fixes test_meter_display_units test_arc_display_units test_widget_decimals_follow_channel test_track_map_geo test_meter_sweep_angles test_rdm_bus_proto test_can_mux test_can_mux_focus test_ecu_preset_rebase test_channel_math_fold test_keypad_lights
 
 BIN_DIR := build
 BINS    := $(addprefix $(BIN_DIR)/, $(TESTS))
@@ -123,6 +123,14 @@ $(BIN_DIR)/test_obd2_pid_table: test_obd2_pid_table.c unity.c ../../main/can/obd
 	$(CC) $(CFLAGS) \
 	    test_obd2_pid_table.c unity.c ../../main/can/obd2_pids.c \
 	    -o $@ $(LDFLAGS)
+
+# can_mux_focus links the REAL can_id_tracker.c so the shipped per-mux-value
+# bucketing is asserted, not a copy. Needs the esp_attr/esp_log/esp_timer
+# shims (the tracker's table is EXT_RAM_BSS_ATTR on the device) plus the real
+# can_decode.c, because the focus buffer reads the mux field with exactly the
+# extractor the decode gate uses.
+$(BIN_DIR)/test_can_mux_focus: test_can_mux_focus.c unity.c ../../main/can/can_decode.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -Imocks -I../../main -I../../main/can 	    test_can_mux_focus.c unity.c ../../main/can/can_decode.c 	    -o $@ $(LDFLAGS)
 
 clean:
 	rm -rf $(BIN_DIR)

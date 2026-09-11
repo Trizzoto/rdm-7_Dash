@@ -635,8 +635,58 @@ static esp_err_t _can_scan_status_handler(httpd_req_t *req) {
  * and a torn read shows one momentarily-mixed frame in a monitor UI — far
  * better than stalling either task. Rate is computed CLIENT-side from
  * rx_count deltas between polls (finer than the tracker's 1 s Hz window,
- * and avoids mutating tracker state from the httpd task). */
+ * and avoids mutating tracker state from the httpd task).
+ *
+ * Each "ids" entry carries one frame — the most recent, whatever its mux
+ * value. `mux_seen` appears when the ID has carried more than one byte-0
+ * value, which is the cheap "this ID looks multiplexed" hint.
+ *
+ * For a MULTIPLEXED id that is not enough: building a channel needs the
+ * payload for one specific mux value, not whichever frame landed last.
+ * Add ?focus=<id>&mux_start=<bit>&mux_len=<bits>[&endian=0|1][&ext=1] and
+ * the reply gains a "focus" block holding the latest payload for EACH mux
+ * value on that ID. ?focus=0 turns it off. The mux field is extracted the
+ * same way signal_dispatch_frame() extracts it, so a preview built on this
+ * matches what the running decoder will do. */
+/* Hex-or-decimal, so ?focus=0x3E8 and ?focus=1000 both work — the editor
+ * shows CAN ids in hex and a hand-typed URL is usually decimal. */
+static uint32_t _parse_u32(const char *s, uint32_t fallback) {
+	if (!s || !*s) return fallback;
+	char *end = NULL;
+	unsigned long v = strtoul(s, &end, (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) ? 16 : 10);
+	return (end && end != s) ? (uint32_t)v : fallback;
+}
+
 static esp_err_t _can_monitor_handler(httpd_req_t *req) {
+	/* Optional focus request: ?focus=<id>[&mux_start=&mux_len=&endian=&ext=]
+	 *
+	 * Aiming the focus buffer from the same GET that reads it keeps the
+	 * client to one request per poll, and means a UI that never asks for a
+	 * focus pays nothing. mux_len=0 focuses an ID without splitting it. */
+	char query[128];
+	if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+		char val[24];
+		if (httpd_query_key_value(query, "focus", val, sizeof(val)) == ESP_OK) {
+			uint32_t fid = _parse_u32(val, 0);
+			if (fid == 0) {
+				can_id_tracker_clear_focus();
+			} else {
+				uint8_t ms = 0, ml = 0;
+				int endian = 1;
+				bool ext = false;
+				if (httpd_query_key_value(query, "mux_start", val, sizeof(val)) == ESP_OK)
+					ms = (uint8_t)_parse_u32(val, 0);
+				if (httpd_query_key_value(query, "mux_len", val, sizeof(val)) == ESP_OK)
+					ml = (uint8_t)_parse_u32(val, 0);
+				if (httpd_query_key_value(query, "endian", val, sizeof(val)) == ESP_OK)
+					endian = (int)_parse_u32(val, 1);
+				if (httpd_query_key_value(query, "ext", val, sizeof(val)) == ESP_OK)
+					ext = (val[0] == '1' || val[0] == 't');
+				can_id_tracker_set_focus(fid, ext, ms, ml, endian);
+			}
+		}
+	}
+
 	cJSON *root = cJSON_CreateObject();
 	cJSON *arr  = cJSON_AddArrayToObject(root, "ids");
 	int64_t now = esp_timer_get_time();
@@ -656,9 +706,42 @@ static esp_err_t _can_monitor_handler(httpd_req_t *req) {
 		cJSON_AddNumberToObject(e, "count", t->rx_count);
 		cJSON_AddNumberToObject(e, "age_ms",
 		                        (double)((now - t->last_seen_us) / 1000));
+		/* Byte-0 frame indices seen on this ID. Present only when the ID has
+		 * actually carried more than one, so a client can use "mux_seen is
+		 * here" as the hint that the ID is multiplexed at all. */
+		if (t->mux_seen && (t->mux_seen & (t->mux_seen - 1)))
+			cJSON_AddNumberToObject(e, "mux_seen", t->mux_seen);
 		cJSON_AddItemToArray(arr, e);
 	}
 	cJSON_AddNumberToObject(root, "capacity", CAN_ID_TRACKER_MAX_IDS);
+
+	/* Focus block: the latest payload for EACH mux value on the focused ID,
+	 * which is what a live decode preview needs and what "ids" cannot give
+	 * (it holds one frame per ID, whichever arrived last). */
+	uint32_t fid = can_id_tracker_focus_id();
+	if (fid) {
+		cJSON *f = cJSON_AddObjectToObject(root, "focus");
+		cJSON_AddNumberToObject(f, "id", fid);
+		cJSON *fr = cJSON_AddArrayToObject(f, "frames");
+		uint8_t fn = can_id_tracker_focus_count();
+		for (uint8_t i = 0; i < fn; i++) {
+			const can_mux_slot_t *s = can_id_tracker_focus_get(i);
+			if (!s) break;
+			cJSON *e = cJSON_CreateObject();
+			cJSON_AddNumberToObject(e, "mux", s->mux_value);
+			char hex[17];
+			for (int b = 0; b < s->dlc && b < 8; b++)
+				snprintf(hex + b * 2, 3, "%02X", s->data[b]);
+			hex[(s->dlc > 8 ? 8 : s->dlc) * 2] = '\0';
+			cJSON_AddStringToObject(e, "data", hex);
+			cJSON_AddNumberToObject(e, "dlc", s->dlc);
+			cJSON_AddNumberToObject(e, "count", s->rx_count);
+			cJSON_AddNumberToObject(e, "age_ms",
+			                        (double)((now - s->last_seen_us) / 1000));
+			cJSON_AddItemToArray(fr, e);
+		}
+		cJSON_AddNumberToObject(f, "capacity", CAN_ID_TRACKER_MAX_MUX_SLOTS);
+	}
 	return _send_json(req, root);
 }
 

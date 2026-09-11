@@ -104,6 +104,7 @@ layouts portable — decode no longer travels in the layout JSON (ADR-0005/0006)
 - `channel_source_apply.c/h` — shared "bind this channel to a preset/OBD2/custom source" path used by the web picker and the wizard.
 - `channel_math.c/h` — derived/"calculated" channels (e.g. `boost = manifold_pressure - barometric_pressure`); a 5 Hz LVGL timer evaluates each and pushes the result through the normal signal pipeline.
 - `unit_convert.c/h` — native→display unit conversion for channel readouts (linear only: `out = v*scale+offset`; unknown pairs pass through unchanged).
+- **Multiplexed IDs** — a channel's decode can carry a frame gate (`mux_bit_start`/`mux_bit_length`/`mux_value`, `mux_bit_length 0` = off) so one CAN id can hold several payloads tagged by a frame index (Link Generic Dash on 0x3E8). Fully user-configurable: every authoring surface carries it by hand, so read [`docs/MULTIPLEXED_CAN.md`](docs/MULTIPLEXED_CAN.md) before touching a decode form, a DBC import, or anything that re-saves a signal list — dropping the gate produces convincing garbage, not an obvious failure. `GET /api/can/monitor?focus=<id>&mux_start=&mux_len=` buckets live frames per mux value for previews.
 - On layout load, inline `signals[]` decode is migrated into channels (decode adopted, thresholds stripped). `channels.json` is device-local and NOT in the portable/marketplace layout.
 
 ## Layout Manager (`main/layout/`)

@@ -8,6 +8,116 @@ This file starts tracking from **1.1.11** (the first release-tracked build, 2026
 
 Changes that have landed on `master` since the last tagged version.
 
+### Changed
+- **One source picker, and a decode editor you can see.** (ADR-0069) The
+  Channels surface had three separate ECU → Version → Signal drilldowns reading
+  the same catalogue, and the channel drawer hid the CAN decode under "More"
+  in a 440px pane that squeezed its dropdowns to 89px — they read "Unsigne" and
+  "Little (In".
+
+  - **One `#chSourcePicker`, two modes**: `bind` (one channel →
+    `/api/channels/bind-source`) and `add` (many → `/api/channels/import-preset`).
+    A rail of sources grouped by the question you arrived with, the version as a
+    chip, and the signal list given the room — because which ECU the car runs is
+    a car-level fact, not a per-channel one. Search is global, so you can find
+    "coolant" without knowing your ECU calls it ECT.
+  - **It works with no dash.** Both modes fall back to the catalogue baked into
+    the page (ADR-0033) and say so. Previously "Pick a source" had no fallback
+    at all and rendered "Failed to load sources" offline, while the bulk-import
+    picker one menu item away listed every ECU we ship.
+  - **"Type in a CAN decode…" is in the picker** — the missing create action
+    that sent people hunting for a "custom" option.
+  - **The decode editor is its own section**, `clamp(520px, 40vw, 760px)` wide
+    on an auto-fit grid, carrying the live bus probe and the mux fields. That
+    "is my bit offset right" answer previously existed only for the first ten
+    seconds of a channel's life.
+  - The Signal Manager is renamed **Preset library** and reframed as authoring;
+    presenting it as a third picker is how it kept getting opened by people who
+    wanted a source.
+  - ~700 lines of superseded picker code removed, so the page grew the firmware
+    binary by under 2 KB despite gaining a whole new surface.
+
+### Fixed
+- **Every same-named source row claimed "in use".** `/api/channels/source-options`
+  marks `is_current` by derived signal *name*, so on a car running one ECU all
+  nine makes' "COOLANT TEMP" rows said they were the live source. Tolerable when
+  you could see one ECU at a time, plainly wrong once search shows them all. The
+  row now compares the channel's actual decode — frame, bit offset and frame
+  index (ADR-0005 makes that the authoritative fact).
+- **The live bus probe labelled native values with the display unit.** It
+  decodes raw → native, then printed `units_display`: a channel storing kPa and
+  showing bar rendered a raw 416 kPa as "416.00 bar", off by 100x, in the one
+  readout whose job is catching exactly that.
+- **The browser dev server's ECU catalogue was a hand-typed stub** that had
+  rotted into the pre-1.4.1 model of Link as consecutive ids (`0x3E8`/`0x3E9`/
+  `0x3EA`), so reviewing the picker against it concluded the catalogue was
+  unpopulated when the firmware had carried all 41 Generic Dash rows for months.
+  It is now derived from the page's baked catalogue and cannot drift.
+  `/api/channels/bind-source` was not mocked at all — it fell through to a
+  catch-all `{ok:true}`, so a bind appeared to succeed while changing nothing.
+
+### Added
+- **A custom channel can decode a multiplexed CAN id.** The firmware's decode
+  gate has always been general — `signal_dispatch_frame()` skips any frame
+  whose mux field does not match — but the only way to reach it was a baked
+  preset. Building a muxed channel by hand meant POSTing JSON at
+  `/api/channels/create` by hand, because no form carried the fields. Now every
+  authoring surface does, and the DBC importer no longer silently throws the
+  multiplexing away.
+
+  - **DBC import keeps the frame index.** `parseDbcFile()`'s signal regex
+    matched the `M` / `mN` multiplexer marker with a NON-capturing group and
+    discarded it, so a multiplexed DBC imported without error and produced
+    channels that all decoded interleaved payloads on one id — confident
+    garbage rather than an obvious failure. The marker is captured now and
+    resolved in a second pass per message (`_dbcResolveMux`), because the `M`
+    switch is not required to appear before the signals it gates. Messages with
+    `mN` signals and no `M` are malformed per the spec; they import ungated and
+    are reported by name, since guessing byte 0 would just be a different
+    silent wrong answer. `.dbc` export round-trips the mux and is idempotent.
+
+  - **Mux fields on all three decode forms** — the new-channel form, the custom
+    preset signal form, and the legacy custom signal form — behind a disclosure,
+    since most ECUs are not multiplexed.
+
+  - **The live bus preview no longer lies about a muxed id.**
+    `/api/can/monitor` returns one frame per id, whichever arrived last, so on
+    a stream cycling 14 payloads the preview decoded a different quantity every
+    poll. `?focus=<id>&mux_start=&mux_len=` aims a per-mux-value buffer in the
+    id tracker (one id at a time, lock-free by request/adopt split) and the
+    reply carries the latest frame for each index. When the index you asked for
+    has not arrived, the preview says so and lists the ones that have, instead
+    of decoding a different frame. Each `ids` entry also exposes `mux_seen`, so
+    the editor can warn that an id looks multiplexed before anything is set up.
+
+  - `/api/signal/update` accepts the mux triple, so a muxed signal registers
+    live with its gate instead of decoding everything until the next reload.
+
+  - Reference: [`docs/MULTIPLEXED_CAN.md`](docs/MULTIPLEXED_CAN.md) — the
+    contract, the per-surface checklist, and how the mapping works from DBC,
+    Link PCLink, AiM and MoTeC.
+
+### Changed
+- **MaxxECU is one preset again, not two.** The 1.2 and 1.3 entries were
+  separate all the way through `ECU_PRESETS`, the preconfig catalogue and the
+  picker's version column, but 1.3 is a strict superset: every signal the v1.2
+  DBC defines sits at the same CAN id, bit offset, length, scale and signedness
+  in v1.3, which only adds further frames (oil temp/pressure, fuel pressure,
+  user channels, status flags). The split therefore asked the user to pick a
+  firmware version that could not change what they got — and a wrong guess
+  toward 1.2 hid 52 signals. A 1.2 unit simply never broadcasts the extra
+  frames, and an unbroadcast channel reads stale rather than wrong.
+  `ecu_preset_find()` maps a saved `"1.2"` onto the merged entry, so devices
+  and layouts configured before this keep resolving.
+
+### Fixed
+- **Saving a custom preset no longer drops fields from its other signals.**
+  Three call sites rebuilt the whole signal list by picking fields by hand, so
+  anything not on those lists was silently dropped from every other signal as a
+  side effect of adding or deleting one. That is how `unit` went missing, and
+  multiplexing would have gone the same way. All three now share
+  `_presetSigFields()`.
+
 ### Added
 - **The dash plays a keypad's boot, with no laptop in the car.** A Blink keypad
   cannot animate itself — its only self-driven show is the fixed factory one in
