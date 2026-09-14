@@ -86,6 +86,18 @@ reaches could not be tested — which is how every bug above had gone unseen.
 
 ## Consequences
 
+- **Amended the same day:** the Toyota 86 / Subaru BRZ joins the Falcon as a
+  SETUP preset (owner's call). Its `ECU_PRESETS` entry already records MAP,
+  IAT, lambda, short trim, timing, battery and fuel level as OBD2-only on that
+  platform. The list became `WANTS_OBD2` of make + optional version: Ford
+  stays make-wide; Toyota is matched by version under both of its identities
+  (`Toyota` / `GT86 Gen 1` in the preconfig catalogue the wizard applies,
+  `Toyota / Subaru` / `86 / BRZ` in `ECU_PRESETS`, which Quick ECU Setup
+  applies), so a future Toyota preset that broadcasts everything is not swept
+  in. Seen on the dash: after "Toyota GT86 Gen 1", MAP, IAT, SHORT_FUEL_TRIM_1,
+  TIMING_ADVANCE, BATTERY_VOLTAGE and FUEL_LEVEL live over OBD2 with RPM
+  (0x140) and coolant (0x360) left on the broadcast.
+
 - `obd2_autosetup_for_ecu()` now always does one of SETUP / CHECK. The offer is
   dropped by `obd2_autosetup_cancel()` — so skipping the ECU step, choosing
   another ECU, or adding readings by hand all retire it — and by "Not now".

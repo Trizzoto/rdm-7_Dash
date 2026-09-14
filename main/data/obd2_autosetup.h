@@ -10,7 +10,8 @@
  *
  * Two modes, chosen by the preset:
  *
- *  SETUP — a preset that is known to want OBD2 (a Falcon). The discovery scan
+ *  SETUP — a preset that is known to want OBD2 (a Falcon, a Toyota 86 / Subaru
+ *    BRZ — the WANTS_OBD2 table in the .c). The discovery scan
  *    runs in the background and every reading the car answers that fills a
  *    channel nothing else feeds is bound. If the car doesn't answer yet
  *    (ignition off, dash on a bench) the setup stays owed — persisted — and is

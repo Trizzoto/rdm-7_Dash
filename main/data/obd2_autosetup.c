@@ -40,11 +40,25 @@ static const char *TAG = "obd2_auto";
 #define AUTOSETUP_BUSY_MS         3000
 
 /* Presets whose car broadcasts only part of the picture, set up without
- * asking. Matched on make alone: both Falcon generations (BA/BF and FG)
- * answer OBD2 on the same bus as their broadcast, and a future Falcon preset
- * should inherit this. Every other preset gets a CHECK and an offer. */
-static const char *const WANTS_OBD2_MAKES[] = {
-	"Ford",
+ * asking. Every other preset gets a CHECK and an offer.
+ *
+ * `version` NULL matches every version of the make. The identity differs by
+ * path: the wizard and Studio import use the preconfig catalogue's make and
+ * version, Studio's Quick ECU Setup uses ECU_PRESETS', so a car listed under
+ * two names needs both here. */
+static const struct { const char *make; const char *version; } WANTS_OBD2[] = {
+	/* Ford Falcon BA/BF and FG — make-wide: both generations answer OBD2 on
+	 * the same bus as their broadcast, and a future Falcon preset should
+	 * inherit this. OBD2 adds timing, lambda, trims; on an FG MAP and IAT. */
+	{ "Ford", NULL },
+	/* Toyota 86 / Subaru BRZ / Scion FR-S (2012-2020). The factory bus has
+	 * RPM, throttle, speed, coolant, oil temp, yaw and lateral g; MAP, intake
+	 * temp, lambda, short fuel trim, ignition timing, battery and fuel level
+	 * are OBD2-only on this platform (hardware-verified 2026-07-25, see the
+	 * ECU_PRESETS entry). By version, not make: a future Toyota preset may
+	 * broadcast everything. */
+	{ "Toyota",          "GT86 Gen 1" },   /* preconfig catalogue */
+	{ "Toyota / Subaru", "86 / BRZ" },     /* ECU_PRESETS */
 };
 
 static bool                s_pending  = false;   /* SETUP owed (persisted) */
@@ -189,10 +203,12 @@ static void _attempt(void) {
 }
 
 bool obd2_autosetup_ecu_wants(const char *make, const char *version) {
-	(void)version;
 	if (!make || !make[0]) return false;
-	for (size_t i = 0; i < sizeof(WANTS_OBD2_MAKES) / sizeof(WANTS_OBD2_MAKES[0]); i++)
-		if (strcmp(make, WANTS_OBD2_MAKES[i]) == 0) return true;
+	for (size_t i = 0; i < sizeof(WANTS_OBD2) / sizeof(WANTS_OBD2[0]); i++) {
+		if (strcmp(make, WANTS_OBD2[i].make) != 0) continue;
+		if (!WANTS_OBD2[i].version) return true;
+		if (version && strcmp(version, WANTS_OBD2[i].version) == 0) return true;
+	}
 	return false;
 }
 

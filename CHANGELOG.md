@@ -9,6 +9,12 @@ This file starts tracking from **1.1.11** (the first release-tracked build, 2026
 Changes that have landed on `master` since the last tagged version.
 
 ### Changed
+- **A Toyota 86 / Subaru BRZ gets OBD2 set up automatically, like a Falcon.**
+  (ADR-0074) Its factory bus has RPM, throttle, speed, coolant and oil temp;
+  MAP, intake temp, lambda, fuel trim, ignition timing, battery and fuel level
+  are OBD2-only on that platform. Applying the preset (wizard "Toyota GT86
+  Gen 1", or Studio's "Toyota 86 / Subaru BRZ") now fills those in without
+  asking.
 - **"Your car also answers OBD2" — and what it could add.** (ADR-0074) After
   any ECU preset other than a Falcon's, the dash quietly checks whether the
   car answers OBD2 too. If it does, it lists the channels nothing feeds yet

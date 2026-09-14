@@ -773,7 +773,8 @@ const server = http.createServer((req, res) => {
       return readBody(req, (body) => {
         let d = {};
         try { d = JSON.parse(body || '{}'); } catch (e) {}
-        return sendJson(res, d.make === 'Ford' ? { ok: true, obd2_autosetup: true } : { ok: true });
+        const wants = d.make === 'Ford' || (d.make === 'Toyota / Subaru' && d.version === '86 / BRZ');
+        return sendJson(res, wants ? { ok: true, obd2_autosetup: true } : { ok: true });
       });
     }
     if (url === '/api/channels/import-preset' && req.method === 'POST') {
