@@ -4710,7 +4710,7 @@
             }
           ],
           "group": "Face",
-          "help": "Which way the bar runs and fills."
+          "help": "Which way the bar runs and fills. On a J-hook this picks the corner the hook curls into: Top-Left = hook at the bottom-left with the tail running right along the top."
         },
         {
           "name": "corner_radius",
@@ -4733,7 +4733,20 @@
           "min": 30,
           "max": 200,
           "step": 5,
-          "help": "J-hook shape only: how far the curve sweeps. 90 is a quarter turn, 180 a half turn.",
+          "help": "J-hook only: how far round the curve sweeps. 90 is a quarter turn (the bar sets off straight down), 180 a half turn (it sets off back along the tail).",
+          "group": "Face",
+          "enabled_by": "shape=4"
+        },
+        {
+          "name": "hook_radius",
+          "label": "Hook Radius",
+          "type": "stepper",
+          "default": 0,
+          "category": "appearance",
+          "min": 0,
+          "max": 400,
+          "step": 5,
+          "help": "J-hook only: how big the curl is, in pixels. 0 sizes it to the box. Anything smaller gives a tight hook with a long straight tail — the classic tacho shape, which a box-sized curl cannot make.",
           "group": "Face",
           "enabled_by": "shape=4"
         },
@@ -4913,6 +4926,20 @@
           "enabled_by": "show_ticks",
           "group": "Ticks",
           "help": "How long the smaller marks are."
+        },
+        {
+          "name": "tick_slant",
+          "label": "Tick Lean",
+          "type": "stepper",
+          "default": 0,
+          "category": "appearance",
+          "min": -80,
+          "max": 80,
+          "step": 5,
+          "enabled_by": "show_ticks",
+          "_doc": "Leans every tick off square by this many degrees, about its own\nmidpoint — the italic comb on an eighties LCD cluster. A leaning\ntick reaches less far across the band than its length, so a comb\nmeant to cross a band of W needs a length of W / cos(lean).\nThe numbers are unaffected and stay upright.",
+          "group": "Ticks",
+          "help": "Lean the marks over, in degrees. 0 is square to the bar."
         },
         {
           "name": "major_tick_color",

@@ -19,6 +19,48 @@ extern "C" {
  */
 
 #define PATHBAR_MAX_POINTS 320
+/* A parametric shape is at most four pieces (an L-bend: leg, fillet, leg).
+ * They describe the shape; the band itself is drawn from pb_field_t. */
+#define PATHBAR_MAX_PRIMS   8
+
+/* One piece of a parametric shape. A shape is a couple of these, and each is
+ * drawn in a single anti-aliased pass (lv_draw_line / lv_draw_arc) — see the
+ * renderer for why sampling the path into a stroked polyline could not be made
+ * to look clean. `s0`/`s1` are the piece's span along the whole path, so the
+ * fill can be clipped to an arc length without re-deriving anything. */
+typedef enum { PB_PRIM_LINE = 0, PB_PRIM_ARC = 1 } pb_prim_kind_t;
+
+typedef struct {
+    uint8_t kind;
+    float   s0, s1;              /* arc-length span within the path */
+    float   x0, y0, x1, y1;      /* LINE: endpoints                 */
+    float   cx, cy, r;           /* ARC: centre and CENTRELINE radius */
+    float   outer_r;             /* ARC: outer radius, already quantised — the
+                                  * draw must not re-round it or the band steps
+                                  * where the arc meets its tangent run */
+    float   a0, a1;              /* ARC: degrees, LVGL convention, a0 -> a1 */
+} pb_prim_t;
+
+/* The band, worked out once per pixel when its geometry is made:
+ * how much of each pixel the band covers, and how far along the path that
+ * pixel sits. Drawing colours pixels from these two numbers alone, so an
+ * arbitrary curve has no pieces to seam or kink. */
+typedef struct {
+    lv_area_t   area;                /* absolute screen px the band can touch */
+    uint16_t    w, h;
+    uint8_t    *cov;                 /* w*h coverage, 0..255 */
+    uint16_t   *s8;                  /* w*h arc length along the path, 1/8 px */
+    float      *cx, *cy, *cs;        /* the float centreline and its arc length */
+    uint32_t    n;
+    lv_color_t *lut;                 /* lit colour at each whole px along the path */
+    uint32_t    lut_n;
+    float       srate;               /* max px of path per px across the band away from corners; 0 = unbounded */
+    float       corner_s[16];        /* where along the path the sharp corners are */
+    uint8_t     n_corner;
+    uint8_t    *tiles;               /* tw*th: 1 where a 16x16 tile has any band or tick in it */
+    uint8_t    *tick;                /* w*h baked tick comb: coverage 0..63, whose colour in the top 2 bits */
+    uint16_t    tw, th;
+} pb_field_t;
 
 typedef struct {
     char        signal_name[32];
@@ -41,6 +83,7 @@ typedef struct {
     uint8_t     orientation;          /* L/J: 0=TL 1=TR 2=BL 3=BR ; straight: 0=horiz 1=vert */
     uint16_t    corner_radius;        /* L-bend fillet radius px */
     uint16_t    hook_angle;           /* J-hook arc sweep degrees (90=quarter, default 120) */
+    uint16_t    hook_radius;          /* J-hook radius px; 0 = auto-fit the box height  */
     lv_color_t  dim_color;            /* empty track */
     lv_color_t  lit_color;            /* fill */
     lv_color_t  redline_color;        /* fill beyond redline */
@@ -61,6 +104,7 @@ typedef struct {
     int16_t     label_gap;            /* px from band edge out to the number  */
     int8_t      label_side;           /* number side: 0=auto(centroid) 1=side A 2=side B */
     int16_t     label_along_offset;   /* px shift of numbers ALONG the path (arc-length) */
+    int8_t      tick_slant;           /* degrees the tick leans off the band normal */
     bool        redline_recolor_ticks;
     char        label_font[40];
 
@@ -75,6 +119,12 @@ typedef struct {
 
     /* path geometry (absolute screen px), heap-allocated in from_json. When
      * smooth, this is the tessellated dense curve; otherwise the path verbatim. */
+    /* Parametric shapes also keep an exact description of themselves; pts/cum
+     * below stay as the sampled form the ticks, labels and lead edge use. */
+    pb_prim_t   prims[PATHBAR_MAX_PRIMS];
+    uint8_t     n_prims;              /* 0 = custom path */
+    pb_field_t *field;                /* the band's coverage; NULL = out of memory */
+
     lv_point_t *pts;
     float      *cum;                  /* cumulative arc length per point */
     uint16_t    n_pts;
