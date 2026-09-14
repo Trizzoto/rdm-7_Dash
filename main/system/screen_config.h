@@ -16,6 +16,7 @@
  */
 #pragma once
 
+#include <stddef.h>   /* size_t — SCREEN_IMAGE_MAX_BYTES */
 #include <stdint.h>
 #include "sdkconfig.h"
 
@@ -52,6 +53,27 @@ typedef enum {
 /** Half-width / half-height — the origin offset for centre-based coords. */
 #define SCREEN_ORIGIN_X   (SCREEN_W / 2)
 #define SCREEN_ORIGIN_Y   (SCREEN_H / 2)
+
+/** Biggest .rdmimg we will store: one full screen plus the 12-byte header.
+ *  The format is 3 bytes a pixel — RGB565 little-endian then one alpha byte
+ *  (LV_IMG_CF_TRUE_COLOR_ALPHA), see convertImageToRDMIMG() in web/index.html.
+ *  An image is never usefully bigger than the screen it is drawn on, and the
+ *  editor produces exactly this at 100% of a full-screen picture.
+ *
+ *  This lived as a flat `1200 * 1024` in BOTH web_server_assets.c and
+ *  serial_commands_internal.h, each with a comment already claiming it was
+ *  SCREEN_W * SCREEN_H * 3 — true only for the 800x480 panel it was written
+ *  on. On 720x720 (1,555,212 B) and on the 1920x720 flagship (4,147,212 B) a
+ *  full-screen background was refused with "Invalid content length". It lives
+ *  here now so the two upload paths cannot drift apart again: the same file
+ *  has to be accepted over USB and over HTTP.
+ *
+ *  The old 1200 KB stays as a floor, so nothing that fit on a small panel
+ *  before stops fitting now. */
+#define SCREEN_IMAGE_MAX_BYTES                                          \
+	((((size_t)SCREEN_W * (size_t)SCREEN_H * 3u) + 12u) > (1200u * 1024u) \
+		? (((size_t)SCREEN_W * (size_t)SCREEN_H * 3u) + 12u)            \
+		: (1200u * 1024u))
 
 /* ─── Hardware profile struct ──────────────────────────────────────────── *
  *

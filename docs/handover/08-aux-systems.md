@@ -102,16 +102,16 @@ Launched from Device Settings → "System Diagnostics".
 
 ### Built-in presets
 
-~11 presets in `ECU_PRESETS[]` (presented in the wizard's two-step picker — Make → Version):
+11 presets in `ECU_PRESETS[]` (presented in the wizard's two-step picker — Make → Version). "Custom" below is the no-preset escape hatch, not a table entry:
 
 | Make | Version(s) / display |
 |---|---|
 | ECU Master | Black / Classic |
 | MegaSquirt | MS3-Pro |
 | Haltech | Nexus / Elite |
-| MaxxECU | firmware 1.2; firmware 1.3+ |
+| MaxxECU | 1.3 (one entry; covers 1.2, which is a strict subset) |
 | Ford | Falcon BA/BF; Falcon FG |
-| Link ECU | G4+ / G4X Generic Dash |
+| Link ECU | G4+ / G4X Generic Dash; G4+ / G4X AiM Stream |
 | Toyota / Subaru | Toyota 86 / Subaru BRZ (2012–2020) |
 | RDM-7 | Internal (calculated gear) |
 | OBD2 | Standard (any 2008+ car) |

@@ -129,7 +129,7 @@ Body shape:
 | GET | `/api/ecu/current` | `{"make":"...","version":"..."}`. |
 | POST | `/api/ecu/set` | Apply preset to active layout. |
 
-~11 presets shipped (`ECU_PRESETS[]` in [main/layout/ecu_presets.c](../../main/layout/ecu_presets.c)): ECU Master, MegaSquirt, Haltech, MaxxECU (×2), Ford (×2), Link ECU, Toyota/Subaru, RDM-7, OBD2. Custom adds an additional "Custom" entry.
+11 presets shipped (`ECU_PRESETS[]` in [main/layout/ecu_presets.c](../../main/layout/ecu_presets.c)): ECU Master, MegaSquirt, Haltech, MaxxECU, Ford (×2), Link ECU (×2 — Generic Dash, AiM Stream), Toyota/Subaru, RDM-7, OBD2. Custom adds an additional "Custom" entry.
 
 ### Presets (custom signal sets)
 

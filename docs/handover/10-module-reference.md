@@ -63,7 +63,7 @@ Layout JSON persistence + ECU presets. See [05-storage-and-persistence.md](05-st
 | `layout_manager.c/h` | LittleFS layout I/O, schema version, `_load_signals`, `_instantiate_widgets`. |
 | `default_layout.c/h` | Hardcoded fallback layout (seeded if `/lfs/layouts/default.json` missing). |
 | `layout_loader.c/h` | Lower-level JSON helpers used by layout_manager. |
-| `ecu_presets.c/h` | 8 built-in ECU presets + custom-preset I/O. |
+| `ecu_presets.c/h` | 11 built-in ECU presets + custom-preset I/O. |
 
 ## `main/storage/`
 

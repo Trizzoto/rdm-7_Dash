@@ -15,7 +15,7 @@ Every screen lives under [main/ui/screens/](../../main/ui/screens/) or [main/ui/
 | **WiFi Manager** | [ui_wifi.c/h](../../main/ui/screens/ui_wifi.c) | Multi-SSID connect/forget, scan, AP toggle. | "Connect WiFi" button in Settings |
 | **Diagnostics** | [ui_diagnostics.c/h](../../main/ui/screens/ui_diagnostics.c) | Read-only system health: 5 cards (CAN, WiFi, System, SD, Signals). 1 s auto-refresh. | "Diagnostics" button in Settings |
 | **Peaks** | [ui_peaks.c/h](../../main/ui/screens/ui_peaks.c) | Scrollable table of every signal's current/min/max. Per-row reset, Reset All. 100 ms refresh. | "View Peaks" in Settings |
-| **ECU Picker** | [ui_ecu_picker.c/h](../../main/ui/screens/ui_ecu_picker.c) | Two-step picker: Make → Version. 8 ECU presets + Custom. | First-run step 2; "ECU" row in Settings |
+| **ECU Picker** | [ui_ecu_picker.c/h](../../main/ui/screens/ui_ecu_picker.c) | Two-step picker: Make → Version. 11 ECU presets + Custom. | First-run step 2; "ECU" row in Settings |
 | **Config Modal** | [config_modal.c/h](../../main/ui/menu/config_modal.c) + [menu_screen.c/h](../../main/ui/menu/menu_screen.c) | Per-widget editor, two tabs (Signal, Alerts). | Long-press on a signal-bound widget |
 | **Gear Setup** | (modal in `device_settings.c` + `gear_config.c`) | Configure CALCULATED_GEAR (wheel, ratios, final drive). | Hamburger Tools or first-time pick of CALCULATED_GEAR |
 | **OTA Update Dialog** | [ota_update_dialog.c/h](../../main/net/ota_update_dialog.c) | Modal showing OTA progress + release notes. | "Check Updates" or auto-check |

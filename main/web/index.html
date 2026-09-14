@@ -901,13 +901,12 @@
         }
 
         .display-bezel.bezel-on {
-            padding: 50px 80px;
-            background: #2a2a2a;
-            border-radius: 20px;
+            padding: 12px 16px;
+            background: #17181a;
+            border-radius: 4px;
             box-shadow:
-                0 0 0 1px rgba(255,255,255,0.08),
-                0 12px 40px rgba(0,0,0,0.6),
-                inset 0 1px 0 rgba(255,255,255,0.08);
+                0 0 0 1px rgba(255,255,255,0.10),
+                0 6px 18px rgba(0,0,0,0.55);
         }
 
         .display-bezel:not(.bezel-on) {
@@ -6673,6 +6672,7 @@
         /* ── Screen presets ─────────────────────────────────────────── */
         const SCREEN_PRESETS = [
             { id: '800x480_rect',  w: 800, h: 480, shape: 'rect',  label: 'RDM-7 inch' },
+            { id: '1920x720_rect', w: 1920, h: 720, shape: 'rect',  label: 'RDM 10.25 inch' },
             { id: '720x720_round', w: 720, h: 720, shape: 'round', label: '4 inch Round' },
             { id: '800x800_round', w: 800, h: 800, shape: 'round', label: '3.4 inch Round' },
             { id: '480x480_round', w: 480, h: 480, shape: 'round', label: '2.8 inch Round' },
@@ -6701,6 +6701,36 @@
          * immediate inline message instead of finding out auto-save was
          * silently rejecting their edits. */
         const RDM_LAYOUT_MAX_BYTES = 32768;
+
+        /* Biggest image the dash will store. It keeps an image as raw colour —
+         * three bytes a pixel — so one whole screen is width x height x 3 plus
+         * a 12-byte header, and that is the cap (SCREEN_IMAGE_MAX_BYTES in
+         * main/system/screen_config.h).
+         *
+         * A connected dash reports its own number in /api/device/info under
+         * limits.image_max. When it doesn't:
+         *   - offline, there is no dash to refuse anything, so hold the image
+         *     to what the screen it is being drawn for could take;
+         *   - connected to firmware older than that field, it is the old flat
+         *     1200 KB, because that is what such a dash actually enforces.
+         * Before this the editor assumed 1200 KB everywhere, so on a 1920x720
+         * dash it cheerfully offered a 4 MB full-screen background and the
+         * upload came back "Invalid content length" with nothing to act on. */
+        const RDM_IMAGE_MAX_LEGACY_BYTES = 1200 * 1024;
+        let _deviceImageMaxBytes = 0;   /* 0 = no device has told us */
+
+        function _imageMaxBytes() {
+            if (_deviceImageMaxBytes > 0) return _deviceImageMaxBytes;
+            return Math.max(RDM_IMAGE_MAX_LEGACY_BYTES, CANVAS_W * CANVAS_H * 3 + 12);
+        }
+
+        /* Bytes an image of these pixel dimensions will occupy on the dash. */
+        function _imageBytesFor(w, h) { return 12 + w * h * 3; }
+
+        function _fmtImageSize(bytes) {
+            const kb = bytes / 1024;
+            return kb >= 1024 ? (kb / 1024).toFixed(1) + ' MB' : Math.round(kb) + ' KB';
+        }
 
         /* Returns { ok:bool, bytes:N }. Caller decides whether to show
          * a toast / block the save or just warn. */
@@ -12217,7 +12247,7 @@
             const vp = document.getElementById('workspaceViewport');
             if (!vp) return;
             const rect = vp.getBoundingClientRect();
-            /* bezel padding: rect=80+80 x 50+50; round=50+50; round-slim=20+20 */
+            /* bezel padding: rect=16+16 x 12+12; round=50+50; round-slim=20+20 */
             const bezelOn = canvasContainer.classList.contains('bezel-on');
             let bezelPad = 0;
             if (bezelOn) {
@@ -12225,8 +12255,8 @@
                 else if (canvasContainer.classList.contains('bezel-round')) bezelPad = 100;
             }
             const isRoundBezel = bezelPad > 0;
-            const bezelPadX = bezelOn ? (isRoundBezel ? bezelPad : 160) : 0;
-            const bezelPadY = bezelOn ? (isRoundBezel ? bezelPad : 100) : 0;
+            const bezelPadX = bezelOn ? (isRoundBezel ? bezelPad : 32) : 0;
+            const bezelPadY = bezelOn ? (isRoundBezel ? bezelPad : 24) : 0;
             const contentW = CANVAS_W + bezelPadX;
             const contentH = CANVAS_H + bezelPadY;
             const padW = 40, padH = 40; /* breathing room */
@@ -15892,6 +15922,19 @@
                 /* Default: scale to fit within device screen, no upscaling */
                 const fitPct = Math.min(100, Math.floor(Math.min(SCREEN_W / origW, SCREEN_H / origH) * 100));
 
+                /* The slider must not be able to ask for something the dash
+                 * will refuse. Work back from the byte cap to a percentage:
+                 * bytes go as the square of the scale, so the ceiling is
+                 * sqrt(capPixels / originalPixels). Floor it, because landing
+                 * one pixel over the cap is a rejected upload. */
+                const maxBytes  = _imageMaxBytes();
+                const capPixels = Math.floor((maxBytes - 12) / 3);
+                const capPct    = Math.max(5, Math.min(100,
+                    Math.floor(Math.sqrt(capPixels / (origW * origH)) * 100)));
+                /* True when the cap, not the picture, is what limits the slider. */
+                const capBinds  = capPct < 100;
+                const startPct  = Math.min(fitPct, capPct);
+
                 const overlay = document.createElement('div');
                 overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.75);backdrop-filter:blur(3px);display:flex;flex-direction:column;font-family:inherit;';
                 overlay.innerHTML = `
@@ -15910,13 +15953,18 @@
                         </div>
                         <div style="display:flex;gap:10px;align-items:center;">
                             <span style="color:#888;font-size:12px;width:38px;flex-shrink:0;">Scale</span>
-                            <input id="iio-slider" type="range" min="5" max="100" value="${fitPct}" style="flex:1;cursor:pointer;accent-color:#2979ff;">
+                            <input id="iio-slider" type="range" min="5" max="${capPct}" value="${startPct}" style="flex:1;cursor:pointer;accent-color:#2979ff;">
                             <span id="iio-pct" style="color:#bbb;font-size:12px;width:30px;text-align:right;flex-shrink:0;font-family:monospace;"></span>
                             <span style="color:#444;font-size:12px;">·</span>
                             <span id="iio-dims" style="color:#bbb;font-size:12px;width:90px;flex-shrink:0;font-family:monospace;"></span>
                             <span style="color:#444;font-size:12px;">·</span>
                             <span id="iio-kb" style="font-size:12px;width:58px;flex-shrink:0;text-align:right;font-family:monospace;font-weight:600;"></span>
                         </div>
+                        ${capBinds ? `<div style="color:#8c9a8c;font-size:11px;line-height:1.5;padding:2px 0 0 48px;">
+                            The dash keeps an image at three bytes a pixel, so the most it will take is
+                            <b style="color:#cfc;">${_fmtImageSize(maxBytes)}</b> — one whole ${SCREEN_W} × ${SCREEN_H} screen.
+                            This picture reaches that at <b style="color:#cfc;">${capPct}%</b>, so the slider stops there.
+                        </div>` : ''}
                         <div style="display:flex;gap:8px;justify-content:flex-end;padding-top:2px;">
                             <button id="iio-cancel" style="padding:7px 18px;cursor:pointer;background:transparent;border:1px solid #555;border-radius:4px;color:#ccc;font-size:13px;">Cancel</button>
                             <button id="iio-upload" style="padding:7px 22px;cursor:pointer;background:#2979ff;border:none;border-radius:4px;color:#fff;font-size:13px;font-weight:600;">Upload</button>
@@ -15945,12 +15993,16 @@
                     preview.style.width  = Math.round(outW * fScale) + 'px';
                     preview.style.height = Math.round(outH * fScale) + 'px';
 
-                    const bytes = 12 + outW * outH * 3;
-                    const kb = bytes / 1024;
+                    const bytes = _imageBytesFor(outW, outH);
                     pctEl.textContent  = pct + '%';
                     dimsEl.textContent = outW + ' × ' + outH;
-                    kbEl.textContent   = kb >= 1024 ? (kb / 1024).toFixed(1) + ' MB' : Math.round(kb) + ' KB';
-                    kbEl.style.color   = bytes > 1100 * 1024 ? '#f66' : bytes > 400 * 1024 ? '#fa8' : '#6d6';
+                    kbEl.textContent   = _fmtImageSize(bytes);
+                    /* Against this dash's own cap, not a number written for the
+                     * 7 inch panel: amber over three quarters of it, red past
+                     * it. The slider cannot reach red, but a dash swapped mid
+                     * dialog for a smaller-screened one could. */
+                    kbEl.style.color   = bytes > maxBytes ? '#f66'
+                                       : bytes > maxBytes * 0.75 ? '#fa8' : '#6d6';
                 }
 
                 requestAnimationFrame(layoutFrame);
@@ -15992,6 +16044,21 @@
             statusEl.textContent = `Converting ${targetW}x${targetH}...`;
             document.body.appendChild(statusEl);
 
+            /* Backstop. The resize dialog's slider already stops at the cap, but
+             * layout transfer and the animation importer call in here too, and
+             * a dash can be swapped for a smaller-screened one between opening
+             * the dialog and pressing Upload. Say the numbers rather than
+             * letting the dash answer "Invalid content length". */
+            const wantBytes = _imageBytesFor(targetW, targetH);
+            const capBytes  = _imageMaxBytes();
+            if (wantBytes > capBytes) {
+                statusEl.textContent = `"${name}" is ${_fmtImageSize(wantBytes)} at ${targetW} × ${targetH}. `
+                    + `This dash takes ${_fmtImageSize(capBytes)} — scale it down and try again.`;
+                statusEl.style.borderColor = '#f44';
+                setTimeout(() => statusEl.remove(), 6000);
+                return;
+            }
+
             try {
                 const rdmimg = convertImageToRDMIMG(img, targetW, targetH);
 
@@ -16015,10 +16082,18 @@
                 updateWidgetConfigField(fieldName, name, false);
                 updateInspector();
             } catch (e) {
-                statusEl.textContent = 'Upload failed: ' + e.message;
+                /* "Invalid content length" is the firmware's wording for an
+                 * image over its cap, and it tells the user nothing. Anything
+                 * that reaches here past the check above means this dash's cap
+                 * is lower than we were told, so quote both numbers. */
+                const raw = (e && e.message) || '';
+                statusEl.textContent = /invalid content length/i.test(raw)
+                    ? `The dash refused "${name}": ${_fmtImageSize(wantBytes)} is more than the `
+                      + `${_fmtImageSize(capBytes)} it stores. Scale it down and try again.`
+                    : 'Upload failed: ' + raw;
                 statusEl.style.borderColor = '#f44';
             }
-            setTimeout(() => statusEl.remove(), 2500);
+            setTimeout(() => statusEl.remove(), 6000);
         }
 
         function convertImageToRDMIMG(img, targetW, targetH) {
@@ -17435,10 +17510,27 @@
                 const resp = await fetch('/api/device/info');
                 if (!resp.ok) return;
                 const info = await resp.json();
+                /* What this dash will actually accept, straight from the dash.
+                 * Offline reports `offline: true` and no limits — leave it at
+                 * 0 so _imageMaxBytes() sizes to the screen instead. */
+                if (info.limits && info.limits.image_max > 0) {
+                    _deviceImageMaxBytes = info.limits.image_max;
+                } else if (!info.offline) {
+                    _deviceImageMaxBytes = RDM_IMAGE_MAX_LEGACY_BYTES;
+                } else {
+                    _deviceImageMaxBytes = 0;
+                }
                 if (info.display) {
                     const dw = info.display.width;
                     const dh = info.display.height;
                     const ds = info.display.shape || 'rect';
+                    /* A size change means the view is now framing a DIFFERENT
+                     * screen, so fit it. On the device this is a no-op (the
+                     * canvas already is the screen); in Studio it is what
+                     * stops a 1920x720 dash opening at 1:1 with three
+                     * quarters of it off the edge of the pane. Unchanged size
+                     * leaves the user's own zoom alone. */
+                    const sizeChanged = (dw !== CANVAS_W || dh !== CANVAS_H);
                     /* Find matching preset */
                     const match = SCREEN_PRESETS.find(p =>
                         p.w === dw && p.h === dh && p.shape === ds);
@@ -17447,15 +17539,16 @@
                         const sel = document.getElementById('screenSizeSelect');
                         if (sel) sel.value = match.id;
                         try { localStorage.setItem('rdm7_screen_preset', match.id); } catch (e) { }
-                        applyScreenPreset(match, false);
+                        applyScreenPreset(match, sizeChanged);
                     } else {
                         /* Device reports unknown size — apply raw values */
                         _deviceScreenId = null;
-                        applyScreenDimensions(dw, dh, ds, false);
+                        applyScreenDimensions(dw, dh, ds, sizeChanged);
                     }
                     updateStatus('Connected — ' + dw + '×' + dh + ' ' + ds);
                 }
             } catch (e) {
+                _deviceImageMaxBytes = 0;   /* no dash answered — size to the screen */
                 updateStatus('Offline — using local screen preset', true);
             }
         }

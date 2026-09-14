@@ -62,6 +62,16 @@ static esp_err_t _device_info_handler(httpd_req_t *req) {
 	cJSON_AddStringToObject(display, "shape",
 		scr->shape == SCREEN_SHAPE_ROUND ? "round" : "rect");
 
+	/* What this build will actually accept. The editor used to carry its own
+	 * copy of both numbers — a 1200 KB image cap written for the 800x480 panel
+	 * and a 32 KB layout cap with a "must match the firmware" comment — so on
+	 * a bigger screen it offered uploads the dash then refused with a bare
+	 * "Invalid content length". Report them instead of making the editor
+	 * guess; an older Studio simply ignores the object. */
+	cJSON *limits = cJSON_AddObjectToObject(root, "limits");
+	cJSON_AddNumberToObject(limits, "image_max", (double)SCREEN_IMAGE_MAX_BYTES);
+	cJSON_AddNumberToObject(limits, "layout_max", (double)LAYOUT_MAX_FILE_BYTES);
+
 	cJSON *hw = cJSON_AddObjectToObject(root, "hardware");
 	esp_chip_info_t chip_info;
 	esp_chip_info(&chip_info);

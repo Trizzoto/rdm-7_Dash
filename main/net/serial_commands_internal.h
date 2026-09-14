@@ -8,6 +8,7 @@ extern "C" {
 // pulled in by non-serial-command translation units.
 
 #include "cJSON.h"
+#include "system/screen_config.h"  /* SCREEN_W/H — the image cap is one screenful */
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -17,7 +18,10 @@ extern "C" {
  * serial_commands_upload.c. */
 #define LFS_IMAGE_DIR "/lfs/images"
 #define LFS_FONT_DIR  "/lfs/fonts"
-#define IMAGE_MAX_SIZE (1200 * 1024)
+/* Same cap as the HTTP upload path — one screenful, defined in
+ * screen_config.h. The two must agree, or a file that lands over WiFi is
+ * refused over the cable. */
+#define IMAGE_MAX_SIZE SCREEN_IMAGE_MAX_BYTES
 
 /* Download chunk size (raw binary frames, no base64 overhead) — shared by
  * the image/font download handlers (serial_commands_assets.c) and the log

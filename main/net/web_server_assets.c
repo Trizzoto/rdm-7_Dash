@@ -24,6 +24,7 @@
 #include "storage/boot_assets.h"
 #include "widgets/font_manager.h"
 #include "system/rdm_lv_async.h"   /* rdm_async_call for atomic font re-resolve */
+#include "system/screen_config.h"  /* SCREEN_W/H — the image cap is one screenful */
 #include <dirent.h>
 #include <sys/stat.h>
 #include <string.h>
@@ -37,8 +38,9 @@ static const char *TAG = "web_server_assets";
 /* ── Image endpoints ─────────────────────────────────────────────────────── */
 
 #define LFS_IMAGE_DIR "/lfs/images"
-/* Max RDMIMG size: SCREEN_W * SCREEN_H * 3 bytes/pixel + 12-byte header, rounded up */
-#define IMAGE_MAX_SIZE (1200 * 1024)
+/* Max RDMIMG size: one full screen (3 bytes a pixel) + header. Defined once in
+ * screen_config.h — see the note there for why it is not a flat 1200 KB. */
+#define IMAGE_MAX_SIZE SCREEN_IMAGE_MAX_BYTES
 /* Streaming upload chunk: bounds how much of the body we hold in RAM at once.
  * The body is written straight to flash chunk-by-chunk, so a multi-MB image
  * never needs a whole-file PSRAM buffer (which used to OOM at ~1.2 MB free). */
