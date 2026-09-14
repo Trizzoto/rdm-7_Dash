@@ -134,7 +134,7 @@ const preconfig_item_t preconfig_items[] = {
 { "Haltech", "Nexus", "WIDEBAND 3",         "368", 0, 32, 16, 0.0147, 0, 3, false },
 { "Haltech", "Nexus", "WIDEBAND 4",         "368", 0, 48, 16, 0.0147, 0, 3, false },
 
-/* ── MaxxECU 1.2 ─────────────────────────────────────────────────────── */
+/* ── MaxxECU (firmware 1.2 and 1.3 — 1.3 is a strict superset) ──── */
 /* SIGN: the MaxxECU DBCs mark nearly everything @1+ (unsigned), but the ECU
  * puts bidirectional quantities on the wire as two's-complement — temps,
  * ignition/knock/lambda corrections, fuel trim, gear (reverse = -1), accel
@@ -143,54 +143,6 @@ const preconfig_item_t preconfig_items[] = {
  * so nothing regresses where values happen to stay positive. MUST stay in
  * lockstep with ECU_PRESETS in ecu_presets.c — see the SIGN comments there
  * and tools/check_preset_signedness.py. Field-verified 2026-08. */
-    { "MaxxECU", "1.2", "BARO PRESSURE", "530", 1, 16, 16, 0.1, 0, 0, false },
-    { "MaxxECU", "1.2", "BATTERY VOLTAGE", "530", 1, 0, 16, 0.01, 0, 0, false },
-    { "MaxxECU", "1.2", "BOOST SOLENOID DUTY", "536", 1, 16, 16, 0.1, 0, 0, false },
-    { "MaxxECU", "1.2", "COOLANT TEMP", "530", 1, 48, 16, 0.1, 0, 0, true },
-    { "MaxxECU", "1.2", "CPU TEMP", "534", 1, 16, 16, 1, 0, 0, false },
-    { "MaxxECU", "1.2", "DRIVEN WHEELS AVG SPD", "523", 1, 16, 16, 0.1, 0, 0, false },
-    { "MaxxECU", "1.2", "E85 %", "531", 1, 16, 16, 0.1, 0, 0, false },
-    { "MaxxECU", "1.2", "EGT 1", "531", 1, 48, 16, 1, 0, 0, false },
-    { "MaxxECU", "1.2", "EGT 2", "532", 1, 0, 16, 1, 0, 0, false },
-    { "MaxxECU", "1.2", "EGT 3", "532", 1, 16, 16, 1, 0, 0, false },
-    { "MaxxECU", "1.2", "EGT 4", "532", 1, 32, 16, 1, 0, 0, false },
-    { "MaxxECU", "1.2", "EGT 5", "532", 1, 48, 16, 1, 0, 0, false },
-    { "MaxxECU", "1.2", "EGT 6", "533", 1, 0, 16, 1, 0, 0, false },
-    { "MaxxECU", "1.2", "EGT 7", "533", 1, 16, 16, 1, 0, 0, false },
-    { "MaxxECU", "1.2", "EGT 8", "533", 1, 32, 16, 1, 0, 0, false },
-    { "MaxxECU", "1.2", "EGT DIFFERENCE", "534", 1, 0, 16, 1, 0, 0, false },
-    { "MaxxECU", "1.2", "EGT HIGHEST", "533", 1, 48, 16, 1, 0, 0, false },
-    { "MaxxECU", "1.2", "ERROR CODE COUNT", "534", 1, 32, 16, 1, 0, 0, false },
-    { "MaxxECU", "1.2", "FIRMWARE VERSION", "524", 1, 48, 16, 0.001, 0, 0, false },
-    { "MaxxECU", "1.2", "FUEL CUT", "522", 1, 32, 16, 1, 0, 0, false },
-    { "MaxxECU", "1.2", "FUEL DUTY PRIMARY", "522", 1, 16, 16, 0.1, 0, 0, false },
-    { "MaxxECU", "1.2", "FUEL PULSEWIDTH PRIMARY", "522", 1, 0, 16, 0.01, 0, 0, false },
-    { "MaxxECU", "1.2", "GEAR", "536", 1, 0, 16, 1, 0, 0, true },
-    { "MaxxECU", "1.2", "IGNITION ANGLE", "521", 1, 32, 16, 0.1, 0, 0, true },
-    { "MaxxECU", "1.2", "IGNITION CUT", "521", 1, 48, 16, 1, 0, 0, false },
-    { "MaxxECU", "1.2", "INTAKE AIR TEMP", "530", 1, 32, 16, 0.1, 0, 0, true },
-    { "MaxxECU", "1.2", "LAMBDA", "520", 1, 48, 16, 0.001, 0, 2, false },
-    { "MaxxECU", "1.2", "LAMBDA A", "521", 1, 0, 16, 0.001, 0, 2, false },
-    { "MaxxECU", "1.2", "LAMBDA B", "521", 1, 16, 16, 0.001, 0, 2, false },
-    { "MaxxECU", "1.2", "LAMBDA CORR A", "524", 1, 16, 16, 0.1, 0, 0, true },
-    { "MaxxECU", "1.2", "LAMBDA CORR B", "524", 1, 32, 16, 0.1, 0, 0, true },
-    { "MaxxECU", "1.2", "LOST SYNC COUNT", "534", 1, 48, 16, 1, 0, 0, false },
-    { "MaxxECU", "1.2", "MAP", "520", 1, 32, 16, 0.1, 0, 0, false },
-    { "MaxxECU", "1.2", "RPM", "520", 1, 0, 16, 1, 0, 0, false },
-    { "MaxxECU", "1.2", "TARGET SLIP", "523", 1, 48, 16, 0.1, 0, 0, true },
-    { "MaxxECU", "1.2", "THROTTLE %", "520", 1, 16, 16, 0.1, 0, 0, false },
-    { "MaxxECU", "1.2", "TOTAL FUEL TRIM", "531", 1, 0, 16, 0.1, 0, 0, true },
-    { "MaxxECU", "1.2", "TOTAL IGNITION COMP", "531", 1, 32, 16, 0.1, 0, 0, true },
-    { "MaxxECU", "1.2", "TRACTION CTRL POWER LIMIT", "524", 1, 0, 16, 0.1, 0, 0, false },
-    { "MaxxECU", "1.2", "UNDRIVEN WHEELS AVG SPD", "523", 1, 0, 16, 0.1, 0, 0, false },
-    { "MaxxECU", "1.2", "USER ANALOG INPUT 1", "535", 1, 0, 16, 0.1, 0, 0, false },
-    { "MaxxECU", "1.2", "USER ANALOG INPUT 2", "535", 1, 16, 16, 0.1, 0, 0, false },
-    { "MaxxECU", "1.2", "USER ANALOG INPUT 3", "535", 1, 32, 16, 0.1, 0, 0, false },
-    { "MaxxECU", "1.2", "USER ANALOG INPUT 4", "535", 1, 48, 16, 0.1, 0, 0, false },
-    { "MaxxECU", "1.2", "VEHICLE SPEED", "522", 1, 48, 16, 0.1, 0, 0, false },
-    { "MaxxECU", "1.2", "WHEEL SLIP", "523", 1, 32, 16, 0.1, 0, 0, true },
-
-/* ── MaxxECU 1.3 ─────────────────────────────────────────────────────── */
     { "MaxxECU", "1.3", "AC/IDLE UP ACTIVE", "526", 1, 6, 1, 0, 0, 0, false },
     { "MaxxECU", "1.3", "ACCELERATION FORWARD", "527", 1, 0, 16, 0.01, 0, 0, true },
     { "MaxxECU", "1.3", "ACCELERATION RIGHT", "527", 1, 16, 16, 0.01, 0, 0, true },

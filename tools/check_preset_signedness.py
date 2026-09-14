@@ -89,7 +89,7 @@ def parse_ecu_presets(path: Path) -> dict:
 def parse_preconfig(path: Path) -> dict:
     """Return {(make, version): {(can_id, bit_start, bit_len): [(label, endian, signed)]}}"""
     src = _strip_comments(path.read_text(encoding="utf-8"))
-    # Row: { "MaxxECU", "1.2", "GEAR", "536", 1, 0, 16, 1, 0, 0, true },
+    # Row: { "MaxxECU", "1.3", "GEAR", "536", 1, 0, 16, 1, 0, 0, true },
     row_re = re.compile(
         r'\{\s*"([^"]+)"\s*,\s*'   # make
         r'"([^"]+)"\s*,\s*'        # version

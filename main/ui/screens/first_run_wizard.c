@@ -195,11 +195,11 @@ static lv_obj_t  *s_detail_source_lbl     = NULL;
  * s_step_ecu_*. */
 #define WIZ_ECU_MAX           16
 /* Auto-pick floor — *absolute* matched frames rather than percentage.
- * Percentage-floor gating drops superset presets whose extra IDs aren't
- * all broadcast: MaxxECU 1.3 covers 21 IDs but a real 1.3 unit might
- * only emit 5 of them (5/21 = 24%); the narrower 1.2 preset with the
- * same 5 IDs hits 5/12 = 42%, so a pct-floor at 30% kills 1.3 before
- * the matched-count tiebreaker can run.
+ * Percentage-floor gating drops wide presets whose IDs aren't all
+ * broadcast: MaxxECU covers 21 IDs but a real unit might only emit 5 of
+ * them (5/21 = 24%), so a pct-floor at 30% would kill it before the
+ * matched-count tiebreaker can run — and any narrower preset sharing
+ * those 5 IDs would score higher on percentage alone.
  *
  * Three distinct 11-bit frames as the gate is statistically robust (CAN
  * ID coincidence ≈ (tracked_n/2048)^3 — under 1e-6 for typical bus
@@ -948,15 +948,19 @@ static void _compute_ecu_matches(void) {
     /* Ranking — tiered descending by (matched, pct, total).
      *
      * Why matched first: when one preset's CAN-ID set is a strict
-     * superset of another's (MaxxECU 1.3 ⊃ 1.2, same base IDs + new
-     * ones for new features), the smaller preset hits 100% on its own
-     * IDs even when the device is the larger one. Pure-percentage
-     * ranking then picks 1.2 over 1.3 — wrong.
+     * superset of another's (the retired MaxxECU 1.2/1.3 pair was the
+     * worked example: same base IDs, extra ones for new features), the
+     * smaller preset hits 100% on its own IDs even when the device is the
+     * larger one. Pure-percentage ranking then picks the subset — wrong.
+     * That pair is now a single preset, but the hazard is generic (any
+     * OEM stream that grew between model years), so the rule stays.
      *
      * Counting matched IDs in absolute terms breaks that tie correctly:
-     *   - real 1.3 bus (20 IDs of 21):  1.3 matched=20 wins vs 1.2 matched=11
-     *   - real 1.2 bus (11 IDs of 11):  1.2 matched=11 ties with 1.3 matched=11
-     *                                   → secondary key (pct) picks 1.2 (100% > 52%)
+     *   - bus with the wide stream (20 of 21): wide matched=20 wins over a
+     *     narrow preset's matched=11
+     *   - bus with only the narrow stream (11 of 11): both match 11
+     *                                   → secondary key (pct) picks the
+     *                                     narrow one (100% > 52%)
      *
      * Tertiary `total` keeps ties stable in catalog order when two
      * presets cover exactly the same IDs (currently no such pair, but

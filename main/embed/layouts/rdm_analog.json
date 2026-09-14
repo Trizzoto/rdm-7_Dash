@@ -4,7 +4,7 @@
   "screen_w": 800,
   "screen_h": 480,
   "ecu": "MaxxECU",
-  "ecu_version": "1.2",
+  "ecu_version": "1.3",
   "signals": [
     {
       "name": "FUEL_SENDER_V",
