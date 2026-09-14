@@ -10,6 +10,7 @@
 #include "system/rdm_lv_async.h"
 #include "cJSON.h"
 #include "data/channel_source_apply.h"
+#include "data/obd2_autosetup.h"
 #include "layout/layout_manager.h"
 #include "layout/default_layout.h"
 #include "layout/ecu_presets.h"
@@ -822,8 +823,27 @@ static esp_err_t ecu_current_handler(httpd_req_t *req) {
 		cJSON_AddNumberToObject(root, "default_base_id", cur->base_id);
 		cJSON_AddNumberToObject(root, "id_span", ecu_preset_id_span(cur));
 	}
+	/* "pending" while an automatic OBD2 setup is owed to this car and the car
+	 * has not answered yet (ADR-0073) — lets Studio say so instead of leaving
+	 * someone to wonder why a Falcon has no timing channel. Read from NVS so
+	 * it is right before the LVGL task has resumed it after a boot. */
+	cJSON_AddStringToObject(root, "obd2_autosetup",
+	                        config_store_load_obd2_autosetup_pending() ? "pending" : "");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 	return web_server_send_json(req, root);
+}
+
+/* Runs on the LVGL task: the scan's callback and the channel set live there.
+ * `arg` is a malloc'd make-then-version pair of C strings, or NULL for "no
+ * ECU". */
+static void _obd2_autosetup_for_ecu_async(void *arg) {
+	char *pair = arg;
+	if (pair) {
+		obd2_autosetup_for_ecu(pair, pair + strlen(pair) + 1);
+		free(pair);
+	} else {
+		obd2_autosetup_cancel();
+	}
 }
 
 /* POST /api/ecu/set  body: {"make":"...","version":"..."} - empty strings clear */
@@ -899,15 +919,30 @@ static esp_err_t ecu_set_handler(httpd_req_t *req) {
 		 * stores 0 so a later preset change cannot inherit a stale id. */
 		config_store_save_ecu_base_id(p->base_id ? base_id : 0);
 		rdm_async_call(_deferred_screen_reload, NULL);
+		/* After the reload is queued, so the OBD2 binds land on the layout
+		 * the dash is about to show rather than the one it is leaving. */
+		size_t ml = strlen(make), vl = strlen(ver);
+		char *pair = malloc(ml + vl + 2);
+		if (pair) {
+			memcpy(pair, make, ml + 1);
+			memcpy(pair + ml + 1, ver, vl + 1);
+			rdm_async_call(_obd2_autosetup_for_ecu_async, pair);
+		}
 	} else {
 		config_store_save_ecu("", "");
 		config_store_save_ecu_base_id(0);
+		rdm_async_call(_obd2_autosetup_for_ecu_async, NULL);
 	}
+	bool obd2_auto = make[0] && ver[0] && obd2_autosetup_ecu_wants(make, ver);
 	cJSON_Delete(root);
 
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	return httpd_resp_send(req, "{\"ok\":true}", 11);
+	/* obd2_autosetup: this car reads part of its data over OBD2, and the dash
+	 * has started setting that up by itself. */
+	return obd2_auto
+		? httpd_resp_sendstr(req, "{\"ok\":true,\"obd2_autosetup\":true}")
+		: httpd_resp_send(req, "{\"ok\":true}", 11);
 }
 
 static const httpd_uri_t ecu_list_uri        = { .uri = "/api/ecu/list",        .method = HTTP_GET,  .handler = ecu_list_handler,             .user_ctx = NULL };

@@ -49,6 +49,7 @@
 #include "data/channel_manager.h"
 #include "lap/lap_engine.h"
 #include "can/rdm_bus.h"
+#include "data/obd2_autosetup.h"
 #include "ui/screens/ui_wifi.h"
 
 
@@ -1788,6 +1789,11 @@ void app_main(void) {
    * Deliberately down here, AFTER lv_init() and the LVGL task: it owns an
    * LVGL timer, and creating one before LVGL exists panics on boot. */
   rdm_bus_init();
+
+  /* An OBD2 setup still owed to this car from a previous boot (a Falcon
+   * preset applied with the ignition off) picks up where it left off, once
+   * CAN and the layout are up. No-op when nothing is owed. ADR-0073. */
+  obd2_autosetup_boot();
 
   if (boot_cfg.wifi_on_boot) {
     ESP_LOGI(TAG, "WiFi-on-boot enabled, starting WiFi after 4s delay...");

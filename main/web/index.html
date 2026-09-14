@@ -20617,8 +20617,17 @@
                     body: JSON.stringify(body)
                 });
                 if (!r.ok) throw new Error(await r.text());
+                const res = await r.json().catch(() => ({}));
                 closeEcuPreset();
                 updateStatus(`ECU preset applied: ${make} ${version}${baseId !== null ? ` @ ${baseId} (0x${baseId.toString(16).toUpperCase()})` : ''} — reloading layout...`);
+                /* A car that broadcasts only part of the picture (a Falcon):
+                 * the dash is filling the rest in from OBD2 by itself
+                 * (ADR-0073). Say so, or its timing and oil pressure channels
+                 * appear a few seconds later with no explanation — or not at
+                 * all until the ignition is on. */
+                if (res.obd2_autosetup) {
+                    showToast(`${(preset && preset.display) || (make + ' ' + version)} applied. The dash is also adding the readings this car only gives over OBD2 — keep the ignition on.`, 'success');
+                }
                 setTimeout(() => {
                     fetchLayouts();
                     loadLayout();
@@ -23078,6 +23087,12 @@
                     ecuV.textContent = (d.make && d.make.length)
                         ? `${d.make} ${d.version || ''}`.trim()
                         : 'None — pick one';
+                    /* The dash owes this car an OBD2 setup the car has not
+                     * answered yet (ignition off when the preset went on). */
+                    if (d.obd2_autosetup === 'pending') {
+                        ecuV.textContent += ' · OBD2 waiting for the car';
+                        if (ecuBtn) ecuBtn.title = 'This car gives some readings only over OBD2. The dash sets those up by itself the first time the car answers — switch the ignition on.';
+                    }
                 }
             } catch (e) { /* strip stays as-is; poll will re-call on flip */ }
             try {

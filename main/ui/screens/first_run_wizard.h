@@ -24,6 +24,10 @@ void show_first_run_wizard(void);
  * from Device Settings → "Channels". LVGL task only. */
 void first_run_wizard_open_channels(void);
 
+/* The same editor with "Add channels from OBD2" already scanning — Device
+ * Settings -> "OBD2 readings". LVGL task only. */
+void first_run_wizard_open_obd2_scan(void);
+
 /* Forward decl — full definition in widgets/widget_types.h. */
 typedef struct widget_t widget_t;
 

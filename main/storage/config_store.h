@@ -110,6 +110,11 @@ esp_err_t config_store_load_boot_anim_style(uint8_t *style);
 esp_err_t config_store_save_first_run_done(bool done);
 esp_err_t config_store_load_first_run_done(bool *done);
 
+/* True while an automatic OBD2 setup is owed to this car (see
+ * data/obd2_autosetup.h). Defaults to false on any read failure. */
+esp_err_t config_store_save_obd2_autosetup_pending(bool pending);
+bool      config_store_load_obd2_autosetup_pending(void);
+
 /* ── Wire input mode ────────────────────────────────────────────────────
    When enabled, GPIO 43/44 are used as indicator wire inputs and
    uart_protocol_init() is skipped at boot (UART1 desktop serial disabled).

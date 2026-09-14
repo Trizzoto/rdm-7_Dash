@@ -765,6 +765,16 @@ const server = http.createServer((req, res) => {
         return sendJson(res, { ok: true, channel: ch });
       });
     }
+    /* Mirrors ecu_set_handler: a preset that reads part of the car over OBD2
+     * (a Ford Falcon, obd2_autosetup_ecu_wants) says the dash started setting
+     * that up, so Quick ECU Setup's note can be seen in dev (ADR-0073). */
+    if (url === '/api/ecu/set' && req.method === 'POST') {
+      return readBody(req, (body) => {
+        let d = {};
+        try { d = JSON.parse(body || '{}'); } catch (e) {}
+        return sendJson(res, d.make === 'Ford' ? { ok: true, obd2_autosetup: true } : { ok: true });
+      });
+    }
     if (url === '/api/channels/import-preset' && req.method === 'POST') {
       return readBody(req, (body) => {
         try {

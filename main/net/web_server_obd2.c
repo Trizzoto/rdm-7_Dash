@@ -25,6 +25,7 @@
 #include "can/obd2.h"
 #include "data/canonical_channels.h"
 #include "data/channel_source_apply.h"
+#include "data/obd2_autosetup.h"
 #include "can/obd2_dtc_db.h"
 #include "storage/sd_manager.h"
 #include "widgets/signal.h"
@@ -894,6 +895,10 @@ static esp_err_t _adopt_handler(httpd_req_t *req) {
     }
     size_t bound = 0;
     esp_err_t err = channel_apply_obd2(rows, n, &bound);
+    /* Chosen from the car's own list in Studio: that is the OBD2 setup now,
+     * and a background one still owed must not add what was left unticked
+     * (ADR-0073). Under the LVGL lock — it touches an LVGL timer. */
+    if (bound > 0) obd2_autosetup_cancel();
     rdm_lvgl_unlock();
     free(rows);
 

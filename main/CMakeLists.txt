@@ -17,6 +17,7 @@ idf_component_register(
         "data/channel_math.c"
         "data/fuel_stoich.c"
         "data/channel_source_apply.c"
+        "data/obd2_autosetup.c"
         "data/unit_convert.c"
         "lap/lap_engine.c"
         "storage/boot_assets.c"

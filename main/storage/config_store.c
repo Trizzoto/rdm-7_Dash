@@ -840,6 +840,23 @@ esp_err_t config_store_load_first_run_done(bool *done)
     return ESP_OK;
 }
 
+/* OBD2 automatic setup still owed to this car (obd2_autosetup.c). One byte,
+ * so an ECU applied with the ignition off gets its OBD2 readings the next
+ * time the car answers — including after a reboot. */
+#define NS_OBD2_AUTO "obd2_auto"
+
+esp_err_t config_store_save_obd2_autosetup_pending(bool pending)
+{
+    return chs_save_u8(NS_OBD2_AUTO, "pending", pending ? 1u : 0u);
+}
+
+bool config_store_load_obd2_autosetup_pending(void)
+{
+    uint8_t v = 0;
+    chs_load_u8(NS_OBD2_AUTO, "pending", &v);
+    return v != 0;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
  *  WIRE INPUT MODE (GPIO 43/44 repurposed from UART1)
  * ═══════════════════════════════════════════════════════════════════════ */

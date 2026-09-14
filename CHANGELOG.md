@@ -9,6 +9,26 @@ This file starts tracking from **1.1.11** (the first release-tracked build, 2026
 Changes that have landed on `master` since the last tagged version.
 
 ### Changed
+- **The setup wizard no longer asks everyone about OBD2.** (ADR-0073) It is
+  four steps now — CAN, ECU, channels, connect. OBD2 was step 2 of 5 for every
+  customer, though it only matters to two kinds of car:
+  - **A Ford Falcon (BA/BF, FG) gets OBD2 set up by itself.** Applying the
+    preset — in the wizard, from Studio's Quick ECU Setup or import, or after
+    resetting the default layout — scans the car in the background and turns
+    everything it answers that the broadcast lacks (timing, lambda, trims,
+    pressures; on an FG also MAP and intake temp) into channels. With the
+    ignition off it keeps trying, and resumes after a reboot, until the car
+    answers once. Studio says so when the preset is applied, and the Channels
+    header shows "OBD2 waiting for the car" until then.
+  - **A car with no ECU preset** picks "My car uses OBD2" at the ECU step (on
+    the "No ECU detected" card, or first in the ECU list). That screen scans
+    straight away and sets up what the car reports, with Scan again and Back.
+  - OBD2 lives in **Device Settings → OBD2 readings**, which opens the scan and
+    reads WAITING FOR CAR while a setup is still owed.
+  - Adding readings by hand from a scan list cancels a setup still owed, so a
+    later background attempt never adds what you left unticked.
+  - API: `/api/ecu/set` answers `obd2_autosetup: true` when it started one;
+    `/api/ecu/current` carries `obd2_autosetup: "pending"`.
 - **The car comes first in its own channel list.** (ADR-0071) The Channels
   page, the widget's channel picker and the dash's setup wizard now show "On
   this car" — every channel the dash has, custom ones in their own group — and

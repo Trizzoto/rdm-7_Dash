@@ -26,6 +26,7 @@
 #include "data/channel_manager.h"
 #include "obd2_picker.h"
 #include "obd2.h"
+#include "data/obd2_autosetup.h"
 #include "dtc_reader.h"
 #include "settings/ui_gear_setup.h"
 #include "widgets/signal_internal.h"
@@ -2427,6 +2428,10 @@ static void _layout_reset_confirm_cb(lv_event_t *e) {
                 make[0] && ver[0]) {
                 const ecu_preset_t *p = ecu_preset_find(make, ver);
                 if (p) ecu_preset_apply_to_layout("default", p);
+                /* A fresh default layout has no OBD2 PIDs either; a car
+                 * that reads part of itself over OBD2 gets them back the
+                 * same way it got them first time (ADR-0073). */
+                if (p) obd2_autosetup_for_ecu(make, ver);
             }
             layout_manager_bump_version();
 
@@ -3275,6 +3280,11 @@ static void _channels_card_cb(lv_event_t *e) {
     first_run_wizard_open_channels();
 }
 
+static void _obd2_scan_card_cb(lv_event_t *e) {
+    (void)e;
+    first_run_wizard_open_obd2_scan();
+}
+
 /* ── Setup grids ───────────────────────────────────────────────────────
  *
  * Same three groups, same names, same order as Studio's Setup page, so
@@ -3322,14 +3332,21 @@ static void _build_vehicle_grid(lv_obj_t *content) {
         "Read and clear the car's trouble codes.",
         "READ", _dtc_btn_cb);
 
-    /* OBD2 PIDs card — the by-hand tool, named as such. Getting OBD2
-     * readings onto the dash is one action and it lives in Channels
-     * ("Scan for OBD2"); this card is for picking exact PIDs and adding
-     * ones the standard list doesn't know (ADR-0037). */
+    /* OBD2 readings — where OBD2 is set up now that the setup wizard no
+     * longer asks every customer about it (ADR-0073). Opens the scan
+     * straight away. Says WAITING while a background setup (a Falcon preset
+     * applied with the ignition off) is still owed to the car. */
+    _make_setup_card(grid, LV_SYMBOL_REFRESH, "OBD2 readings",
+        "Ask the car what it reports, and add it as channels.",
+        obd2_autosetup_pending() ? "WAITING FOR CAR" : "SCAN",
+        _obd2_scan_card_cb);
+
+    /* OBD2 PIDs card — the by-hand tool, named as such: picking exact PIDs
+     * and adding ones the standard list doesn't know (ADR-0037). */
     char obd2_txt[48];
     _obd2_label_compose(obd2_txt, sizeof(obd2_txt));
     setup_card_t obd2 = _make_setup_card(grid, LV_SYMBOL_DRIVE, "OBD2 PIDs",
-        "Pick exact PIDs by hand. For readings, use Channels.",
+        "Pick exact PIDs by hand. Most cars want OBD2 readings.",
         obd2_txt, _obd2_btn_cb);
     s_obd2_btn_label = obd2.stat_label;
 
