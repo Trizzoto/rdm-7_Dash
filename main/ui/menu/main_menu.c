@@ -9,10 +9,11 @@
 #include "menu/main_menu.h"
 
 #include "kit/ui_kit.h"
+#include "layout_thumbs.h"
 #include "menu/menu_screen.h"
 #include "settings/device_settings.h"
 #include "screens/ui_Screen3.h"
-#include "screens/ui_peaks.h"
+#include "screens/ui_graphs.h"
 #include "screens/first_run_wizard.h"
 #include "system/rdm_lv_async.h"
 #include "layout/layout_manager.h"
@@ -154,8 +155,7 @@ static void _t_car(lv_event_t *e)       { (void)e; device_settings_open_page(DS_
 static void _t_connect(lv_event_t *e)   { (void)e; device_settings_open_page(DS_PAGE_CONNECT); }
 static void _t_dash(lv_event_t *e)      { (void)e; device_settings_open_page(DS_PAGE_DASH); }
 
-static void _show_peaks_async(void *arg) { (void)arg; peaks_ui_show(); }
-static void _t_live(lv_event_t *e)      { (void)e; lv_async_call(_show_peaks_async, NULL); }
+static void _t_live(lv_event_t *e)      { (void)e; graphs_ui_show(); }
 
 static void _t_channels(lv_event_t *e)
 {
@@ -204,7 +204,7 @@ void main_menu_open(lv_obj_t *return_screen)
 
     t = uk_tile(grid, UK_ICON_CHART, "Live data", NULL, UK_TILE_NORMAL, _t_live, NULL);
     uk_grid_place(t, 3, 0, 1, 1);
-    uk_tile_set_status(t, NULL, "Values and peaks", UK_TONE_MUTED);
+    uk_tile_set_status(t, NULL, "Graphs, min and max", UK_TONE_MUTED);
 
     size_t ch_total = channel_manager_count(), ch_bound = 0;
     for (size_t i = 0; i < ch_total; i++) {
@@ -247,43 +247,15 @@ void main_menu_open(lv_obj_t *return_screen)
 
 /* ── Layouts page ─────────────────────────────────────────────────────── */
 
-/* Row = one choice in a list. Checked rows get the accent edge and a tick. */
-static lv_obj_t *_choice(lv_obj_t *parent, const char *text, bool checked,
-                         lv_event_cb_t cb, const char *user_name)
-{
-    lv_obj_t *b = uk_btn(parent, checked ? UK_ICON_CHECK : UK_ICON_NONE, text,
-                         checked ? UK_BTN_ON : UK_BTN_NEUTRAL, cb, NULL);
-    lv_obj_set_size(b, lv_pct(100), 48);
-    lv_obj_set_flex_align(b, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_left(b, 14, 0);
-    lv_obj_t *l = uk_btn_label(b);
-    lv_obj_set_style_text_font(l, uk_font(UK_FONT_LABEL), 0);
-    lv_obj_set_style_text_letter_space(l, 1, 0);
-    lv_obj_set_flex_grow(l, 1);
-    lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
-    /* Stash the name the row stands for on the row itself. */
-    if (user_name) {
-        char buf[LAYOUT_MAX_NAME + 1];
-        snprintf(buf, sizeof(buf), "%s", user_name);
-        for (char *c = buf; *c; c++) if (*c >= 'a' && *c <= 'z') *c -= 32;
-        lv_label_set_text(l, buf);
-        lv_obj_t *key = lv_label_create(b);          /* hidden: the real name */
-        lv_label_set_text(key, user_name);
-        lv_obj_add_flag(key, LV_OBJ_FLAG_HIDDEN | LV_OBJ_FLAG_IGNORE_LAYOUT);
-    }
-    return b;
-}
-
-static const char *_choice_name(lv_obj_t *row)
-{
-    lv_obj_t *key = lv_obj_get_child(row, 2);
-    return key ? lv_label_get_text(key) : NULL;
-}
+/* Names behind the cards, by card index. Valid while the page exists. */
+static char s_card_names[LAYOUT_MAX_COUNT][LAYOUT_MAX_NAME];
+static int  s_card_count = 0;
 
 static void _layout_pick_cb(lv_event_t *e)
 {
-    const char *name = _choice_name(lv_event_get_current_target(e));
-    if (!name) return;
+    int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    if (idx < 0 || idx >= s_card_count) return;
+    const char *name = s_card_names[idx];
     char active[LAYOUT_MAX_NAME] = "";
     layout_manager_get_active(active, sizeof(active));
     if (strcmp(active, name) == 0) {          /* already driving it: just go back */
@@ -295,87 +267,178 @@ static void _layout_pick_cb(lv_event_t *e)
     ui_Screen3_switch_layout(name);
 }
 
-static lv_obj_t *s_splash_list = NULL;
-static void _build_splash_rows(void);
-static void _rebuild_splash_async(void *arg) { (void)arg; _build_splash_rows(); }
+/* Start-up screen: "None" first, then every splash layout. */
+static char s_splash_names[LAYOUT_MAX_COUNT][LAYOUT_MAX_NAME];
 
-static void _splash_pick_cb(lv_event_t *e)
+static void _splash_dd_cb(lv_event_t *e)
 {
-    const char *name = _choice_name(lv_event_get_current_target(e));
-    if (!name || strcmp(name, "\x01off") == 0) {
+    uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
+    if (sel == 0) {
         config_store_save_splash_enabled(false);
-        uk_toast("Start-up screen off", UK_TONE_TEXT);
+        uk_toast("Start-up screen off: straight to the dash", UK_TONE_TEXT);
     } else {
         config_store_save_splash_enabled(true);
-        layout_manager_set_active_splash(name);
+        layout_manager_set_active_splash(s_splash_names[sel - 1]);
         uk_toast("Start-up screen changed", UK_TONE_TEXT);
     }
-    /* The tapped row is inside the list being rebuilt: never clean it from
-     * inside its own click event. */
-    lv_async_call(_rebuild_splash_async, NULL);
 }
 
-static void _build_splash_rows(void)
+static lv_obj_t *_splash_dropdown(lv_obj_t *parent)
 {
-    if (!s_splash_list || !lv_obj_is_valid(s_splash_list)) return;
-    lv_obj_clean(s_splash_list);
-    char names[LAYOUT_MAX_COUNT][LAYOUT_MAX_NAME];
-    int n = layout_manager_list_splash(names, LAYOUT_MAX_COUNT);
+    int n = layout_manager_list_splash(s_splash_names, LAYOUT_MAX_COUNT);
     char active[LAYOUT_MAX_NAME] = "";
     layout_manager_get_active_splash(active, sizeof(active));
     bool on = true;
     config_store_load_splash_enabled(&on);
-    bool matched = false;
+
+    char opts[640] = "None";
+    size_t pos = strlen(opts);
+    int sel = 0;
     for (int i = 0; i < n; i++) {
-        bool sel = on && strcmp(names[i], active) == 0;
-        matched |= sel;
-        _choice(s_splash_list, names[i], sel, _splash_pick_cb, names[i]);
+        size_t len = strlen(s_splash_names[i]);
+        if (pos + len + 2 > sizeof(opts)) break;
+        opts[pos++] = '\n';
+        memcpy(opts + pos, s_splash_names[i], len + 1);
+        pos += len;
+        if (on && strcmp(s_splash_names[i], active) == 0) sel = i + 1;
     }
     /* Enabled but the saved name is gone: the first one is what boots. */
-    if (on && !matched && n > 0) {
-        lv_obj_t *first = lv_obj_get_child(s_splash_list, 0);
-        uk_btn_set_kind(first, UK_BTN_ON);
-    }
-    lv_obj_t *off = _choice(s_splash_list, "None", !on, _splash_pick_cb, "\x01off");
-    lv_label_set_text(uk_btn_label(off), "NONE - STRAIGHT TO THE DASH");
+    if (on && sel == 0 && n > 0) sel = 1;
+
+    lv_obj_t *dd = lv_dropdown_create(parent);
+    lv_dropdown_set_options(dd, opts);
+    lv_dropdown_set_selected(dd, sel);
+    uk_style_dropdown(dd);
+    lv_obj_set_size(dd, 190, 36);
+    lv_obj_add_event_cb(dd, _splash_dd_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    return dd;
 }
 
-static void _layouts_deleted_cb(lv_event_t *e) { (void)e; s_splash_list = NULL; }
+/* One layout as a card: its picture, its name, and whether it is in use. */
+static void _layout_card(lv_obj_t *parent, int idx, bool in_use)
+{
+    const char *name = s_card_names[idx];
+
+    lv_obj_t *card = lv_obj_create(parent);
+    lv_obj_remove_style_all(card);
+    lv_obj_set_size(card, 252, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_color(card, THEME_COLOR_PANEL, 0);
+    lv_obj_set_style_bg_color(card, THEME_COLOR_SECTION_BG, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(card, UK_R_TILE, 0);
+    lv_obj_set_style_border_width(card, in_use ? 2 : 1, 0);
+    lv_obj_set_style_border_color(card, in_use ? THEME_COLOR_ACCENT : THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_pad_all(card, in_use ? 11 : 12, 0);
+    lv_obj_set_style_pad_row(card, 10, 0);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(card, _layout_pick_cb, LV_EVENT_CLICKED, (void *)(intptr_t)idx);
+
+    /* The picture sits in a black frame the size of a thumbnail, so a card
+     * with no picture yet keeps the same shape as one with. */
+    lv_obj_t *frame = lv_obj_create(card);
+    lv_obj_remove_style_all(frame);
+    lv_obj_set_size(frame, LAYOUT_THUMB_W + 2, LAYOUT_THUMB_H + 2);
+    lv_obj_set_style_bg_color(frame, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(frame, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(frame, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(frame, 1, 0);
+    lv_obj_clear_flag(frame, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+
+    const lv_img_dsc_t *thumb = layout_thumbs_get(name);
+    if (thumb) {
+        lv_obj_t *img = lv_img_create(frame);
+        lv_img_set_src(img, thumb);
+        lv_obj_center(img);
+    } else {
+        lv_obj_t *ic = uk_icon(frame, UK_ICON_LAYOUTS, UK_ICON_LG, UK_TONE_HINT);
+        lv_obj_align(ic, LV_ALIGN_CENTER, 0, -14);
+        lv_obj_t *t = uk_label(frame, "Picture appears once it has been on screen",
+                               UK_FONT_SMALL, UK_TONE_HINT);
+        lv_label_set_long_mode(t, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(t, 180);
+        lv_obj_set_style_text_align(t, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_align(t, LV_ALIGN_CENTER, 0, 26);
+    }
+
+    lv_obj_t *row = lv_obj_create(card);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, lv_pct(100), 26);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(row, 8, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *nm = uk_label(row, name, UK_FONT_HEAD, UK_TONE_TEXT);
+    lv_obj_set_flex_grow(nm, 1);
+    lv_label_set_long_mode(nm, LV_LABEL_LONG_DOT);
+
+    if (in_use) {
+        lv_obj_t *pill = lv_obj_create(row);
+        lv_obj_remove_style_all(pill);
+        lv_obj_set_size(pill, LV_SIZE_CONTENT, 22);
+        lv_obj_set_style_bg_color(pill, THEME_COLOR_ACCENT, 0);
+        lv_obj_set_style_bg_opa(pill, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(pill, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_pad_hor(pill, 9, 0);
+        lv_obj_clear_flag(pill, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *pl = uk_label(pill, "In use", UK_FONT_LABEL, UK_TONE_TEXT);
+        lv_obj_set_style_text_color(pl, THEME_COLOR_TEXT_ON_ACCENT, 0);
+        lv_obj_center(pl);
+    }
+}
 
 static void _open_layouts_page(void)
 {
     lv_obj_t *scr = uk_screen();
-    lv_obj_add_event_cb(scr, _layouts_deleted_cb, LV_EVENT_DELETE, NULL);
-    uk_bar(scr, "Layouts", UK_BAR_BACK, main_menu_back_cb, NULL);
-    lv_obj_t *grid = uk_grid(uk_body(scr), 2, 1);
+    lv_obj_t *bar = uk_bar(scr, "Layouts", UK_BAR_BACK, main_menu_back_cb, NULL);
 
-    lv_obj_t *left = uk_card(grid);
-    uk_grid_place(left, 0, 0, 1, 1);
-    lv_obj_set_flex_flow(left, LV_FLEX_FLOW_COLUMN);
-    uk_section(left, "Drive with");
-    lv_obj_t *list = uk_scroll(left);
-    lv_obj_set_height(list, 0);
-    lv_obj_set_flex_grow(list, 1);
-    lv_obj_set_style_pad_row(list, 8, 0);
+    /* Start-up screen lives in the bar, so the whole body is pictures. */
+    lv_obj_t *status = lv_obj_get_child(bar, 2);
+    lv_obj_set_style_pad_column(status, 10, 0);
+    uk_label(status, "At start-up", UK_FONT_LABEL, UK_TONE_MUTED);
+    _splash_dropdown(status);
+
+    lv_obj_t *list = uk_scroll(uk_body(scr));
+    lv_obj_set_flex_flow(list, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_style_pad_column(list, UK_GAP, 0);
+    lv_obj_set_style_pad_row(list, UK_GAP, 0);
 
     char names[LAYOUT_MAX_COUNT][LAYOUT_MAX_NAME];
     int n = layout_manager_list(names, LAYOUT_MAX_COUNT);
     char active[LAYOUT_MAX_NAME] = "";
     layout_manager_get_active(active, sizeof(active));
-    for (int i = 0; i < n; i++) {
-        if (names[i][0] == '_') continue;
-        _choice(list, names[i], strcmp(names[i], active) == 0, _layout_pick_cb, names[i]);
+
+    /* The one in use first, then the rest in filesystem order. */
+    s_card_count = 0;
+    for (int pass = 0; pass < 2; pass++) {
+        for (int i = 0; i < n; i++) {
+            if (names[i][0] == '_') continue;
+            bool in_use = strcmp(names[i], active) == 0;
+            if ((pass == 0) != in_use) continue;
+            snprintf(s_card_names[s_card_count], LAYOUT_MAX_NAME, "%s", names[i]);
+            _layout_card(list, s_card_count, in_use);
+            s_card_count++;
+        }
     }
 
-    lv_obj_t *right = uk_card(grid);
-    uk_grid_place(right, 1, 0, 1, 1);
-    lv_obj_set_flex_flow(right, LV_FLEX_FLOW_COLUMN);
-    uk_section(right, "Shown at start-up");
-    s_splash_list = uk_scroll(right);
-    lv_obj_set_height(s_splash_list, 0);
-    lv_obj_set_flex_grow(s_splash_list, 1);
-    lv_obj_set_style_pad_row(s_splash_list, 8, 0);
-    _build_splash_rows();
+    /* Where more come from. */
+    lv_obj_t *more = lv_obj_create(list);
+    lv_obj_remove_style_all(more);
+    lv_obj_set_size(more, 252, LAYOUT_THUMB_H + 2 + 10 + 26 + 24);
+    lv_obj_set_style_border_color(more, THEME_COLOR_BORDER_MED, 0);
+    lv_obj_set_style_border_width(more, 1, 0);
+    lv_obj_set_style_radius(more, UK_R_TILE, 0);
+    lv_obj_clear_flag(more, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *mi = uk_icon(more, UK_ICON_WEB, UK_ICON_LG, UK_TONE_HINT);
+    lv_obj_align(mi, LV_ALIGN_CENTER, 0, -22);
+    lv_obj_t *mt = uk_label(more, "More layouts from RDM Studio or the web editor",
+                            UK_FONT_SMALL, UK_TONE_MUTED);
+    lv_label_set_long_mode(mt, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(mt, 190);
+    lv_obj_set_style_text_align(mt, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(mt, LV_ALIGN_CENTER, 0, 24);
 
     main_menu_swap_to(scr);
 }

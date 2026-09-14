@@ -2007,6 +2007,11 @@ static void _build_car_page(lv_obj_t *body) {
     uk_grid_fill_row(grid);
 }
 
+static void _updates_card_cb(lv_event_t *e) {
+    (void)e;
+    ota_update_dialog_check_now();
+}
+
 static void _build_dash_page(lv_obj_t *body) {
     lv_obj_t *grid = uk_grid(body, 4, 2);
 
@@ -2015,6 +2020,12 @@ static void _build_dash_page(lv_obj_t *body) {
     _make_setup_card(grid, UK_ICON_CHIP, "About",
         "Serial, firmware, VIN and ECU name.",
         fw_stat, _device_info_popup_open, UK_TILE_NORMAL);
+
+    /* Back on the glass: the button that did this was lost in an earlier
+     * redesign, leaving updates reachable only from the web editor. */
+    _make_setup_card(grid, UK_ICON_UPDATE, "Updates",
+        "Check for new firmware and install it over WiFi.",
+        "Check now", _updates_card_cb, UK_TILE_NORMAL);
 
     char bri_stat[12];
     snprintf(bri_stat, sizeof(bri_stat), "%d%%", current_brightness);
@@ -2045,7 +2056,6 @@ static void _build_dash_page(lv_obj_t *body) {
     _make_setup_card(grid, UK_ICON_TRASH, "Factory reset",
         "Wipe every setting and layout on this dash.",
         "Asks first", _factory_reset_btn_cb, UK_TILE_DANGER);
-    uk_grid_fill_row(grid);
 }
 
 static void _build_connect_page(lv_obj_t *body) {

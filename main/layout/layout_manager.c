@@ -1665,6 +1665,12 @@ esp_err_t layout_manager_delete(const char *name) {
 	char bak_path[96];
 	snprintf(bak_path, sizeof(bak_path), "%s.bak", path);
 	remove(bak_path);
+	/* And its picture for the Layouts page (ui/layout_thumbs.c keeps them
+	 * there). File only: this can run off the LVGL task, and a RAM copy of a
+	 * deleted layout is never asked for again. */
+	char thumb_path[96];
+	snprintf(thumb_path, sizeof(thumb_path), "/lfs/thumbs/%s.thm", name);
+	remove(thumb_path);
 	ESP_LOGI(TAG, "layout_delete: deleted '%s'", name);
 	xSemaphoreGiveRecursive(s_layout_mutex);
 	return ESP_OK;

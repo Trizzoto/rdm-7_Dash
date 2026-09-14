@@ -15,6 +15,11 @@ void show_ota_update_dialog(const char* current_version, const char* new_version
  * the same progress bar and the same error handling as a manual one. */
 void ota_update_dialog_begin_install(void);
 void show_ota_checking_dialog(void);
+/* The on-glass "Check for updates": says so at once when there is no internet
+ * to check with, otherwise shows the checking dialog, asks the server off the
+ * LVGL task, and follows up with update available / up to date / failed —
+ * unless the person cancelled while it was asking. */
+void ota_update_dialog_check_now(void);
 void show_ota_up_to_date_dialog(const char* current_version);
 void show_ota_check_failed_dialog(void);
 void close_ota_update_dialog(void);

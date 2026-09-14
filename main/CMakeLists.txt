@@ -138,6 +138,8 @@ idf_component_register(
         "ui/kit/ui_kit.c"
         "ui/kit/uk_icons.c"
         "ui/menu/main_menu.c"
+        "ui/screens/ui_graphs.c"
+        "ui/layout_thumbs.c"
         "ui/screens/ui_wifi.c"
         "ui/screens/ui_diagnostics.c"
         "ui/screens/ui_peaks.c"

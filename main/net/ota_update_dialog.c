@@ -3,6 +3,9 @@
 #include "theme.h"
 #include "kit/ui_kit.h"
 #include "storage/config_store.h"
+#include "net/wifi_manager.h"
+#include "version.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
@@ -235,14 +238,28 @@ static void progress_timer_cb(lv_timer_t *timer) {
                 break;
 
             case OTA_UPDATE_FAILED:
-                lv_label_set_text(status_label, "The update failed. Please try again.");
+                lv_label_set_text(status_label,
+                    "The update did not finish. Nothing was changed: the dash "
+                    "still runs the version it had. Try again, or close this.");
                 lv_obj_set_style_text_color(status_label, THEME_COLOR_STATUS_ERROR, LV_PART_MAIN | LV_STATE_DEFAULT);
                 update_in_progress = false;
-                
-                // Show install button again for retry
+
+                /* Every button was hidden for the flash. Bring back a way out
+                 * (Close) and a retry, or the only exit is the small X. */
+                if (progress_bar && lv_obj_is_valid(progress_bar))
+                    lv_obj_add_flag(progress_bar, LV_OBJ_FLAG_HIDDEN);
+                if (progress_label && lv_obj_is_valid(progress_label))
+                    lv_obj_add_flag(progress_label, LV_OBJ_FLAG_HIDDEN);
                 if (install_btn && lv_obj_is_valid(install_btn)) {
+                    uk_btn_set_text(install_btn, "Try again");
                     lv_obj_clear_flag(install_btn, LV_OBJ_FLAG_HIDDEN);
                 }
+                if (cancel_btn && lv_obj_is_valid(cancel_btn)) {
+                    uk_btn_set_text(cancel_btn, "Close");
+                    lv_obj_clear_flag(cancel_btn, LV_OBJ_FLAG_HIDDEN);
+                }
+                if (skip_btn && lv_obj_is_valid(skip_btn))
+                    lv_obj_clear_flag(skip_btn, LV_OBJ_FLAG_HIDDEN);
                 break;
                 
             default:
@@ -439,9 +456,12 @@ static void _create_info_dialog(const char *title_text, const char *body_text,
 
 /* ── Checking dialog with spinner ──────────────────────────────────────── */
 
+static uint32_t s_check_token;   /* defined with the manual check below */
+
 static void _checking_cancel_cb(lv_event_t *e) {
     (void)e;
     ESP_LOGI(TAG, "OTA check cancelled by user");
+    s_check_token++;              /* a late answer must not pop a dialog */
     close_ota_update_dialog();
 }
 
@@ -449,6 +469,7 @@ static void _checking_timeout_cb(lv_timer_t *timer) {
     (void)timer;
     checking_timeout_timer = NULL;
     ESP_LOGW(TAG, "OTA check timed out");
+    s_check_token++;
     show_ota_check_failed_dialog();
 }
 
@@ -502,9 +523,104 @@ void show_ota_up_to_date_dialog(const char *current_version) {
 
 /* ── Check failed dialog ───────────────────────────────────────────────── */
 
+static void _retry_check_cb(lv_event_t *e) {
+    (void)e;
+    ota_update_dialog_check_now();
+}
+
+/* A problem dialog with the two ways forward side by side: Close, and a
+ * retry that runs the whole check again. */
+static void _create_retry_dialog(const char *title_text, const char *body_text) {
+    close_ota_update_dialog();
+    ota_modal = uk_popup(440, 250, title_text, _info_ok_btn_cb);
+    ota_dialog = ota_modal;
+
+    lv_obj_t *body = uk_label(ota_dialog, body_text, UK_FONT_BODY, UK_TONE_MUTED);
+    lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(body, 404);
+    lv_obj_set_style_text_line_space(body, 4, 0);
+    lv_obj_align(body, LV_ALIGN_TOP_LEFT, 0, UK_POPUP_BODY_Y);
+
+    cancel_btn = uk_btn(ota_dialog, UK_ICON_NONE, "Close", UK_BTN_GHOST,
+                        _info_ok_btn_cb, NULL);
+    lv_obj_set_width(cancel_btn, 120);
+    lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+
+    lv_obj_t *retry = uk_btn(ota_dialog, UK_ICON_RESET, "Try again", UK_BTN_PRIMARY,
+                             _retry_check_cb, NULL);
+    lv_obj_set_width(retry, 160);
+    lv_obj_align(retry, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+}
+
 void show_ota_check_failed_dialog(void) {
-    _create_info_dialog("Update check failed",
-                        "Could not reach the update server.\nCheck your internet connection.",
-                        THEME_COLOR_STATUS_ERROR);
+    _create_retry_dialog("Update check failed",
+        "The dash could not reach the update server. It needs a WiFi network "
+        "with internet, not just its own hotspot.");
     ESP_LOGI(TAG, "Showing OTA check-failed dialog");
+}
+
+/* ── Manual check ──────────────────────────────────────────────────────── */
+
+/* Bumped by every new check and by Cancel. The check task carries the value
+ * it started with; a result for an older one (the person cancelled, or started
+ * again) is dropped instead of popping a dialog they walked away from. */
+static uint32_t s_check_token = 0;
+static bool     s_check_running = false;
+
+static void _check_result_async(void *arg) {
+    uint32_t token = (uint32_t)(uintptr_t)arg;
+    s_check_running = false;
+    if (token != s_check_token) {
+        ESP_LOGI(TAG, "Update check finished after it was cancelled; ignoring");
+        return;
+    }
+    ota_status_t status = get_ota_status();
+    if (status == OTA_UPDATE_AVAILABLE) {
+        show_ota_update_dialog(FIRMWARE_VERSION, get_latest_version(),
+                               get_update_file_size_mb(), get_release_notes());
+    } else if (status == OTA_NO_UPDATE_AVAILABLE) {
+        show_ota_up_to_date_dialog(FIRMWARE_VERSION);
+    } else {
+        show_ota_check_failed_dialog();
+    }
+}
+
+static void _check_task(void *arg) {
+    check_for_update();
+    lv_async_call(_check_result_async, arg);
+    vTaskDelete(NULL);
+}
+
+void ota_update_dialog_check_now(void) {
+    const char *ssid = wifi_manager_get_connected_ssid();
+    if (!ssid || !ssid[0]) {
+        _create_retry_dialog("No internet",
+            "Updates download over the internet. Join a WiFi network that has "
+            "internet in Connect > WiFi, then check again.");
+        return;
+    }
+    if (s_check_running) {           /* one already asking: just show it */
+        show_ota_checking_dialog();
+        return;
+    }
+
+    show_ota_checking_dialog();
+    uint32_t token = ++s_check_token;
+
+    /* TCB in internal RAM (FreeRTOS requires it), the 8 KB stack in PSRAM:
+     * a contiguous 8 KB internal block is exactly what a long-running dash
+     * runs out of (see reboot_and_update_btn_cb). */
+    static StaticTask_t  s_tcb;
+    static StackType_t  *s_stack = NULL;
+    const uint32_t STACK = 8192;
+    if (!s_stack)
+        s_stack = heap_caps_calloc(STACK, sizeof(StackType_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_stack ||
+        !xTaskCreateStaticPinnedToCore(_check_task, "ota_chk", STACK,
+                                       (void *)(uintptr_t)token, 3, s_stack, &s_tcb, 0)) {
+        ESP_LOGE(TAG, "Could not start the update check task");
+        show_ota_check_failed_dialog();
+        return;
+    }
+    s_check_running = true;
 }

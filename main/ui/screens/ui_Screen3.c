@@ -18,6 +18,7 @@
 #include "ui/menu/edit_mode.h"
 #include "ui/menu/menu_screen.h"
 #include "ui/menu/main_menu.h"
+#include "ui/layout_thumbs.h"
 #include "ui/kit/ui_kit.h"
 #include "storage/data_logger.h"
 #include "system/rdm_lv_async.h"
@@ -67,6 +68,7 @@ uint8_t current_value_id;
  * this cache instead. */
 static int s_layout_count = 0;
 static int s_layout_index = -1;   /* where the active layout sits in that cycle */
+static char s_active_layout[LAYOUT_MAX_NAME] = "";   /* cached with the cycle */
 
 /* How long the chrome (Menu / arrows / Edit pill) stays visible after a
  * background tap. Bumped from 6 s -> 10 s so the user has time to actually
@@ -207,6 +209,12 @@ static void _chrome_show_cb(void *arg) {
 void screen3_touch_event_cb(lv_event_t *e) {
 	if (lv_event_get_code(e) != LV_EVENT_SHORT_CLICKED) return;
 	if (edit_mode_is_armed()) return;
+	/* The glass shows the dashboard alone right now (the dock appears after
+	 * this): the moment to picture it for the Layouts page. Skipped when
+	 * anything is drawn over it. */
+	if (lv_scr_act() == ui_Screen3 && s_dock && lv_obj_has_flag(s_dock, LV_OBJ_FLAG_HIDDEN) &&
+	    lv_obj_get_child_cnt(lv_layer_top()) == 0 && !first_run_wizard_is_open())
+		layout_thumbs_capture_if_due(s_active_layout);
 	/* Defer the reveal to after touch-event dispatch. */
 	lv_async_call(_chrome_show_cb, NULL);
 }
@@ -613,6 +621,8 @@ void ui_Screen3_screen_init(void) {
 		char active[LAYOUT_MAX_NAME] = {0};
 		layout_manager_get_active(active, sizeof(active));
 		s_layout_index = layout_switcher_position(active, &s_layout_count);
+		snprintf(s_active_layout, sizeof(s_active_layout), "%s", active);
+		layout_thumbs_mark_loaded(active);
 	}
 
 	_dock_create(ui_Screen3);
