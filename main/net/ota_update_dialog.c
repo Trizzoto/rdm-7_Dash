@@ -1,16 +1,23 @@
 #include "ota_update_dialog.h"
 #include "system/safe_restart.h"
 #include "theme.h"
+#include "kit/ui_kit.h"
 #include "storage/config_store.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <stdio.h>
 #include <string.h>
 
 static const char *TAG = "ota_dialog";
 
-// Static variables for the dialog components
+/* Static variables for the dialog components.
+ *
+ * Every dialog here is a kit popup (uk_popup) on lv_layer_top. ota_modal and
+ * ota_dialog both point at the popup's card: deleting the card also deletes
+ * the dimmed backdrop uk_popup made beside it, so close_ota_update_dialog
+ * deletes ota_modal once and ota_dialog is never deleted on its own. */
 static lv_obj_t *ota_modal = NULL;
 static lv_obj_t *ota_dialog = NULL;
 static lv_obj_t *progress_bar = NULL;
@@ -41,7 +48,7 @@ static void install_btn_event_cb(lv_event_t *e) {
     ota_update_dialog_begin_install();
 }
 
-/* "Reboot & Update" — offered only after an install died at task creation.
+/* "Reboot and update" — offered only after an install died at task creation.
  *
  * The 6 KB download task needs one CONTIGUOUS internal-RAM block, and the
  * internal heap fragments as the dash runs; the same firmware that fails now
@@ -89,8 +96,8 @@ void ota_update_dialog_begin_install(void) {
     
     // Update status and show progress bar
     if (status_label && lv_obj_is_valid(status_label)) {
-        lv_label_set_text(status_label, "Initializing update...");
-        lv_obj_set_style_text_color(status_label, lv_color_hex(0x4080FF), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_label_set_text(status_label, "Starting the update...");
+        lv_obj_set_style_text_color(status_label, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
     }
     
     if (progress_bar && lv_obj_is_valid(progress_bar)) {
@@ -130,8 +137,8 @@ void ota_update_dialog_begin_install(void) {
              * RAM, and only because it has fragmented while running. */
             lv_label_set_text(status_label,
                 "The dash has been running too long to start the download.\n"
-                "Reboot & Update restarts and installs straight away.");
-            lv_obj_set_style_text_color(status_label, lv_color_hex(0xFF6060),
+                "Reboot and update restarts and installs straight away.");
+            lv_obj_set_style_text_color(status_label, THEME_COLOR_STATUS_ERROR,
                                         LV_PART_MAIN | LV_STATE_DEFAULT);
         }
         /* Restore the dismiss/retry buttons hidden above — nothing is
@@ -143,9 +150,8 @@ void ota_update_dialog_begin_install(void) {
             lv_obj_remove_event_cb(install_btn, install_btn_event_cb);
             lv_obj_add_event_cb(install_btn, reboot_and_update_btn_cb,
                                 LV_EVENT_CLICKED, NULL);
-            lv_obj_t *lbl = lv_obj_get_child(install_btn, 0);
-            if (lbl && lv_obj_check_type(lbl, &lv_label_class))
-                lv_label_set_text(lbl, "Reboot & Update");
+            /* A kit button: child 0 is the icon, so go through the kit. */
+            uk_btn_set_text(install_btn, "Reboot and update");
         }
         if (cancel_btn && lv_obj_is_valid(cancel_btn))
             lv_obj_clear_flag(cancel_btn, LV_OBJ_FLAG_HIDDEN);
@@ -219,18 +225,18 @@ static void progress_timer_cb(lv_timer_t *timer) {
                 } else {
                     lv_label_set_text(status_label, "Preparing download...");
                 }
-                lv_obj_set_style_text_color(status_label, lv_color_hex(0x4080FF), LV_PART_MAIN | LV_STATE_DEFAULT);
+                lv_obj_set_style_text_color(status_label, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
                 break;
-                
+
             case OTA_UPDATE_COMPLETED:
-                lv_label_set_text(status_label, "Update successful! Rebooting...");
-                lv_obj_set_style_text_color(status_label, lv_color_hex(0x00FF80), LV_PART_MAIN | LV_STATE_DEFAULT);
+                lv_label_set_text(status_label, "Update installed. Restarting...");
+                lv_obj_set_style_text_color(status_label, THEME_COLOR_STATUS_CONNECTED, LV_PART_MAIN | LV_STATE_DEFAULT);
                 // Will reboot automatically, dialog will be destroyed
                 break;
-                
+
             case OTA_UPDATE_FAILED:
-                lv_label_set_text(status_label, "Update failed! Please try again.");
-                lv_obj_set_style_text_color(status_label, lv_color_hex(0xFF4444), LV_PART_MAIN | LV_STATE_DEFAULT);
+                lv_label_set_text(status_label, "The update failed. Please try again.");
+                lv_obj_set_style_text_color(status_label, THEME_COLOR_STATUS_ERROR, LV_PART_MAIN | LV_STATE_DEFAULT);
                 update_in_progress = false;
                 
                 // Show install button again for retry
@@ -270,150 +276,92 @@ void show_ota_update_dialog(const char* current_version, const char* new_version
 
     ESP_LOGI(TAG, "Showing OTA update dialog for version %s", new_version);
     
-    // Create modal background
-    ota_modal = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(ota_modal, LV_HOR_RES, LV_VER_RES);
-    lv_obj_align(ota_modal, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(ota_modal, THEME_COLOR_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_opa(ota_modal, 180, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_clear_flag(ota_modal, LV_OBJ_FLAG_SCROLLABLE);
-    
-    // Create main dialog
-    ota_dialog = lv_obj_create(ota_modal);
-    lv_obj_set_size(ota_dialog, 500, 400);
-    lv_obj_align(ota_dialog, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(ota_dialog, THEME_COLOR_SURFACE, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_opa(ota_dialog, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_radius(ota_dialog, THEME_RADIUS_LARGE, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(ota_dialog, THEME_COLOR_ACCENT_BLUE, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(ota_dialog, THEME_BORDER_W_NORMAL, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_pad_all(ota_dialog, 25, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_clear_flag(ota_dialog, LV_OBJ_FLAG_SCROLLABLE);
-    
-    // Title
-    lv_obj_t *title = lv_label_create(ota_dialog);
-    lv_label_set_text(title, "Firmware Update Available");
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_text_font(title, THEME_FONT_LARGE, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
-    
-    // Version info
-    lv_obj_t *version_label = lv_label_create(ota_dialog);
-    lv_label_set_text_fmt(version_label, "Current: %s -> New: %s", current_version, new_version);
-    lv_obj_align(version_label, LV_ALIGN_TOP_LEFT, 0, 40);
-    lv_obj_set_style_text_font(version_label, THEME_FONT_BODY, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(version_label, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
-    
+    /* Kit popup, 520 x 400 (484 x 364 inside its padding). Its X is "Later",
+     * which refuses to close while an install is flashing. The popup lives on
+     * lv_layer_top (it used to be a child of the active screen), so it stays
+     * up if the dashboard screen underneath is rebuilt. */
+    const lv_coord_t DLG_W = 520, DLG_H = 400;
+    const lv_coord_t IN_W = DLG_W - 36, IN_H = DLG_H - 36;
+    ota_modal = uk_popup(DLG_W, DLG_H, "Update available", cancel_btn_event_cb);
+    ota_dialog = ota_modal;
+
+    // Version and size, as key / value rows
+    lv_obj_t *rows = lv_obj_create(ota_dialog);
+    lv_obj_remove_style_all(rows);
+    lv_obj_set_size(rows, lv_pct(100), LV_SIZE_CONTENT);
+    lv_obj_align(rows, LV_ALIGN_TOP_LEFT, 0, UK_POPUP_BODY_Y);
+    lv_obj_set_flex_flow(rows, LV_FLEX_FLOW_COLUMN);
+    lv_obj_clear_flag(rows, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+    uk_row(rows, "On this dash", current_version ? current_version : "?");
+    uk_row(rows, "New version", new_version ? new_version : "?");
+
     // File size. Integer math only: LVGL's sprintf is built with
     // LV_SPRINTF_USE_FLOAT=0, so "%.1f" renders as the literal text "f" —
     // customers saw "Size: f MB" on the update dialog.
-    lv_obj_t *size_label = lv_label_create(ota_dialog);
     int size_mb_tenths = (int)(file_size_mb * 10.0f + 0.5f);
-    lv_label_set_text_fmt(size_label, "Size: %d.%d MB",
-                          size_mb_tenths / 10, size_mb_tenths % 10);
-    lv_obj_align(size_label, LV_ALIGN_TOP_LEFT, 0, 65);
-    lv_obj_set_style_text_font(size_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(size_label, THEME_COLOR_TEXT_MUTED, LV_PART_MAIN | LV_STATE_DEFAULT);
+    char size_buf[24];
+    snprintf(size_buf, sizeof(size_buf), "%d.%d MB",
+             size_mb_tenths / 10, size_mb_tenths % 10);
+    uk_row(rows, "Download size", size_buf);
 
-    // Release notes (if provided)
+    // Release notes (if provided) — clipped to three lines so a long
+    // changelog can't push the buttons off the card.
     if (release_notes && strlen(release_notes) > 0) {
-        lv_obj_t *notes_label = lv_label_create(ota_dialog);
+        lv_obj_t *notes_label = uk_label(ota_dialog, "", UK_FONT_SMALL, UK_TONE_MUTED);
         lv_label_set_text_fmt(notes_label, "Notes: %s", release_notes);
-        lv_obj_align(notes_label, LV_ALIGN_TOP_LEFT, 0, 90);
-        lv_obj_set_style_text_font(notes_label, THEME_FONT_TINY, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_text_color(notes_label, THEME_COLOR_TEXT_MUTED, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_label_set_long_mode(notes_label, LV_LABEL_LONG_WRAP);
-        lv_obj_set_width(notes_label, 450);
+        lv_label_set_long_mode(notes_label, LV_LABEL_LONG_DOT);
+        lv_obj_set_size(notes_label, IN_W, 46);
+        lv_obj_align(notes_label, LV_ALIGN_TOP_LEFT, 0, 180);
     }
-    
-    // Progress bar (initially hidden)
+
+    // Progress bar (initially hidden) — the kit slider's thin track look
     progress_bar = lv_bar_create(ota_dialog);
-    lv_obj_set_size(progress_bar, 450, 20);
-    lv_obj_align(progress_bar, LV_ALIGN_TOP_LEFT, 0, 180);
-    lv_obj_set_style_bg_color(progress_bar, THEME_COLOR_SECTION_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(progress_bar, THEME_COLOR_ACCENT_BLUE, LV_PART_INDICATOR | LV_STATE_DEFAULT);
-    lv_obj_set_style_radius(progress_bar, 10, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_radius(progress_bar, 10, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+    lv_obj_set_size(progress_bar, IN_W - 56, 8);
+    lv_obj_align(progress_bar, LV_ALIGN_TOP_LEFT, 0, 243);
+    lv_obj_set_style_bg_color(progress_bar, THEME_COLOR_INPUT_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(progress_bar, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(progress_bar, THEME_COLOR_ACCENT, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+    lv_obj_set_style_radius(progress_bar, LV_RADIUS_CIRCLE, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_radius(progress_bar, LV_RADIUS_CIRCLE, LV_PART_INDICATOR | LV_STATE_DEFAULT);
     lv_bar_set_range(progress_bar, 0, 100);
     lv_bar_set_value(progress_bar, 0, LV_ANIM_OFF);
     lv_obj_add_flag(progress_bar, LV_OBJ_FLAG_HIDDEN);
-    
+
     // Progress label (initially hidden)
-    progress_label = lv_label_create(ota_dialog);
-    lv_label_set_text(progress_label, "0%");
-    lv_obj_align(progress_label, LV_ALIGN_TOP_RIGHT, 0, 185);
-    lv_obj_set_style_text_font(progress_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(progress_label, THEME_COLOR_ACCENT_BLUE, LV_PART_MAIN | LV_STATE_DEFAULT);
+    progress_label = uk_label(ota_dialog, "0%", UK_FONT_BODY, UK_TONE_TEXT);
+    lv_obj_align(progress_label, LV_ALIGN_TOP_RIGHT, 0, 238);
     lv_obj_add_flag(progress_label, LV_OBJ_FLAG_HIDDEN);
-    
-    // Status label
-    status_label = lv_label_create(ota_dialog);
-    lv_label_set_text(status_label, "Ready to install firmware update");
-    lv_obj_align(status_label, LV_ALIGN_TOP_LEFT, 0, 220);
-    lv_obj_set_style_text_font(status_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(status_label, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
-    
-    // Button container
-    lv_obj_t *btn_container = lv_obj_create(ota_dialog);
-    lv_obj_set_size(btn_container, 450, 50);
-    lv_obj_align(btn_container, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_bg_opa(btn_container, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(btn_container, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_pad_all(btn_container, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_flex_flow(btn_container, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(btn_container, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_clear_flag(btn_container, LV_OBJ_FLAG_SCROLLABLE);
-    
-    /* Three buttons across the 450 px footer: Later (postpone, dialog
-     * reappears next boot) → Skip This Version (writes to NVS, silent
-     * until a newer release lands) → Install Update (primary action).
-     * 140 wide × 3 + flex space-between fits comfortably. */
-    const lv_coord_t BTN_W = 140, BTN_H = 40;
+
+    // Status label (two lines when the install cannot start)
+    status_label = uk_label(ota_dialog, "Ready to install.", UK_FONT_SMALL, UK_TONE_TEXT);
+    lv_label_set_long_mode(status_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(status_label, IN_W);
+    lv_obj_align(status_label, LV_ALIGN_TOP_LEFT, 0, 264);
+
+    /* Three buttons across the footer: Later (postpone, dialog reappears
+     * next boot), Skip this version (writes to NVS, silent until a newer
+     * release lands), Install (the primary action, at the right; wide
+     * enough for its "Reboot and update" relabel). */
+    const lv_coord_t BTN_Y = IN_H - UK_BTN_H;
 
     // "Later" button (postpone until next boot)
-    cancel_btn = lv_btn_create(btn_container);
-    lv_obj_set_size(cancel_btn, BTN_W, BTN_H);
-    lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_BTN_GRAY, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_BTN_GRAY_PRESSED, LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_radius(cancel_btn, THEME_RADIUS_NORMAL, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(cancel_btn, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+    cancel_btn = uk_btn(ota_dialog, UK_ICON_NONE, "Later", UK_BTN_GHOST,
+                        cancel_btn_event_cb, NULL);
+    lv_obj_set_width(cancel_btn, 100);
+    lv_obj_align(cancel_btn, LV_ALIGN_TOP_LEFT, 0, BTN_Y);
 
-    lv_obj_t *cancel_label = lv_label_create(cancel_btn);
-    lv_label_set_text(cancel_label, "Later");
-    lv_obj_center(cancel_label);
-    lv_obj_set_style_text_color(cancel_label, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_font(cancel_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_add_event_cb(cancel_btn, cancel_btn_event_cb, LV_EVENT_CLICKED, NULL);
-
-    // "Skip This Version" button (persisted dismiss until a newer release)
-    skip_btn = lv_btn_create(btn_container);
-    lv_obj_set_size(skip_btn, BTN_W, BTN_H);
-    lv_obj_set_style_bg_color(skip_btn, THEME_COLOR_BTN_GRAY, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(skip_btn, THEME_COLOR_BTN_GRAY_PRESSED, LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_radius(skip_btn, THEME_RADIUS_NORMAL, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(skip_btn, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-
-    lv_obj_t *skip_label = lv_label_create(skip_btn);
-    lv_label_set_text(skip_label, "Skip Version");
-    lv_obj_center(skip_label);
-    lv_obj_set_style_text_color(skip_label, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_font(skip_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_add_event_cb(skip_btn, skip_btn_event_cb, LV_EVENT_CLICKED, NULL);
+    // "Skip this version" button (persisted dismiss until a newer release)
+    skip_btn = uk_btn(ota_dialog, UK_ICON_NONE, "Skip this version", UK_BTN_NEUTRAL,
+                      skip_btn_event_cb, NULL);
+    lv_obj_set_width(skip_btn, 164);
+    lv_obj_align(skip_btn, LV_ALIGN_TOP_LEFT, 112, BTN_Y);
 
     // Install button (primary)
-    install_btn = lv_btn_create(btn_container);
-    lv_obj_set_size(install_btn, BTN_W, BTN_H);
-    lv_obj_set_style_bg_color(install_btn, THEME_COLOR_BTN_SAVE, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(install_btn, THEME_COLOR_BTN_SAVE_PRESSED, LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_radius(install_btn, THEME_RADIUS_NORMAL, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(install_btn, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-
-    lv_obj_t *install_label = lv_label_create(install_btn);
-    lv_label_set_text(install_label, "Install");
-    lv_obj_center(install_label);
-    lv_obj_set_style_text_color(install_label, THEME_COLOR_TEXT_ON_ACCENT, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_font(install_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_add_event_cb(install_btn, install_btn_event_cb, LV_EVENT_CLICKED, NULL);
+    install_btn = uk_btn(ota_dialog, UK_ICON_UPDATE, "Install", UK_BTN_PRIMARY,
+                         install_btn_event_cb, NULL);
+    lv_obj_set_width(install_btn, 196);
+    lv_obj_align(install_btn, LV_ALIGN_TOP_RIGHT, 0, BTN_Y);
     
     // Reset state
     update_in_progress = false;
@@ -469,57 +417,24 @@ static void _create_info_dialog(const char *title_text, const char *body_text,
                                 lv_color_t accent_color) {
     close_ota_update_dialog();
 
-    /* Modal background */
-    ota_modal = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(ota_modal, LV_HOR_RES, LV_VER_RES);
-    lv_obj_align(ota_modal, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(ota_modal, THEME_COLOR_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_opa(ota_modal, 180, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_clear_flag(ota_modal, LV_OBJ_FLAG_SCROLLABLE);
-
-    /* Dialog card */
-    ota_dialog = lv_obj_create(ota_modal);
-    lv_obj_set_size(ota_dialog, 400, 200);
-    lv_obj_align(ota_dialog, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(ota_dialog, THEME_COLOR_SURFACE, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_opa(ota_dialog, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_radius(ota_dialog, THEME_RADIUS_LARGE, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(ota_dialog, accent_color, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(ota_dialog, THEME_BORDER_W_NORMAL, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_pad_all(ota_dialog, 25, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_clear_flag(ota_dialog, LV_OBJ_FLAG_SCROLLABLE);
-
-    /* Title */
-    lv_obj_t *title = lv_label_create(ota_dialog);
-    lv_label_set_text(title, title_text);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_text_font(title, THEME_FONT_LARGE, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
+    /* Kit popup, 400 x 210 (364 x 174 inside); its X and OK both close.
+     * @p accent_color now tints only the body text (ok / error), since the
+     * kit card edge is always the same hairline. */
+    ota_modal = uk_popup(400, 210, title_text, _info_ok_btn_cb);
+    ota_dialog = ota_modal;
 
     /* Body */
-    lv_obj_t *body = lv_label_create(ota_dialog);
-    lv_label_set_text(body, body_text);
-    lv_obj_align(body, LV_ALIGN_CENTER, 0, -5);
-    lv_obj_set_style_text_font(body, THEME_FONT_BODY, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_t *body = uk_label(ota_dialog, body_text, UK_FONT_BODY, UK_TONE_TEXT);
     lv_obj_set_style_text_color(body, accent_color, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_align(body, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(body, 350);
+    lv_obj_set_width(body, 364);
+    lv_obj_align(body, LV_ALIGN_TOP_LEFT, 0, UK_POPUP_BODY_Y);
 
     /* OK button */
-    lv_obj_t *ok_btn = lv_btn_create(ota_dialog);
-    lv_obj_set_size(ok_btn, 120, 40);
-    lv_obj_align(ok_btn, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_bg_color(ok_btn, accent_color, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_radius(ok_btn, THEME_RADIUS_NORMAL, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(ok_btn, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_add_event_cb(ok_btn, _info_ok_btn_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t *ok_label = lv_label_create(ok_btn);
-    lv_label_set_text(ok_label, "OK");
-    lv_obj_center(ok_label);
-    lv_obj_set_style_text_color(ok_label, THEME_COLOR_TEXT_ON_ACCENT, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_font(ok_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_t *ok_btn = uk_btn(ota_dialog, UK_ICON_NONE, "OK", UK_BTN_PRIMARY,
+                              _info_ok_btn_cb, NULL);
+    lv_obj_set_width(ok_btn, 120);
+    lv_obj_align(ok_btn, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
 }
 
 /* ── Checking dialog with spinner ──────────────────────────────────────── */
@@ -540,59 +455,29 @@ static void _checking_timeout_cb(lv_timer_t *timer) {
 void show_ota_checking_dialog(void) {
     close_ota_update_dialog();
 
-    ota_modal = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(ota_modal, LV_HOR_RES, LV_VER_RES);
-    lv_obj_align(ota_modal, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(ota_modal, THEME_COLOR_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_opa(ota_modal, 180, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_clear_flag(ota_modal, LV_OBJ_FLAG_SCROLLABLE);
+    /* Kit popup, 360 x 250 (324 x 214 inside). X and Cancel both stop
+     * waiting. */
+    ota_modal = uk_popup(360, 250, "Checking for updates", _checking_cancel_cb);
+    ota_dialog = ota_modal;
 
-    ota_dialog = lv_obj_create(ota_modal);
-    lv_obj_set_size(ota_dialog, 350, 220);
-    lv_obj_align(ota_dialog, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(ota_dialog, THEME_COLOR_SURFACE, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_opa(ota_dialog, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_radius(ota_dialog, THEME_RADIUS_LARGE, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(ota_dialog, THEME_COLOR_ACCENT_BLUE, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(ota_dialog, THEME_BORDER_W_NORMAL, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_pad_all(ota_dialog, 25, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_clear_flag(ota_dialog, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *title = lv_label_create(ota_dialog);
-    lv_label_set_text(title, "Checking for Updates");
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_text_font(title, THEME_FONT_LARGE, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
-
+    /* No kit spinner: theme tokens directly, thin like the kit's tracks. */
     lv_obj_t *spinner = lv_spinner_create(ota_dialog, 1000, 60);
-    lv_obj_set_size(spinner, 44, 44);
-    lv_obj_align(spinner, LV_ALIGN_CENTER, 0, -10);
-    lv_obj_set_style_arc_color(spinner, THEME_COLOR_SECTION_BG, LV_PART_MAIN);
-    lv_obj_set_style_arc_color(spinner, THEME_COLOR_ACCENT_BLUE, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_width(spinner, 5, LV_PART_MAIN);
-    lv_obj_set_style_arc_width(spinner, 5, LV_PART_INDICATOR);
+    lv_obj_set_size(spinner, 40, 40);
+    lv_obj_align(spinner, LV_ALIGN_TOP_MID, 0, UK_POPUP_BODY_Y + 4);
+    lv_obj_set_style_arc_color(spinner, THEME_COLOR_CONTROL_BG, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(spinner, THEME_COLOR_ACCENT, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(spinner, 4, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(spinner, 4, LV_PART_INDICATOR);
 
-    lv_obj_t *msg = lv_label_create(ota_dialog);
-    lv_label_set_text(msg, "Contacting update server...");
-    lv_obj_align(msg, LV_ALIGN_CENTER, 0, 30);
-    lv_obj_set_style_text_font(msg, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(msg, THEME_COLOR_TEXT_MUTED, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_t *msg = uk_label(ota_dialog, "Contacting the update server...",
+                             UK_FONT_SMALL, UK_TONE_MUTED);
+    lv_obj_align(msg, LV_ALIGN_TOP_MID, 0, UK_POPUP_BODY_Y + 56);
 
     /* Cancel button */
-    cancel_btn = lv_btn_create(ota_dialog);
-    lv_obj_set_size(cancel_btn, 120, 36);
+    cancel_btn = uk_btn(ota_dialog, UK_ICON_NONE, "Cancel", UK_BTN_GHOST,
+                        _checking_cancel_cb, NULL);
+    lv_obj_set_width(cancel_btn, 120);
     lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_BTN_GRAY, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_BTN_GRAY_PRESSED, LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_radius(cancel_btn, THEME_RADIUS_NORMAL, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(cancel_btn, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_add_event_cb(cancel_btn, _checking_cancel_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t *cancel_label = lv_label_create(cancel_btn);
-    lv_label_set_text(cancel_label, "Cancel");
-    lv_obj_center(cancel_label);
-    lv_obj_set_style_text_color(cancel_label, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_font(cancel_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     /* 30-second timeout: auto-close and show failure if check hangs */
     if (checking_timeout_timer) {
@@ -611,15 +496,15 @@ void show_ota_up_to_date_dialog(const char *current_version) {
     char body[80];
     snprintf(body, sizeof(body), "You're running the latest firmware\nv%s",
              current_version ? current_version : "?");
-    _create_info_dialog("Up to Date", body, lv_color_hex(0x00FF80));
+    _create_info_dialog("Up to date", body, THEME_COLOR_STATUS_CONNECTED);
     ESP_LOGI(TAG, "Showing up-to-date dialog (v%s)", current_version ? current_version : "?");
 }
 
 /* ── Check failed dialog ───────────────────────────────────────────────── */
 
 void show_ota_check_failed_dialog(void) {
-    _create_info_dialog("Update Check Failed",
-                        "Could not reach update server.\nCheck your internet connection.",
-                        lv_color_hex(0xFF4444));
+    _create_info_dialog("Update check failed",
+                        "Could not reach the update server.\nCheck your internet connection.",
+                        THEME_COLOR_STATUS_ERROR);
     ESP_LOGI(TAG, "Showing OTA check-failed dialog");
 }

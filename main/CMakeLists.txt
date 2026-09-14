@@ -134,6 +134,10 @@ idf_component_register(
         "layout/ecu_presets.c"
         "layout/layout_switcher.c"
         "ui/screens/splash_screen.c"
+        "ui/ui_theme.c"
+        "ui/kit/ui_kit.c"
+        "ui/kit/uk_icons.c"
+        "ui/menu/main_menu.c"
         "ui/screens/ui_wifi.c"
         "ui/screens/ui_diagnostics.c"
         "ui/screens/ui_peaks.c"
@@ -205,7 +209,7 @@ idf_component_register(
     # the bootloader subproject; the dash writes this into its own flash, so it
     # should be something a person chose. See main/bootloader_image/README.md.
     EMBED_FILES "embed/RDM.rdmimg" "web/favicon.ico" "bootloader_image/bootloader.bin" "${CMAKE_CURRENT_BINARY_DIR}/index.html.gz"
-                "embed/fonts/montserrat.ttf" "embed/fonts/fugaz_one.ttf" "embed/fonts/manrope_bold.ttf"
+                "embed/fonts/montserrat.ttf" "embed/fonts/fugaz_one.ttf" "embed/fonts/manrope_bold.ttf" "embed/fonts/barlow_ui.ttf"
 )
 
 # ─── Gzip the web editor at configure time ─────────────────────────────────

@@ -1,14 +1,14 @@
 /**
  * obd2_picker.c — OBD2 Signals modal (see obd2_picker.h).
  *
- * Builds a 640x360 overlay on lv_layer_top() with a scrollable list of
+ * Builds a 640x420 kit popup on lv_layer_top() with a scrollable list of
  * OBD2 SIGNALS — one row per signal (not per PID). Single-value PIDs
  * produce one row each; packed PIDs (e.g. Toyota Mode 21 PID 0x80)
  * produce N rows, one per sub-field, all sharing one polled request.
  * Sub-field checkboxes are linked: ticking any one ticks all of them
  * because they ride a single PID poll.
  *
- * Each row shows the live signal value, a (M01·0x05)-style mode/PID
+ * Each row shows the live signal value, a (M01:0x05)-style mode/PID
  * tag for protocol visibility, and a "supported" badge after a
  * vehicle scan. Scan also auto-checks every supported signal — the
  * dynamic-preset behaviour. The user un-checks anything they don't
@@ -30,6 +30,7 @@
 #include "ecu_presets.h"
 #include "layout_manager.h"
 #include "theme.h"
+#include "kit/ui_kit.h"
 #include "signal.h"
 
 #include "esp_log.h"
@@ -40,15 +41,19 @@
 static const char *TAG = "obd2_picker";
 
 /* Sized small to keep redraw cost down — 46 PID rows + scrolling on top
- * of running OBD2 polling + dashboard widgets behind us. 640x360 → list
- * area ~248 px tall + 24 px rows means ~10 rows on screen, ~36 off — LVGL
- * still walks the whole tree, but a smaller modal redraws faster. */
+ * of running OBD2 polling + dashboard widgets behind us. 640x420 (a kit
+ * popup: 18 px padding, so 604x384 inside) → list area 224 px tall + 30 px
+ * rows means ~7 rows on screen — LVGL still walks the whole tree, but a
+ * modal smaller than the screen redraws faster. */
 #define MODAL_W  640
-#define MODAL_H  360
-#define HEADER_H  34
-#define SCAN_H    32
-#define FOOTER_H  40
-#define ROW_H     24
+#define MODAL_H  420
+#define INNER_W  (MODAL_W - 36)
+#define INNER_H  (MODAL_H - 36)
+#define SCAN_Y   UK_POPUP_BODY_Y
+#define LIST_Y   (SCAN_Y + UK_BTN_H + 12)
+#define FOOTER_Y (INNER_H - UK_BTN_H)
+#define PICKER_LIST_H   (FOOTER_Y - 12 - LIST_Y)
+#define ROW_H     30
 #define LIVE_REFRESH_MS 400
 
 /* ── State ─────────────────────────────────────────────────────────────── */
@@ -81,8 +86,8 @@ typedef struct {
  * and contributed to memory pressure during preview-poll-all. */
 #define PICKER_MAX_ROWS 96
 
+/* The kit popup's card; its backdrop is deleted along with it. */
 static lv_obj_t      *s_overlay    = NULL;
-static lv_obj_t      *s_card       = NULL;
 static lv_obj_t      *s_list       = NULL;
 static lv_obj_t      *s_status     = NULL;     /* scan status label */
 static lv_obj_t      *s_scan_btn   = NULL;
@@ -128,9 +133,8 @@ void obd2_picker_close(void)
      * polling stays on the user's saved set throughout the modal session.
      * Save (if pressed) is the only path that mutates the polled set,
      * and that path drives obd2_start() with the new list directly. */
-    lv_obj_del(s_overlay);
+    if (lv_obj_is_valid(s_overlay)) lv_obj_del(s_overlay);   /* takes the backdrop too */
     s_overlay = NULL;
-    s_card    = NULL;
     s_list    = NULL;
     s_status  = NULL;
     s_scan_btn = NULL;
@@ -162,134 +166,55 @@ void obd2_picker_open(void)
      * If a future "test these N rows now" feature is wanted, it should
      * temporarily add JUST those rows to the polling list, not all 48. */
 
-    /* Full-screen dimmer overlay. Doesn't dismiss on outside-tap — users
-     * use the Close button (avoids LVGL event-bubbling gymnastics, and
-     * matches the QR modal pattern elsewhere in Device Settings). */
-    s_overlay = lv_obj_create(lv_layer_top());
-    lv_obj_remove_style_all(s_overlay);
-    lv_obj_set_size(s_overlay, lv_pct(100), lv_pct(100));
-    lv_obj_set_style_bg_color(s_overlay, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(s_overlay, LV_OPA_60, 0);
-    lv_obj_clear_flag(s_overlay, LV_OBJ_FLAG_SCROLLABLE);
-
-    /* Card */
-    s_card = lv_obj_create(s_overlay);
-    lv_obj_set_size(s_card, MODAL_W, MODAL_H);
-    lv_obj_center(s_card);
-    lv_obj_set_style_bg_color(s_card, THEME_COLOR_SURFACE, 0);
-    lv_obj_set_style_radius(s_card, THEME_RADIUS_LARGE, 0);
-    lv_obj_set_style_border_width(s_card, 1, 0);
-    lv_obj_set_style_border_color(s_card, THEME_COLOR_BORDER_MED, 0);
-    lv_obj_set_style_pad_all(s_card, 0, 0);
-    lv_obj_clear_flag(s_card, LV_OBJ_FLAG_SCROLLABLE);
-
-    /* ── Header ── */
-    lv_obj_t *header = lv_obj_create(s_card);
-    lv_obj_remove_style_all(header);
-    lv_obj_set_size(header, MODAL_W, HEADER_H);
-    lv_obj_align(header, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_bg_color(header, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(header, LV_OPA_COVER, 0);
-    lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *title = lv_label_create(header);
-    lv_label_set_text(title, "OBD2 Signals");
-    lv_obj_set_style_text_font(title, THEME_FONT_LARGE, 0);
-    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_align(title, LV_ALIGN_LEFT_MID, 16, 0);
-
-    lv_obj_t *close_btn = lv_btn_create(header);
-    lv_obj_set_size(close_btn, 60, 28);
-    lv_obj_align(close_btn, LV_ALIGN_RIGHT_MID, -12, 0);
-    lv_obj_set_style_bg_color(close_btn, THEME_COLOR_BTN_DIM, 0);
-    lv_obj_set_style_radius(close_btn, THEME_RADIUS_SMALL, 0);
-    lv_obj_set_style_shadow_width(close_btn, 0, 0);
-    lv_obj_t *close_lbl = lv_label_create(close_btn);
-    lv_label_set_text(close_lbl, "Close");
-    lv_obj_center(close_lbl);
-    lv_obj_set_style_text_font(close_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(close_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_add_event_cb(close_btn, _close_cb, LV_EVENT_CLICKED, NULL);
+    /* Kit popup. Doesn't dismiss on outside-tap (the backdrop only swallows
+     * taps) — users use the X or Cancel (avoids LVGL event-bubbling
+     * gymnastics, and matches the other popups in Device Settings). */
+    s_overlay = uk_popup(MODAL_W, MODAL_H, "OBD2 signals", _close_cb);
 
     /* ── Scan strip ── */
-    lv_obj_t *scan_row = lv_obj_create(s_card);
-    lv_obj_remove_style_all(scan_row);
-    lv_obj_set_size(scan_row, MODAL_W, SCAN_H);
-    lv_obj_align(scan_row, LV_ALIGN_TOP_LEFT, 0, HEADER_H);
-    lv_obj_set_style_bg_color(scan_row, THEME_COLOR_INPUT_BG, 0);
-    lv_obj_set_style_bg_opa(scan_row, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(scan_row, 0, 0);
-    lv_obj_set_style_border_side(scan_row, LV_BORDER_SIDE_BOTTOM, 0);
-    lv_obj_clear_flag(scan_row, LV_OBJ_FLAG_SCROLLABLE);
+    s_scan_btn = uk_btn(s_overlay, UK_ICON_OBD, "Scan the car", UK_BTN_NEUTRAL,
+                        _scan_cb, NULL);
+    lv_obj_set_width(s_scan_btn, 170);
+    lv_obj_align(s_scan_btn, LV_ALIGN_TOP_LEFT, 0, SCAN_Y);
 
-    s_scan_btn = lv_btn_create(scan_row);
-    lv_obj_set_size(s_scan_btn, 140, 26);
-    lv_obj_align(s_scan_btn, LV_ALIGN_LEFT_MID, 12, 0);
-    lv_obj_set_style_bg_color(s_scan_btn, THEME_COLOR_ACCENT_BLUE, 0);
-    lv_obj_set_style_radius(s_scan_btn, THEME_RADIUS_SMALL, 0);
-    lv_obj_set_style_shadow_width(s_scan_btn, 0, 0);
-    lv_obj_t *scan_lbl = lv_label_create(s_scan_btn);
-    lv_label_set_text(scan_lbl, "Scan Vehicle");
-    lv_obj_center(scan_lbl);
-    lv_obj_set_style_text_font(scan_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(scan_lbl, THEME_COLOR_TEXT_ON_ACCENT, 0);
-    lv_obj_add_event_cb(s_scan_btn, _scan_cb, LV_EVENT_CLICKED, NULL);
+    /* Status sits in a fixed box beside the button, centred vertically by
+     * flex so a one-line count and a two-line scan failure both line up. */
+    lv_obj_t *status_box = lv_obj_create(s_overlay);
+    lv_obj_remove_style_all(status_box);
+    lv_obj_set_size(status_box, INNER_W - 170 - 14, UK_BTN_H);
+    lv_obj_align(status_box, LV_ALIGN_TOP_LEFT, 170 + 14, SCAN_Y);
+    lv_obj_set_flex_flow(status_box, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(status_box, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START);
+    lv_obj_clear_flag(status_box, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
-
-    s_status = lv_label_create(scan_row);
-    lv_label_set_text(s_status, "Tap Scan to detect supported PIDs.");
-    lv_obj_set_style_text_font(s_status, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(s_status, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_align(s_status, LV_ALIGN_LEFT_MID, 426, 0);
+    s_status = uk_label(status_box, "Scan to find what the car supports.",
+                        UK_FONT_SMALL, UK_TONE_MUTED);
+    lv_obj_set_width(s_status, lv_pct(100));
+    lv_label_set_long_mode(s_status, LV_LABEL_LONG_WRAP);
 
     /* ── List body ──
      * Scrollbar mode OFF intentionally — every drawn scrollbar adds two
      * full-height drawn rects on each frame the user scrolls. The list
      * still scrolls via touch drag; users figure that out fast. */
-    s_list = lv_obj_create(s_card);
-    lv_obj_set_size(s_list, MODAL_W, MODAL_H - HEADER_H - SCAN_H - FOOTER_H);
-    lv_obj_align(s_list, LV_ALIGN_TOP_LEFT, 0, HEADER_H + SCAN_H);
-    lv_obj_set_style_bg_color(s_list, THEME_COLOR_SURFACE, 0);
-    lv_obj_set_style_border_width(s_list, 0, 0);
-    lv_obj_set_style_pad_all(s_list, 2, 0);
-    lv_obj_set_style_pad_row(s_list, 1, 0);
+    s_list = lv_obj_create(s_overlay);
+    lv_obj_remove_style_all(s_list);
+    lv_obj_set_size(s_list, INNER_W, PICKER_LIST_H);
+    lv_obj_align(s_list, LV_ALIGN_TOP_LEFT, 0, LIST_Y);
+    lv_obj_set_style_pad_row(s_list, 3, 0);
     lv_obj_set_flex_flow(s_list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_scrollbar_mode(s_list, LV_SCROLLBAR_MODE_OFF);
 
-    /* ── Footer ── */
-    lv_obj_t *footer = lv_obj_create(s_card);
-    lv_obj_remove_style_all(footer);
-    lv_obj_set_size(footer, MODAL_W, FOOTER_H);
-    lv_obj_align(footer, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-    lv_obj_set_style_bg_color(footer, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(footer, LV_OPA_COVER, 0);
-    lv_obj_clear_flag(footer, LV_OBJ_FLAG_SCROLLABLE);
+    /* ── Footer ── Save is the one thing this popup is for. */
+    lv_obj_t *save_btn = uk_btn(s_overlay, UK_ICON_CHECK, "Save", UK_BTN_PRIMARY,
+                                _save_cb, NULL);
+    lv_obj_set_width(save_btn, 120);
+    lv_obj_align(save_btn, LV_ALIGN_TOP_RIGHT, 0, FOOTER_Y);
 
-    lv_obj_t *cancel_btn = lv_btn_create(footer);
-    lv_obj_set_size(cancel_btn, 96, 30);
-    lv_obj_align(cancel_btn, LV_ALIGN_RIGHT_MID, -120, 0);
-    lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_BTN_DIM, 0);
-    lv_obj_set_style_radius(cancel_btn, THEME_RADIUS_SMALL, 0);
-    lv_obj_set_style_shadow_width(cancel_btn, 0, 0);
-    lv_obj_t *cancel_lbl = lv_label_create(cancel_btn);
-    lv_label_set_text(cancel_lbl, "Cancel");
-    lv_obj_center(cancel_lbl);
-    lv_obj_set_style_text_color(cancel_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_set_style_text_font(cancel_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_add_event_cb(cancel_btn, _close_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t *save_btn = lv_btn_create(footer);
-    lv_obj_set_size(save_btn, 96, 30);
-    lv_obj_align(save_btn, LV_ALIGN_RIGHT_MID, -12, 0);
-    lv_obj_set_style_bg_color(save_btn, THEME_COLOR_BTN_SAVE, 0);
-    lv_obj_set_style_radius(save_btn, THEME_RADIUS_SMALL, 0);
-    lv_obj_set_style_shadow_width(save_btn, 0, 0);
-    lv_obj_t *save_lbl = lv_label_create(save_btn);
-    lv_label_set_text(save_lbl, "Save");
-    lv_obj_center(save_lbl);
-    lv_obj_set_style_text_color(save_lbl, THEME_COLOR_TEXT_ON_ACCENT, 0);
-    lv_obj_set_style_text_font(save_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_add_event_cb(save_btn, _save_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *cancel_btn = uk_btn(s_overlay, UK_ICON_NONE, "Cancel", UK_BTN_GHOST,
+                                  _close_cb, NULL);
+    lv_obj_set_width(cancel_btn, 120);
+    lv_obj_align(cancel_btn, LV_ALIGN_TOP_RIGHT, -132, FOOTER_Y);
 
     _build_rows();
 }
@@ -305,6 +230,20 @@ static bool _signal_provided_by_preset(const char *signal_name)
     if (idx < 0) return false;
     signal_t *sig = signal_get_by_index((uint16_t)idx);
     return sig && sig->can_id != 0;
+}
+
+/* Show a row as ticked or not: the checkbox's CHECKED state, mirrored onto
+ * the row so its soft-accent selected fill follows. */
+static void _row_show_checked(signal_row_t *r, bool on)
+{
+    if (r->cb && lv_obj_is_valid(r->cb)) {
+        if (on) lv_obj_add_state(r->cb, LV_STATE_CHECKED);
+        else    lv_obj_clear_state(r->cb, LV_STATE_CHECKED);
+    }
+    if (r->row && lv_obj_is_valid(r->row)) {
+        if (on) lv_obj_add_state(r->row, LV_STATE_CHECKED);
+        else    lv_obj_clear_state(r->row, LV_STATE_CHECKED);
+    }
 }
 
 /* Build one row for a given (parent_pid, signal_name, display_label). The
@@ -329,28 +268,38 @@ static void _add_row(const obd2_pid_def_t *def,
     r->supported          = false;
     r->signal_idx         = signal_find_by_name(signal_name);
 
+    /* A neutral row (raised fill, button radius); a ticked row takes the
+     * soft accent fill with accent ink, like every other picker's
+     * selection. The row mirrors its checkbox's CHECKED state
+     * (_row_show_checked) so the look follows from style selectors. */
     r->row = lv_obj_create(s_list);
+    lv_obj_remove_style_all(r->row);
     lv_obj_set_size(r->row, lv_pct(100), ROW_H);
-    lv_obj_set_style_bg_opa(r->row, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(r->row, 0, 0);
-    lv_obj_set_style_pad_all(r->row, 0, 0);
-    lv_obj_set_style_pad_left(r->row, 6, 0);
-    lv_obj_set_style_pad_right(r->row, 6, 0);
-    lv_obj_clear_flag(r->row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(r->row, THEME_COLOR_CONTROL_BG, 0);
+    lv_obj_set_style_bg_color(r->row, THEME_COLOR_ACCENT_DIM, LV_STATE_CHECKED);
+    lv_obj_set_style_bg_opa(r->row, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(r->row, UK_R_BTN, 0);
+    lv_obj_set_style_pad_hor(r->row, 8, 0);
+    lv_obj_clear_flag(r->row, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
+    /* No kit restyle exists for checkboxes: theme tokens directly. */
     r->cb = lv_checkbox_create(r->row);
     lv_obj_align(r->cb, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_text_font(r->cb, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_font(r->cb, uk_font(UK_FONT_SMALL), 0);
     lv_obj_set_style_text_color(r->cb, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_style_text_color(r->cb, ui_pal->accent_ink, LV_STATE_CHECKED);
     lv_obj_set_style_bg_color(r->cb, THEME_COLOR_INPUT_BG, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_color(r->cb, THEME_COLOR_ACCENT_BLUE,
+    lv_obj_set_style_bg_color(r->cb, THEME_COLOR_ACCENT,
                               LV_PART_INDICATOR | LV_STATE_CHECKED);
     lv_obj_set_style_border_color(r->cb, THEME_COLOR_BORDER_MED,
                                   LV_PART_INDICATOR);
+    lv_obj_set_style_border_color(r->cb, THEME_COLOR_ACCENT,
+                                  LV_PART_INDICATOR | LV_STATE_CHECKED);
     lv_obj_set_style_border_width(r->cb, 1, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(r->cb, 4, LV_PART_INDICATOR);
 
-    /* Label = signal name + mode/PID tag, e.g. "RPM  (M01·0x0C)" or
-     * "TY_RPM  (M21·0x80)" or "ATF_TEMP_22  (M22·0x115C)" so the user
+    /* Label = signal name + mode/PID tag, e.g. "RPM  (M01:0x0C)" or
+     * "TY_RPM  (M21:0x80)" or "ATF_TEMP_22  (M22:0x115C)" so the user
      * can see at a glance which protocol and PID each signal comes
      * from. Mode 22 shows 4-digit PID. */
     char label[80];
@@ -364,11 +313,11 @@ static void _add_row(const obd2_pid_def_t *def,
     }
     lv_checkbox_set_text(r->cb, label);
 
-    if (r->checked) lv_obj_add_state(r->cb, LV_STATE_CHECKED);
+    if (r->checked) _row_show_checked(r, true);
 
     if (r->provided_by_preset) {
         lv_obj_add_state(r->cb, LV_STATE_DISABLED);
-        lv_obj_clear_state(r->cb, LV_STATE_CHECKED);
+        _row_show_checked(r, false);
         lv_obj_set_style_text_color(r->cb, THEME_COLOR_TEXT_DISABLED, 0);
     } else {
         lv_obj_add_event_cb(r->cb, _checkbox_cb, LV_EVENT_VALUE_CHANGED, r);
@@ -380,22 +329,13 @@ static void _add_row(const obd2_pid_def_t *def,
      * would read as "OBD2 is polling and got 6800" when in fact the
      * value came from the ECU broadcast (the "in preset" badge is the
      * truth). _live_refresh_cb also skips these rows. */
-    r->value_lbl = lv_label_create(r->row);
-    lv_obj_align(r->value_lbl, LV_ALIGN_RIGHT_MID, -72, 0);
-    lv_obj_set_style_text_font(r->value_lbl, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(r->value_lbl, THEME_COLOR_TEXT_HINT, 0);
-    lv_label_set_text(r->value_lbl, r->provided_by_preset ? "—" : "-");
+    r->value_lbl = uk_label(r->row, "-", UK_FONT_SMALL, UK_TONE_HINT);
+    lv_obj_align(r->value_lbl, LV_ALIGN_RIGHT_MID, -80, 0);
 
     /* Status badge. */
-    r->badge = lv_label_create(r->row);
+    r->badge = uk_label(r->row, r->provided_by_preset ? "in preset" : "",
+                        UK_FONT_TINY, UK_TONE_HINT);
     lv_obj_align(r->badge, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_text_font(r->badge, THEME_FONT_TINY, 0);
-    if (r->provided_by_preset) {
-        lv_label_set_text(r->badge, "in preset");
-        lv_obj_set_style_text_color(r->badge, THEME_COLOR_TEXT_HINT, 0);
-    } else {
-        lv_label_set_text(r->badge, "");
-    }
 }
 
 static void _build_rows(void)
@@ -508,7 +448,7 @@ static void _live_refresh_cb(lv_timer_t *t)
         lv_obj_set_style_text_color(r->value_lbl,
                                     (sig->is_stale || sig->last_update_ms == 0)
                                         ? THEME_COLOR_TEXT_HINT
-                                        : THEME_COLOR_ACCENT_BLUE,
+                                        : THEME_COLOR_TEXT_PRIMARY,
                                     0);
     }
 }
@@ -538,10 +478,9 @@ static void _checkbox_cb(lv_event_t *e)
         if (r->provided_by_preset) continue;
         if (r->checked == new_state) continue;
         r->checked = new_state;
-        if (r != clicked && r->cb && lv_obj_is_valid(r->cb)) {
-            if (new_state) lv_obj_add_state(r->cb, LV_STATE_CHECKED);
-            else           lv_obj_clear_state(r->cb, LV_STATE_CHECKED);
-        }
+        /* The clicked checkbox already toggled itself; this also moves its
+         * row's selected fill, and ticks the siblings. */
+        _row_show_checked(r, new_state);
     }
     /* Live-update the "X enabled" tally in the status line. */
     _refresh_count_status();
@@ -556,7 +495,7 @@ static void _set_status(const char *text)
 
 /* Recompute count breakdown and post to the status line. Called any time
  * row state changes (build, scan complete, checkbox toggle) so the user
- * sees "X decoders · Y supported · Z enabled" update live. Lets the user
+ * sees "X signals, Y supported, Z on" update live. Lets the user
  * actually see additions take effect when new PIDs ship in firmware. */
 static void _refresh_count_status(void)
 {
@@ -571,11 +510,11 @@ static void _refresh_count_status(void)
     char buf[96];
     if (supported > 0) {
         snprintf(buf, sizeof(buf),
-                 "%d sup, %d on (of %d)",
+                 "%d supported by the car, %d on (of %d)",
                  supported, enabled, total);
     } else {
         snprintf(buf, sizeof(buf),
-                 "%d decoders, %d on, tap Scan",
+                 "%d signals, %d on. Scan to see what the car supports.",
                  total, enabled);
     }
     lv_label_set_text(s_status, buf);
@@ -656,15 +595,13 @@ static void _scan_complete(const obd2_scan_result_t *r, void *user)
             if (row->badge && !row->provided_by_preset) {
                 lv_label_set_text(row->badge, "supported");
                 lv_obj_set_style_text_color(row->badge,
-                                            THEME_COLOR_ACCENT_BLUE, 0);
+                                            THEME_COLOR_STATUS_CONNECTED, 0);
             }
             /* Auto-check: dynamic-preset shortcut. Doesn't auto-uncheck
              * anything; users get to keep curated additions. */
             if (!row->provided_by_preset && !row->checked) {
                 row->checked = true;
-                if (row->cb && lv_obj_is_valid(row->cb)) {
-                    lv_obj_add_state(row->cb, LV_STATE_CHECKED);
-                }
+                _row_show_checked(row, true);
                 decoder_signal_count++;
             }
         }
@@ -679,11 +616,11 @@ static void _scan_complete(const obd2_scan_result_t *r, void *user)
     char status[96];
     if (unknown > 0) {
         snprintf(status, sizeof(status),
-                 "Scan: %d sup, %d on, %d unknown",
+                 "Scan: %d supported, %d turned on, %d not known here",
                  real_supported, decoder_signal_count, unknown);
     } else {
         snprintf(status, sizeof(status),
-                 "Scan: %d sup, %d on",
+                 "Scan: %d supported, %d turned on",
                  real_supported, decoder_signal_count);
     }
     _set_status(status);

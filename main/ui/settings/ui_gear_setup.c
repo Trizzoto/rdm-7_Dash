@@ -11,11 +11,15 @@
  * (see ui_ecu_picker.c::_apply_cb), and can also be opened directly
  * from Device Settings.
  *
- * UI shape: 600 × 460 card. Header row + scrollable body + bottom
- * Save/Cancel buttons. Body is a flex column with one row per field;
- * per-gear ratio rows show/hide based on the gear count selector.
+ * UI shape: 600 × 460 card drawn like a kit popup (surface fill, strong
+ * hairline, radius 14, 18 px padding, caps title + X top-right), but NOT
+ * built with uk_popup: this overlay keeps its own dim parent object and
+ * rdm_obj_del_async() teardown (see _close / _overlay_delete_evt_cb), which
+ * needs the card to be a child of one deletable overlay. Scrollable body
+ * + bottom Save/Cancel buttons. Body is a flex column with one row per
+ * field; per-gear ratio rows show/hide based on the gear count selector.
  *
- * Numeric inputs use a self-contained [−] [value] [+] stepper pattern.
+ * Numeric inputs use a self-contained [-] [value] [+] stepper pattern.
  * The codebase doesn't use lv_spinbox elsewhere, and a touchscreen
  * stepper is friendlier than the spinbox's digit-selection mode.
  */
@@ -29,6 +33,7 @@
 #include <string.h>
 
 #include "../theme.h"
+#include "kit/ui_kit.h"
 #include "../../storage/config_store.h"
 #include "../../system/rdm_lv_async.h"
 #include "../../widgets/signal.h"
@@ -38,7 +43,15 @@ static const char *TAG = "gear_setup";
 
 #define CARD_W 600
 #define CARD_H 460
-#define ROW_H   34
+#define CARD_PAD 18
+#define INNER_W (CARD_W - 2 * CARD_PAD)
+#define INNER_H (CARD_H - 2 * CARD_PAD)
+#define FOOTER_Y (INNER_H - UK_BTN_H)
+#define STATUS_Y (FOOTER_Y - 22)
+#define LIST_H   (STATUS_Y - 6 - UK_POPUP_BODY_Y)
+#define ROW_H   46
+#define STEP_W  40              /* square-ish stepper / X buttons */
+#define STEP_H  34
 
 /* Max ratio rows shown — must equal GEAR_CAL_MAX_GEARS-1 (slot 0 is N). */
 #define MAX_RATIO_ROWS 8
@@ -304,7 +317,7 @@ static void _show_status(const char *msg, bool is_error) {
     if (!s.status_lbl || !lv_obj_is_valid(s.status_lbl)) return;
     lv_label_set_text(s.status_lbl, msg ? msg : "");
     lv_obj_set_style_text_color(s.status_lbl,
-        is_error ? THEME_COLOR_STATUS_ERROR : THEME_COLOR_ACCENT_BLUE, 0);
+        is_error ? THEME_COLOR_STATUS_ERROR : THEME_COLOR_STATUS_CONNECTED, 0);
     /* Reset auto-clear timer so each new message gets its full ~3s window. */
     if (s.status_timer) lv_timer_del(s.status_timer);
     s.status_timer = lv_timer_create(_status_timer_cb, 3000, NULL);
@@ -344,7 +357,7 @@ static void _sync_btn_cb(lv_event_t *e) {
         return;
     }
     if (rpm_sig->is_stale || speed_sig->is_stale) {
-        _show_status("Signals stale — engine running?", true);
+        _show_status("No live RPM or speed. Is the engine running?", true);
         return;
     }
 
@@ -363,7 +376,7 @@ static void _sync_btn_cb(lv_event_t *e) {
     float overall = (rpm / 60.0f) / wheel_rps;
     float gearbox = overall / s.cfg.final_drive;
     if (!isfinite(gearbox) || gearbox < 0.20f || gearbox > 6.0f) {
-        _show_status("Computed ratio out of range — recheck wheel/FD", true);
+        _show_status("Ratio came out wrong. Check wheel size and final drive.", true);
         return;
     }
 
@@ -439,62 +452,60 @@ static void _close(bool saved) {
 
 /* ── Widget builders ─────────────────────────────────────────────────── */
 
+/* A kit button sized as a stepper (or the X): no side padding, so a one-
+ * character label sits dead centre. */
 static lv_obj_t *_make_stepper_btn(lv_obj_t *parent, const char *text,
                                    lv_event_cb_t cb, void *user_data) {
-    lv_obj_t *btn = lv_btn_create(parent);
-    lv_obj_set_size(btn, 28, 26);
-    lv_obj_set_style_bg_color(btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_radius(btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_border_width(btn, 1, 0);
-    lv_obj_set_style_border_color(btn, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_shadow_width(btn, 0, 0);
-    lv_obj_set_style_pad_all(btn, 0, 0);
-    lv_obj_t *lbl = lv_label_create(btn);
-    lv_label_set_text(lbl, text);
-    lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(lbl, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_center(lbl);
-    lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, user_data);
+    lv_obj_t *btn = uk_btn(parent, UK_ICON_NONE, text, UK_BTN_NEUTRAL, cb, user_data);
+    lv_obj_set_size(btn, STEP_W, STEP_H);
+    lv_obj_set_style_pad_hor(btn, 0, 0);
     return btn;
 }
 
-/* Build a single labeled row: [name label] ... [−] [value label] [+]
+/* One form row: transparent, full width, hairline underneath (the kit's
+ * uk_row look, but with room for controls on the right). */
+static lv_obj_t *_make_row(lv_obj_t *parent) {
+    lv_obj_t *row = lv_obj_create(parent);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, lv_pct(100), ROW_H);
+    lv_obj_set_style_border_color(row, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(row, 1, 0);
+    lv_obj_set_style_border_side(row, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    return row;
+}
+
+/* The [-] [value] [+] cluster on the right of a row. Returns the value. */
+static lv_obj_t *_add_stepper(lv_obj_t *row, lv_event_cb_t cb,
+                              void *down_ud, void *up_ud) {
+    lv_obj_t *plus = _make_stepper_btn(row, "+", cb, up_ud);
+    lv_obj_align(plus, LV_ALIGN_RIGHT_MID, 0, 0);
+
+    lv_obj_t *value_lbl = uk_label(row, "--", UK_FONT_BODY, UK_TONE_TEXT);
+    lv_obj_set_width(value_lbl, 70);
+    lv_obj_set_style_text_align(value_lbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(value_lbl, LV_ALIGN_RIGHT_MID, -(STEP_W + 4), 0);
+
+    lv_obj_t *minus = _make_stepper_btn(row, "-", cb, down_ud);
+    lv_obj_align(minus, LV_ALIGN_RIGHT_MID, -(STEP_W + 8 + 70), 0);
+    return value_lbl;
+}
+
+/* Build a single labeled row: [name label] ... [-] [value label] [+]
  * `kind` is opaque to the stepper but lets the user_data identify which
  * callback to fire on; `idx` is a sub-index (0 for non-array fields). */
 static void _add_value_row(lv_obj_t *parent, const char *name,
                            lv_event_cb_t cb, int kind, int idx,
                            lv_obj_t **out_value_lbl,
                            lv_obj_t **out_row) {
-    lv_obj_t *row = lv_obj_create(parent);
-    lv_obj_set_size(row, lv_pct(100), ROW_H);
-    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(row, 0, 0);
-    lv_obj_set_style_pad_all(row, 0, 0);
-    lv_obj_set_style_pad_left(row, 6, 0);
-    lv_obj_set_style_pad_right(row, 6, 0);
-    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *row = _make_row(parent);
 
-    lv_obj_t *name_lbl = lv_label_create(row);
-    lv_label_set_text(name_lbl, name);
+    lv_obj_t *name_lbl = uk_label(row, name, UK_FONT_BODY, UK_TONE_TEXT);
     lv_obj_align(name_lbl, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_text_font(name_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(name_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
 
-    lv_obj_t *plus = _make_stepper_btn(row, "+", cb,
+    lv_obj_t *value_lbl = _add_stepper(row, cb,
+                                       _pack_step(kind, STEP_DOWN, idx),
                                        _pack_step(kind, STEP_UP, idx));
-    lv_obj_align(plus, LV_ALIGN_RIGHT_MID, 0, 0);
-
-    lv_obj_t *value_lbl = lv_label_create(row);
-    lv_label_set_text(value_lbl, "--");
-    lv_obj_align(value_lbl, LV_ALIGN_RIGHT_MID, -36, 0);
-    lv_obj_set_style_text_font(value_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(value_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_set_width(value_lbl, 70);
-    lv_obj_set_style_text_align(value_lbl, LV_TEXT_ALIGN_CENTER, 0);
-
-    lv_obj_t *minus = _make_stepper_btn(row, "-", cb,
-                                        _pack_step(kind, STEP_DOWN, idx));
-    lv_obj_align(minus, LV_ALIGN_RIGHT_MID, -110, 0);
 
     if (out_value_lbl) *out_value_lbl = value_lbl;
     if (out_row)       *out_row       = row;
@@ -503,7 +514,7 @@ static void _add_value_row(lv_obj_t *parent, const char *name,
 /* Variant of _add_value_row that inserts a Sync button between the
  * gear name and the stepper. Used only for the per-gear ratio rows.
  *
- *   [Gear N ratio]   [Sync]   [−]  [value]  [+]
+ *   [Gear N ratio]   [Sync]   [-]  [value]  [+]
  *
  * The Sync button's user_data carries the gear index so a single
  * callback (_sync_btn_cb) services every gear. Press it while driving
@@ -514,67 +525,23 @@ static void _add_gear_ratio_row(lv_obj_t *parent, int gear_idx,
     char name[16];
     snprintf(name, sizeof(name), "Gear %u ratio", (unsigned)(gear_idx + 1));
 
-    lv_obj_t *row = lv_obj_create(parent);
-    lv_obj_set_size(row, lv_pct(100), ROW_H);
-    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(row, 0, 0);
-    lv_obj_set_style_pad_all(row, 0, 0);
-    lv_obj_set_style_pad_left(row, 6, 0);
-    lv_obj_set_style_pad_right(row, 6, 0);
-    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *row = _make_row(parent);
 
-    lv_obj_t *name_lbl = lv_label_create(row);
-    lv_label_set_text(name_lbl, name);
+    lv_obj_t *name_lbl = uk_label(row, name, UK_FONT_BODY, UK_TONE_TEXT);
     lv_obj_align(name_lbl, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_text_font(name_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(name_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
 
-    /* Sync button — slightly larger than a stepper so the label fits. */
-    lv_obj_t *sync_btn = lv_btn_create(row);
-    lv_obj_set_size(sync_btn, 64, 26);
-    lv_obj_align(sync_btn, LV_ALIGN_RIGHT_MID, -150, 0);
-    lv_obj_set_style_bg_color(sync_btn, THEME_COLOR_ACCENT_BLUE, 0);
-    lv_obj_set_style_radius(sync_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_border_width(sync_btn, 0, 0);
-    lv_obj_set_style_shadow_width(sync_btn, 0, 0);
-    lv_obj_set_style_pad_all(sync_btn, 0, 0);
-    lv_obj_t *sync_lbl = lv_label_create(sync_btn);
-    lv_label_set_text(sync_lbl, "Sync");
-    lv_obj_set_style_text_font(sync_lbl, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(sync_lbl, THEME_COLOR_TEXT_ON_ACCENT, 0);
-    lv_obj_center(sync_lbl);
-    lv_obj_add_event_cb(sync_btn, _sync_btn_cb, LV_EVENT_CLICKED,
-                        _pack_step(0, 0, gear_idx));
+    /* Sync button — left of the stepper cluster (which is 158 px wide). */
+    lv_obj_t *sync_btn = uk_btn(row, UK_ICON_NONE, "Sync", UK_BTN_NEUTRAL,
+                                _sync_btn_cb, _pack_step(0, 0, gear_idx));
+    lv_obj_set_size(sync_btn, 76, STEP_H);
+    lv_obj_align(sync_btn, LV_ALIGN_RIGHT_MID, -(2 * STEP_W + 8 + 70 + 12), 0);
 
-    lv_obj_t *plus = _make_stepper_btn(row, "+", _ratio_step_cb,
+    lv_obj_t *value_lbl = _add_stepper(row, _ratio_step_cb,
+                                       _pack_step(1, STEP_DOWN, gear_idx),
                                        _pack_step(1, STEP_UP, gear_idx));
-    lv_obj_align(plus, LV_ALIGN_RIGHT_MID, 0, 0);
-
-    lv_obj_t *value_lbl = lv_label_create(row);
-    lv_label_set_text(value_lbl, "--");
-    lv_obj_align(value_lbl, LV_ALIGN_RIGHT_MID, -36, 0);
-    lv_obj_set_style_text_font(value_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(value_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_set_width(value_lbl, 70);
-    lv_obj_set_style_text_align(value_lbl, LV_TEXT_ALIGN_CENTER, 0);
-
-    lv_obj_t *minus = _make_stepper_btn(row, "-", _ratio_step_cb,
-                                        _pack_step(1, STEP_DOWN, gear_idx));
-    lv_obj_align(minus, LV_ALIGN_RIGHT_MID, -110, 0);
 
     if (out_value_lbl) *out_value_lbl = value_lbl;
     if (out_row)       *out_row       = row;
-}
-
-static void _style_dropdown(lv_obj_t *dd) {
-    lv_obj_set_style_bg_color(dd, THEME_COLOR_INPUT_BG, 0);
-    lv_obj_set_style_bg_opa(dd, LV_OPA_COVER, 0);
-    lv_obj_set_style_text_color(dd, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_set_style_text_font(dd, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_border_color(dd, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_border_width(dd, 1, 0);
-    lv_obj_set_style_radius(dd, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_pad_all(dd, 6, 0);
 }
 
 /* ── Public API ──────────────────────────────────────────────────────── */
@@ -619,90 +586,88 @@ void ui_gear_setup_open(ui_gear_setup_done_cb_t cb, void *ctx) {
     lv_obj_remove_style_all(s.overlay);
     lv_obj_set_size(s.overlay, lv_pct(100), lv_pct(100));
     lv_obj_center(s.overlay);
+    /* Dim backdrop at the kit popup's strength; it eats taps. */
     lv_obj_set_style_bg_color(s.overlay, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(s.overlay, LV_OPA_80, 0);
+    lv_obj_set_style_bg_opa(s.overlay, 150, 0);
     lv_obj_clear_flag(s.overlay, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(s.overlay, LV_OBJ_FLAG_CLICKABLE);
 
-    /* Card */
+    /* Card — the kit popup's look, kept as a child of our overlay so the
+     * one rdm_obj_del_async(s.overlay) in _close takes everything. */
     s.card = lv_obj_create(s.overlay);
+    lv_obj_remove_style_all(s.card);
     lv_obj_set_size(s.card, CARD_W, CARD_H);
     lv_obj_center(s.card);
-    lv_obj_set_style_bg_color(s.card, THEME_COLOR_PANEL, 0);
+    lv_obj_set_style_bg_color(s.card, THEME_COLOR_SURFACE, 0);
     lv_obj_set_style_bg_opa(s.card, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(s.card, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_color(s.card, THEME_COLOR_BORDER_MED, 0);
     lv_obj_set_style_border_width(s.card, 1, 0);
-    lv_obj_set_style_radius(s.card, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_pad_all(s.card, 16, 0);
+    lv_obj_set_style_radius(s.card, UK_R_POPUP, 0);
+    lv_obj_set_style_pad_all(s.card, CARD_PAD, 0);
+    lv_obj_set_style_text_color(s.card, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_style_text_font(s.card, uk_font(UK_FONT_BODY), 0);
     lv_obj_clear_flag(s.card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s.card, LV_OBJ_FLAG_CLICKABLE);
 
-    /* Title */
-    lv_obj_t *title = lv_label_create(s.card);
-    lv_label_set_text(title, "Calculated Gear Setup");
-    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_text_font(title, THEME_FONT_LARGE, 0);
-    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
+    /* Title + X, placed exactly as uk_popup places them. X = Cancel. */
+    lv_obj_t *title = uk_label(s.card, "Calculated gear", UK_FONT_HEAD, UK_TONE_TEXT);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 4);
 
-    /* Enabled switch — top right of header */
-    lv_obj_t *enabled_lbl = lv_label_create(s.card);
-    lv_label_set_text(enabled_lbl, "Enabled");
-    lv_obj_align(enabled_lbl, LV_ALIGN_TOP_RIGHT, -56, 4);
-    lv_obj_set_style_text_font(enabled_lbl, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(enabled_lbl, THEME_COLOR_TEXT_MUTED, 0);
-
-    s.enabled_sw = lv_switch_create(s.card);
-    lv_obj_set_size(s.enabled_sw, 44, 22);
-    lv_obj_align(s.enabled_sw, LV_ALIGN_TOP_RIGHT, 0, 0);
-    lv_obj_set_style_bg_color(s.enabled_sw, THEME_COLOR_SECTION_BG, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(s.enabled_sw, THEME_COLOR_ACCENT_BLUE,
-                              LV_PART_INDICATOR | LV_STATE_CHECKED);
-    if (s.cfg.enabled) lv_obj_add_state(s.enabled_sw, LV_STATE_CHECKED);
-    lv_obj_add_event_cb(s.enabled_sw, _enabled_sw_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_t *x = uk_btn(s.card, UK_ICON_CLOSE, NULL, UK_BTN_NEUTRAL, _cancel_cb, NULL);
+    lv_obj_set_size(x, STEP_W, 36);
+    lv_obj_set_style_pad_hor(x, 0, 0);
+    lv_obj_align(x, LV_ALIGN_TOP_RIGHT, 4, -4);
+    lv_obj_set_ext_click_area(x, 12);
 
     /* Scrollable body — covers the middle of the card. Flex column so
      * each row stacks neatly. */
     s.list = lv_obj_create(s.card);
-    lv_obj_set_size(s.list, CARD_W - 32, CARD_H - 60 - 64);
-    lv_obj_align(s.list, LV_ALIGN_TOP_MID, 0, 40);
-    lv_obj_set_style_bg_opa(s.list, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(s.list, 0, 0);
-    lv_obj_set_style_pad_all(s.list, 4, 0);
+    lv_obj_remove_style_all(s.list);
+    lv_obj_set_size(s.list, INNER_W, LIST_H);
+    lv_obj_align(s.list, LV_ALIGN_TOP_LEFT, 0, UK_POPUP_BODY_Y);
+    lv_obj_set_style_pad_right(s.list, 8, 0);   /* room for the scrollbar */
     lv_obj_set_flex_flow(s.list, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(s.list, 4, 0);
+    lv_obj_set_style_pad_row(s.list, 2, 0);
     lv_obj_set_scroll_dir(s.list, LV_DIR_VER);
+    uk_style_scrollbar(s.list);
+
+    /* Enabled switch — first row of the body. */
+    lv_obj_t *en_row = _make_row(s.list);
+    lv_obj_t *enabled_lbl = uk_label(en_row, "Show the calculated gear",
+                                     UK_FONT_BODY, UK_TONE_TEXT);
+    lv_obj_align(enabled_lbl, LV_ALIGN_LEFT_MID, 0, 0);
+
+    s.enabled_sw = lv_switch_create(en_row);
+    lv_obj_set_size(s.enabled_sw, 48, 26);
+    lv_obj_align(s.enabled_sw, LV_ALIGN_RIGHT_MID, 0, 0);
+    uk_style_switch(s.enabled_sw);
+    if (s.cfg.enabled) lv_obj_add_state(s.enabled_sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(s.enabled_sw, _enabled_sw_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     /* Section: signal sources */
     lv_obj_t *sig_row = lv_obj_create(s.list);
-    lv_obj_set_size(sig_row, lv_pct(100), 70);
-    lv_obj_set_style_bg_opa(sig_row, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(sig_row, 0, 0);
-    lv_obj_set_style_pad_all(sig_row, 0, 0);
-    lv_obj_clear_flag(sig_row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_style_all(sig_row);
+    lv_obj_set_size(sig_row, lv_pct(100), 72);
+    lv_obj_clear_flag(sig_row, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
-    lv_obj_t *rpm_lbl = lv_label_create(sig_row);
-    lv_label_set_text(rpm_lbl, "RPM signal");
-    lv_obj_align(rpm_lbl, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_text_font(rpm_lbl, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(rpm_lbl, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_t *rpm_lbl = uk_section(sig_row, "RPM reading");
+    lv_obj_align(rpm_lbl, LV_ALIGN_TOP_LEFT, 0, 4);
 
     s.rpm_dd = lv_dropdown_create(sig_row);
-    lv_obj_set_size(s.rpm_dd, 256, 30);
-    lv_obj_align(s.rpm_dd, LV_ALIGN_TOP_LEFT, 0, 14);
-    _style_dropdown(s.rpm_dd);
+    lv_obj_set_size(s.rpm_dd, (INNER_W - 8 - 12) / 2, UK_BTN_H);
+    lv_obj_align(s.rpm_dd, LV_ALIGN_TOP_LEFT, 0, 30);
+    uk_style_dropdown(s.rpm_dd);
     lv_dropdown_set_options(s.rpm_dd, s.dd_options);
     _select_dd_by_name(s.rpm_dd, s.cfg.rpm_signal);
     lv_obj_add_event_cb(s.rpm_dd, _rpm_dd_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
-    lv_obj_t *spd_lbl = lv_label_create(sig_row);
-    lv_label_set_text(spd_lbl, "Vehicle speed signal");
-    lv_obj_align(spd_lbl, LV_ALIGN_TOP_RIGHT, 0, 0);
-    lv_obj_set_style_text_font(spd_lbl, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(spd_lbl, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_t *spd_lbl = uk_section(sig_row, "Speed reading");
+    lv_obj_align(spd_lbl, LV_ALIGN_TOP_LEFT, (INNER_W - 8 - 12) / 2 + 12, 4);
 
     s.speed_dd = lv_dropdown_create(sig_row);
-    lv_obj_set_size(s.speed_dd, 256, 30);
-    lv_obj_align(s.speed_dd, LV_ALIGN_TOP_RIGHT, 0, 14);
-    _style_dropdown(s.speed_dd);
+    lv_obj_set_size(s.speed_dd, (INNER_W - 8 - 12) / 2, UK_BTN_H);
+    lv_obj_align(s.speed_dd, LV_ALIGN_TOP_RIGHT, 0, 30);
+    uk_style_dropdown(s.speed_dd);
     lv_dropdown_set_options(s.speed_dd, s.dd_options);
     _select_dd_by_name(s.speed_dd, s.cfg.speed_signal);
     lv_obj_add_event_cb(s.speed_dd, _speed_dd_cb, LV_EVENT_VALUE_CHANGED, NULL);
@@ -710,6 +675,8 @@ void ui_gear_setup_open(ui_gear_setup_done_cb_t cb, void *ctx) {
     /* Numeric rows — wheel circumference, final drive, gear count.
      * Wheel circumference is shown in mm to match the web modal; the
      * underlying storage is still metres but the label / step are mm. */
+    lv_obj_t *car_sec = uk_section(s.list, "The car");
+    lv_obj_set_style_pad_top(car_sec, 12, 0);
     _add_value_row(s.list, "Wheel circumference (mm)",
                    _wheel_step_cb, 0, 0, &s.wheel_lbl, NULL);
     _add_value_row(s.list, "Final drive ratio",
@@ -719,49 +686,30 @@ void ui_gear_setup_open(ui_gear_setup_done_cb_t cb, void *ctx) {
 
     /* Per-gear ratio rows with Sync button. Always create all 8;
      * show/hide via ratio_count. */
+    lv_obj_t *ratio_sec = uk_section(s.list, "Gear ratios");
+    lv_obj_set_style_pad_top(ratio_sec, 12, 0);
     for (uint8_t i = 0; i < MAX_RATIO_ROWS; i++) {
         _add_gear_ratio_row(s.list, i, &s.ratio_lbl[i], &s.ratio_row[i]);
     }
 
     /* Status banner — sits below the scrollable list, above the buttons.
      * One-line auto-clearing message shown by Sync results / errors. */
-    s.status_lbl = lv_label_create(s.card);
-    lv_label_set_text(s.status_lbl, "");
-    lv_obj_align(s.status_lbl, LV_ALIGN_BOTTOM_MID, 0, -58);
-    lv_obj_set_width(s.status_lbl, CARD_W - 32);
-    lv_obj_set_style_text_font(s.status_lbl, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(s.status_lbl, THEME_COLOR_ACCENT_BLUE, 0);
-    lv_obj_set_style_text_align(s.status_lbl, LV_TEXT_ALIGN_CENTER, 0);
+    s.status_lbl = uk_label(s.card, "", UK_FONT_SMALL, UK_TONE_OK);
+    lv_obj_set_width(s.status_lbl, INNER_W);
+    lv_obj_align(s.status_lbl, LV_ALIGN_TOP_LEFT, 0, STATUS_Y);
     lv_label_set_long_mode(s.status_lbl, LV_LABEL_LONG_DOT);
 
-    /* Footer buttons — Cancel left, Save right (mirror ECU picker). */
-    lv_obj_t *save_btn = lv_btn_create(s.card);
-    lv_obj_set_size(save_btn, 240, 40);
-    lv_obj_align(save_btn, LV_ALIGN_BOTTOM_MID, 130, -8);
-    lv_obj_set_style_bg_color(save_btn, THEME_COLOR_ACCENT_BLUE, 0);
-    lv_obj_set_style_radius(save_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_border_width(save_btn, 0, 0);
-    lv_obj_set_style_shadow_width(save_btn, 0, 0);
-    lv_obj_t *save_lbl = lv_label_create(save_btn);
-    lv_label_set_text(save_lbl, "Save");
-    lv_obj_center(save_lbl);
-    lv_obj_set_style_text_font(save_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(save_lbl, THEME_COLOR_TEXT_ON_ACCENT, 0);
-    lv_obj_add_event_cb(save_btn, _save_cb, LV_EVENT_CLICKED, NULL);
+    /* Footer buttons — Cancel then Save at the right; Save is the one
+     * primary action. */
+    lv_obj_t *save_btn = uk_btn(s.card, UK_ICON_CHECK, "Save", UK_BTN_PRIMARY,
+                                _save_cb, NULL);
+    lv_obj_set_width(save_btn, 160);
+    lv_obj_align(save_btn, LV_ALIGN_TOP_RIGHT, 0, FOOTER_Y);
 
-    lv_obj_t *cancel_btn = lv_btn_create(s.card);
-    lv_obj_set_size(cancel_btn, 240, 40);
-    lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_MID, -130, -8);
-    lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_radius(cancel_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_border_width(cancel_btn, 0, 0);
-    lv_obj_set_style_shadow_width(cancel_btn, 0, 0);
-    lv_obj_t *cancel_lbl = lv_label_create(cancel_btn);
-    lv_label_set_text(cancel_lbl, "Cancel");
-    lv_obj_center(cancel_lbl);
-    lv_obj_set_style_text_font(cancel_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(cancel_lbl, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_add_event_cb(cancel_btn, _cancel_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *cancel_btn = uk_btn(s.card, UK_ICON_NONE, "Cancel", UK_BTN_GHOST,
+                                  _cancel_cb, NULL);
+    lv_obj_set_width(cancel_btn, 140);
+    lv_obj_align(cancel_btn, LV_ALIGN_TOP_RIGHT, -172, FOOTER_Y);
 
     /* Initial paint of values + per-gear row visibility. */
     _refresh_value_labels();

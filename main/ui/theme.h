@@ -19,186 +19,141 @@
 #include "lvgl.h"
 
 /* =========================================================================
- * COLOURS — backgrounds
+ * PALETTE — the menus' colours, chosen at runtime (ADR-0075)
+ *
+ * Every menu, popup, settings page and the setup wizard colours itself through
+ * the THEME_COLOR_* names below. Those names used to be constants; they now
+ * read the active palette, so dark and light are two tables in ui_theme.c and
+ * switching is ui_theme_set() plus rebuilding the open screen — no screen
+ * code knows which one it is drawing.
+ *
+ * Dashboard widgets do NOT use these: a layout's colours are the layout's,
+ * not the menu theme's. They use the frozen WIDGET_COLOR_* set further down.
  * ========================================================================= */
 
-/** Pure black.  Dashboard root, splash screen. */
-#define THEME_COLOR_BG                  lv_color_hex(0x000000)
+typedef struct {
+    lv_color_t bg;            /* screen behind a menu                        */
+    lv_color_t bar;           /* the brand / title bar                       */
+    lv_color_t surface;       /* popups, modal bodies                        */
+    lv_color_t card;          /* tiles, cards                                */
+    lv_color_t raised;        /* buttons and controls sitting on a card      */
+    lv_color_t raised_hi;     /* pressed control, a second neutral step      */
+    lv_color_t input;         /* text fields, slider tracks                  */
+    lv_color_t line;          /* hairline borders and dividers               */
+    lv_color_t line_strong;   /* popup edges                                 */
+    lv_color_t scrollbar;
+    lv_color_t text;
+    lv_color_t text_muted;
+    lv_color_t text_hint;
+    lv_color_t text_on_accent;
+    lv_color_t accent;        /* RDM red: selection, the one primary action  */
+    lv_color_t accent_pressed;
+    lv_color_t accent_soft;   /* tinted fill behind an "on" control          */
+    lv_color_t accent_ink;    /* text / icon on accent_soft                  */
+    lv_color_t ok;
+    lv_color_t warn;
+    lv_color_t danger;        /* destructive text                            */
+    lv_color_t danger_fill;   /* destructive button fill                     */
+    lv_color_t danger_soft;
+    lv_color_t knob;          /* slider / switch knob                        */
+} ui_palette_t;
 
-/** Dark surface.  Settings containers, modals, popups. */
-#define THEME_COLOR_SURFACE             lv_color_hex(0x292C29)
+typedef enum { UI_THEME_DARK = 0, UI_THEME_LIGHT, UI_THEME__COUNT } ui_theme_id_t;
 
-/** Slightly lighter surface.  Screen4 background. */
-#define THEME_COLOR_SURFACE_ALT         lv_color_hex(0x292C29)
+/** The palette in use. Never NULL — starts on the dark table. */
+extern const ui_palette_t *ui_pal;
 
-/** Near-black.  Input fields, config panel inner areas. */
-#define THEME_COLOR_INPUT_BG            lv_color_hex(0x181C18)
+/** Switch palettes. Rebuilds the kit's shared styles and the LVGL default
+ *  theme; screens already on the glass keep their colours until rebuilt. */
+void ui_theme_set(ui_theme_id_t id);
+ui_theme_id_t ui_theme_get(void);
 
-/** Section card background.  Settings section cards. */
-#define THEME_COLOR_SECTION_BG          lv_color_hex(0x393C39)
-
-/** Dark neutral.  Inactive warning circles, outer config panel. */
-#define THEME_COLOR_INACTIVE            lv_color_hex(0x292C29)
-
-/** Standard panel / box background. */
-#define THEME_COLOR_PANEL               lv_color_hex(0x393C39)
-
-/** On-screen keyboard background. */
-#define THEME_COLOR_KEYBOARD_BG         lv_color_hex(0x393C39)
-
-/** Dropdown / control background. */
-#define THEME_COLOR_CONTROL_BG          lv_color_hex(0x393C39)
-
-/** Section card border.  Subtle separation line. */
-#define THEME_COLOR_BORDER              lv_color_hex(0x181C18)
-
-/** Empty / placeholder button background. */
-#define THEME_COLOR_BTN_NEUTRAL         lv_color_hex(0x393C39)
-
-/** Scrollbar track, fuel-sender cal buttons, generic dividers. */
-#define THEME_COLOR_SCROLLBAR           lv_color_hex(0x5A595A)
-
-/** Medium border (Screen2 chart, popup shadow border). */
-#define THEME_COLOR_BORDER_MED          lv_color_hex(0x848684)
-
-/** Near-white.  RPM bar gauge background. */
+/* ── Backgrounds ───────────────────────────────────────────────────────── */
+#define THEME_COLOR_BG                  (ui_pal->bg)
+#define THEME_COLOR_SURFACE             (ui_pal->surface)
+#define THEME_COLOR_SURFACE_ALT         (ui_pal->surface)
+#define THEME_COLOR_INPUT_BG            (ui_pal->input)
+#define THEME_COLOR_SECTION_BG          (ui_pal->raised)
+#define THEME_COLOR_INACTIVE            (ui_pal->card)
+#define THEME_COLOR_PANEL               (ui_pal->card)
+#define THEME_COLOR_KEYBOARD_BG         (ui_pal->surface)
+#define THEME_COLOR_CONTROL_BG          (ui_pal->raised)
+#define THEME_COLOR_BORDER              (ui_pal->line)
+#define THEME_COLOR_BTN_NEUTRAL         (ui_pal->raised)
+#define THEME_COLOR_SCROLLBAR           (ui_pal->scrollbar)
+#define THEME_COLOR_BORDER_MED          (ui_pal->line_strong)
+#define THEME_COLOR_HIGHLIGHT           (ui_pal->raised)
+/** Near-white RPM bar background — a widget default, not themed. */
 #define THEME_COLOR_RPM_BAR_BG          lv_color_hex(0xF0F0F0)
 
-/** Canvas / highlight background. */
-#define THEME_COLOR_HIGHLIGHT           lv_color_hex(0x393C39)
-
-/* =========================================================================
- * COLOURS — text
- * ========================================================================= */
-
-/** Black text — used on light backgrounds. */
+/* ── Text ──────────────────────────────────────────────────────────────── */
 #define THEME_COLOR_TEXT_ON_LIGHT       lv_color_hex(0x000000)
+#define THEME_COLOR_TEXT_ON_ACCENT      (ui_pal->text_on_accent)
+#define THEME_COLOR_TEXT_GHOST          (ui_pal->text_hint)
+#define THEME_COLOR_TEXT_HINT           (ui_pal->text_hint)
+#define THEME_COLOR_TEXT_DISABLED       (ui_pal->text_muted)
+#define THEME_COLOR_TEXT_MUTED          (ui_pal->text_muted)
+#define THEME_COLOR_TEXT_PRIMARY        (ui_pal->text)
 
-/** White text on accent-blue backgrounds (buttons). */
-#define THEME_COLOR_TEXT_ON_ACCENT      lv_color_hex(0xFFFFFF)
+/* ── Buttons ───────────────────────────────────────────────────────────── */
+#define THEME_COLOR_BTN_SAVE            (ui_pal->accent)
+#define THEME_COLOR_BTN_SAVE_PRESSED    (ui_pal->accent_pressed)
+#define THEME_COLOR_BTN_CANCEL          (ui_pal->raised_hi)
+#define THEME_COLOR_BTN_CANCEL_PRESSED  (ui_pal->line_strong)
+#define THEME_COLOR_BTN_CLOSE           (ui_pal->raised_hi)
+#define THEME_COLOR_BTN_CLOSE_PRESSED   (ui_pal->line_strong)
+#define THEME_COLOR_BTN_SAVE_ALT        (ui_pal->accent)
+#define THEME_COLOR_BTN_SAVE_ALT_PRESSED (ui_pal->accent_pressed)
+#define THEME_COLOR_BTN_DIM             (ui_pal->raised)
+#define THEME_COLOR_BTN_DIM_PRESSED     (ui_pal->raised_hi)
+#define THEME_COLOR_BTN_CONNECT         (ui_pal->accent)
+#define THEME_COLOR_BTN_CONNECT_PRESSED (ui_pal->accent_pressed)
+#define THEME_COLOR_BTN_GRAY            (ui_pal->raised_hi)
+#define THEME_COLOR_BTN_GRAY_PRESSED    (ui_pal->line_strong)
+#define THEME_COLOR_BTN_DANGER          (ui_pal->danger_fill)
+#define THEME_COLOR_BTN_DANGER_BG       (ui_pal->danger_soft)
 
-/** Ghost / placeholder text inside text inputs. */
-#define THEME_COLOR_TEXT_GHOST          lv_color_hex(0x5A595A)
+/* ── Status / accent ───────────────────────────────────────────────────── */
+#define THEME_COLOR_STATUS_CONNECTED    (ui_pal->ok)
+#define THEME_COLOR_STATUS_ERROR        (ui_pal->danger)
+#define THEME_COLOR_STATUS_WARN         (ui_pal->warn)
+#define THEME_COLOR_ACCENT_BLUE         (ui_pal->accent)      /* historical name */
+#define THEME_COLOR_ACCENT_BLUE_PRESSED (ui_pal->accent_pressed)
+#define THEME_COLOR_ACCENT_YELLOW       (ui_pal->text)
+#define THEME_COLOR_ACCENT_ORANGE       (ui_pal->warn)
+#define THEME_COLOR_ACCENT              (ui_pal->accent)
+#define THEME_COLOR_ACCENT_DIM          (ui_pal->accent_soft)
+#define THEME_COLOR_ACCENT_AMBER        (ui_pal->warn)
+#define THEME_COLOR_ACCENT_TEAL         (ui_pal->ok)
+#define THEME_COLOR_NAV_DEFAULT         (ui_pal->text_hint)
+#define THEME_COLOR_NAV_PRESSED         (ui_pal->accent)
+#define THEME_COLOR_CHART_BORDER        (ui_pal->line_strong)
 
-/** Hint / metadata text (serial, firmware labels). */
-#define THEME_COLOR_TEXT_HINT           lv_color_hex(0x5A595A)
-
-/** Light muted text (fuel-current label, OTA notes). */
-#define THEME_COLOR_TEXT_DISABLED       lv_color_hex(0x848684)
-
-/** Standard secondary / muted label text. */
-#define THEME_COLOR_TEXT_MUTED          lv_color_hex(0x848684)
-
-/** Primary / high-contrast label text. */
-#define THEME_COLOR_TEXT_PRIMARY        lv_color_hex(0xE8E8E8)
-
-/* =========================================================================
- * COLOURS — interactive buttons
- * ========================================================================= */
-
-/** Save / OK buttons — LVGL blue. */
-#define THEME_COLOR_BTN_SAVE            lv_color_hex(0x2196F3)
-
-/** Save button pressed state. */
-#define THEME_COLOR_BTN_SAVE_PRESSED    lv_color_hex(0x42A5F5)
-
-/** Cancel / Back buttons. */
-#define THEME_COLOR_BTN_CANCEL          lv_color_hex(0xF04030)
-
-/** Cancel button pressed state. */
-#define THEME_COLOR_BTN_CANCEL_PRESSED  lv_color_hex(0xE85050)
-
-/** Danger red — Close buttons in dialogs. */
-#define THEME_COLOR_BTN_CLOSE           lv_color_hex(0xF84040)
-
-/** Close button pressed state. */
-#define THEME_COLOR_BTN_CLOSE_PRESSED   lv_color_hex(0xF86868)
-
-/** Accent Save button (device-settings variant). */
-#define THEME_COLOR_BTN_SAVE_ALT        lv_color_hex(0x2196F3)
-
-/** Accent Save button pressed state. */
-#define THEME_COLOR_BTN_SAVE_ALT_PRESSED lv_color_hex(0x42A5F5)
-
-/** Dimmer / display-settings toggle button. */
-#define THEME_COLOR_BTN_DIM             lv_color_hex(0x393C39)
-
-/** Dimmer button pressed state. */
-#define THEME_COLOR_BTN_DIM_PRESSED     lv_color_hex(0x5A595A)
-
-/** WiFi connect button / network action. */
-#define THEME_COLOR_BTN_CONNECT         lv_color_hex(0x2196F3)
-
-/** WiFi connect button pressed state. */
-#define THEME_COLOR_BTN_CONNECT_PRESSED lv_color_hex(0x42A5F5)
-
-/** Neutral cancel button (OTA / WiFi dialogs). */
-#define THEME_COLOR_BTN_GRAY            lv_color_hex(0x5A595A)
-
-/** Neutral cancel button pressed state. */
-#define THEME_COLOR_BTN_GRAY_PRESSED    lv_color_hex(0x848684)
-
-/** Dark danger red — active "Stop" / destructive action buttons. */
-#define THEME_COLOR_BTN_DANGER          lv_color_hex(0x880000)
-
-/** Dark danger red background — factory reset, destructive action backgrounds. */
-#define THEME_COLOR_BTN_DANGER_BG       lv_color_hex(0x301010)
+/* One colour per settings section used to tell them apart; the new look
+ * tells them apart by position and a muted caps label instead. */
+#define THEME_COLOR_SECTION_CAN_TITLE   (ui_pal->text_muted)
+#define THEME_COLOR_SECTION_INFO_TITLE  (ui_pal->text_muted)
+#define THEME_COLOR_SECTION_NET_TITLE   (ui_pal->text_muted)
+#define THEME_COLOR_SECTION_DISP_TITLE  (ui_pal->text_muted)
+#define THEME_COLOR_SECTION_ECU_TITLE   (ui_pal->text_muted)
 
 /* =========================================================================
- * COLOURS — status / accent
+ * COLOURS — dashboard widget defaults (frozen)
+ * What a gauge, bar or panel draws with when its layout doesn't say. These
+ * are part of how a layout looks, so they must match Studio's renderer and
+ * never follow the menu theme.
  * ========================================================================= */
-
-/** WiFi / OTA "connected / success" status. */
-#define THEME_COLOR_STATUS_CONNECTED    lv_color_hex(0x2196F3)
-
-/** WiFi / OTA "disconnected / error" status. */
-#define THEME_COLOR_STATUS_ERROR        lv_color_hex(0xF84040)
-
-/** Pink-red — ECU section title, alternative disconnect indicator. */
-#define THEME_COLOR_STATUS_WARN         lv_color_hex(0xF84080)
-
-/** LVGL blue accent — primary interactive colour. */
-#define THEME_COLOR_ACCENT_BLUE         lv_color_hex(0x2196F3)
-
-/** Blue accent pressed state. */
-#define THEME_COLOR_ACCENT_BLUE_PRESSED lv_color_hex(0x42A5F5)
-
-/** Yellow — brightness value labels, display-section title. */
-#define THEME_COLOR_ACCENT_YELLOW       lv_color_hex(0xF8FC40)
-
-/** Orange — network / connectivity section title. */
-#define THEME_COLOR_ACCENT_ORANGE       lv_color_hex(0xF88040)
-
-/** Primary accent — active tabs, Load Preset button, section headers. */
-#define THEME_COLOR_ACCENT              lv_color_hex(0x2196F3)
-
-/** Dark accent fill — active tab background, pressed states. */
-#define THEME_COLOR_ACCENT_DIM          lv_color_hex(0x0D47A1)
-
-/** Muted amber — Alerts / warning section header. */
-#define THEME_COLOR_ACCENT_AMBER        lv_color_hex(0xC89830)
-
-/** Soft teal — Display section header. */
-#define THEME_COLOR_ACCENT_TEAL         lv_color_hex(0x218E8C)
-
-/** Navigation arrow icon default (Screen2). */
-#define THEME_COLOR_NAV_DEFAULT         lv_color_hex(0x5A595A)
-
-/** Navigation arrow icon pressed (Screen2). */
-#define THEME_COLOR_NAV_PRESSED         lv_color_hex(0x2196F3)
-
-/** Chart / scope border colour (Screen2). */
-#define THEME_COLOR_CHART_BORDER        lv_color_hex(0x848684)
-
-/* =========================================================================
- * COLOURS — device-settings section title accents
- * (one distinct colour per card to aid quick scanning)
- * ========================================================================= */
-#define THEME_COLOR_SECTION_CAN_TITLE   lv_color_hex(0x2196F3)
-#define THEME_COLOR_SECTION_INFO_TITLE  lv_color_hex(0x2196F3)
-#define THEME_COLOR_SECTION_NET_TITLE   lv_color_hex(0xF88040)
-#define THEME_COLOR_SECTION_DISP_TITLE  lv_color_hex(0xF8FC40)
-#define THEME_COLOR_SECTION_ECU_TITLE   lv_color_hex(0xF84080)
+#define WIDGET_COLOR_BG                 lv_color_hex(0x000000)
+#define WIDGET_COLOR_SURFACE            lv_color_hex(0x292C29)
+#define WIDGET_COLOR_INPUT_BG           lv_color_hex(0x181C18)
+#define WIDGET_COLOR_INACTIVE           lv_color_hex(0x292C29)
+#define WIDGET_COLOR_PANEL              lv_color_hex(0x393C39)
+#define WIDGET_COLOR_CONTROL_BG         lv_color_hex(0x393C39)
+#define WIDGET_COLOR_BORDER_MED         lv_color_hex(0x848684)
+#define WIDGET_COLOR_TEXT_MUTED         lv_color_hex(0x848684)
+#define WIDGET_COLOR_TEXT_PRIMARY       lv_color_hex(0xE8E8E8)
+#define WIDGET_COLOR_BTN_SAVE           lv_color_hex(0x2196F3)
+#define WIDGET_COLOR_BTN_CANCEL         lv_color_hex(0xF04030)
 
 /* =========================================================================
  * COLOURS — user-selectable widget palette
@@ -274,9 +229,9 @@
 
 /* Border / outline radius */
 #define THEME_RADIUS_NONE               0
-#define THEME_RADIUS_SMALL              2
-#define THEME_RADIUS_NORMAL             4
-#define THEME_RADIUS_LARGE              6
+#define THEME_RADIUS_SMALL              4
+#define THEME_RADIUS_NORMAL             6
+#define THEME_RADIUS_LARGE              10
 #define THEME_RADIUS_PILL               LV_RADIUS_CIRCLE
 
 /* Padding presets */

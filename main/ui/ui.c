@@ -6,6 +6,7 @@
 // regenerate from SquareLine and re-import, remember to re-trim.
 
 #include "ui.h"
+#include "kit/ui_kit.h"
 #include "core/lv_event.h"
 #include "ui_helpers.h"
 #include "screens/splash_screen.h"
@@ -131,10 +132,10 @@ void ui_init(void)
 {
     ui_styles_init();
 
-    lv_disp_t * dispp = lv_disp_get_default();
-    lv_theme_t * theme = lv_theme_default_init(dispp, lv_palette_main(LV_PALETTE_BLUE), lv_palette_main(LV_PALETTE_RED),
-                                             true, LV_FONT_DEFAULT);
-    lv_disp_set_theme(dispp, theme);
+    /* The menus' palette and parts (ADR-0075). ui_theme_set also points the
+     * LVGL default theme at the palette's accent. */
+    uk_init();
+    ui_theme_set(UI_THEME_DARK);
 
     /* Splash-enabled gate: when disabled, skip the 900 ms boot splash entirely
      * and build the dashboard directly for a faster boot. dashboard_init()

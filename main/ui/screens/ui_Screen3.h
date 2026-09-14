@@ -62,6 +62,14 @@ extern lv_style_t common_style;
 // Initialize UI Screen3
 void ui_Screen3_screen_init(void);
 
+/** Make @p name the active layout and cross-fade the dashboard to it. Safe to
+ *  call from a menu screen: the dashboard it replaces is freed. */
+void ui_Screen3_switch_layout(const char *name);
+
+/** Rebuild the dashboard from its saved layout (after settings that shape it
+ *  changed), freeing the one it replaces. Does not save anything. */
+void ui_Screen3_rebuild(void);
+
 /** Apply a temporary layout for live preview. */
 void ui_Screen3_preview_layout(cJSON *root);
 

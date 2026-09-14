@@ -39,6 +39,10 @@ bool layout_switcher_get_prev(const char *current, char *out, size_t cap);
  *  the filesystem fallback). Used by UI to gate arrow visibility. */
 int  layout_switcher_count(void);
 
+/** Where @p current sits in the cycle (-1 if absent), with the cycle's length
+ *  written to @p count. One filesystem pass — the dock caches it. */
+int  layout_switcher_position(const char *current, int *count);
+
 #ifdef __cplusplus
 }
 #endif

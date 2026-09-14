@@ -118,13 +118,13 @@ void update_panel_ui_immediate(uint8_t i, const char *value_str,
 	bool night_on = night_mode_is_active();
 	lv_color_t base_label = pd
 		? NIGHT_PICK_COLOR(night_on, pd->night, label_color, pd->label_color)
-		: THEME_COLOR_TEXT_PRIMARY;
+		: WIDGET_COLOR_TEXT_PRIMARY;
 	lv_color_t base_value = pd
 		? NIGHT_PICK_COLOR(night_on, pd->night, value_color, pd->value_color)
-		: THEME_COLOR_TEXT_PRIMARY;
+		: WIDGET_COLOR_TEXT_PRIMARY;
 	lv_color_t base_border = pd
 		? NIGHT_PICK_COLOR(night_on, pd->night, border_color, pd->border_color)
-		: THEME_COLOR_PANEL;
+		: WIDGET_COLOR_PANEL;
 
 	if (ui_Label[i] && lv_obj_is_valid(ui_Label[i]))
 		lv_obj_set_style_text_color(ui_Label[i],
@@ -175,10 +175,10 @@ void init_styles(void) {
 	lv_style_init(&box_style);
 	lv_style_set_radius(&box_style, 7);
 	lv_style_set_bg_color(&box_style,
-						  THEME_COLOR_BG); // Black background
+						  WIDGET_COLOR_BG); // Black background
 	lv_style_set_bg_opa(&box_style, 255);  // Full opacity for black background
 	lv_style_set_clip_corner(&box_style, false);
-	lv_style_set_border_color(&box_style, THEME_COLOR_PANEL);
+	lv_style_set_border_color(&box_style, WIDGET_COLOR_PANEL);
 	lv_style_set_border_opa(&box_style, 255);
 	lv_style_set_border_width(&box_style, 3);
 	lv_style_set_border_post(&box_style, true); // Ensure border is drawn on top
@@ -191,10 +191,10 @@ void init_common_style(void) {
 	lv_style_set_radius(&common_style, 7);
 	lv_style_set_pad_all(&common_style, 8); // 7px padding on all sides
 	lv_style_set_bg_color(&common_style,
-						  THEME_COLOR_TEXT_PRIMARY); // White background
+						  WIDGET_COLOR_TEXT_PRIMARY); // White background
 	lv_style_set_bg_opa(&common_style, LV_OPA_COVER);
 	lv_style_set_border_color(&common_style,
-							  THEME_COLOR_TEXT_MUTED); // Light gray border
+							  WIDGET_COLOR_TEXT_MUTED); // Light gray border
 	lv_style_set_border_width(&common_style, 1);
 	lv_style_set_text_color(&common_style, lv_color_black()); // Black text
 	lv_style_set_text_font(&common_style,
@@ -259,7 +259,7 @@ void widget_panel_create(lv_obj_t *parent) {
 			panel_data_t *fpd = _lookup_panel_data(i);
 			lv_label_set_text(ui_Label[i], fpd ? fpd->label : "---");
 		}
-		lv_obj_set_style_text_color(ui_Label[i], THEME_COLOR_TEXT_PRIMARY,
+		lv_obj_set_style_text_color(ui_Label[i], WIDGET_COLOR_TEXT_PRIMARY,
 									LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_text_opa(ui_Label[i], 255,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -280,7 +280,7 @@ void widget_panel_create(lv_obj_t *parent) {
 		 * layout manager repositions ui_Box.                             */
 		ui_Value[i] = lv_label_create(ui_Box[i]);
 		lv_label_set_text(ui_Value[i], "--");
-		lv_obj_set_style_text_color(ui_Value[i], THEME_COLOR_TEXT_PRIMARY,
+		lv_obj_set_style_text_color(ui_Value[i], WIDGET_COLOR_TEXT_PRIMARY,
 									LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_text_opa(ui_Value[i], 255,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -301,7 +301,7 @@ void widget_panel_create(lv_obj_t *parent) {
 			panel_data_t *fpd2 = _lookup_panel_data(i);
 			const char *ct = (fpd2 && fpd2->custom_text[0]) ? fpd2->custom_text : "";
 			lv_label_set_text(ui_CustomText[i], ct);
-			lv_obj_set_style_text_color(ui_CustomText[i], THEME_COLOR_TEXT_MUTED,
+			lv_obj_set_style_text_color(ui_CustomText[i], WIDGET_COLOR_TEXT_MUTED,
 										LV_PART_MAIN | LV_STATE_DEFAULT);
 			lv_obj_set_style_text_opa(ui_CustomText[i], 255,
 									  LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -580,7 +580,7 @@ static void _panel_on_signal(float value, bool is_stale, void *user_data) {
 	if (menu_active && state_changed && menu_panel_boxes[slot] &&
 		lv_obj_is_valid(menu_panel_boxes[slot])) {
 		lv_obj_set_style_border_color(menu_panel_boxes[slot],
-			apply_panel ? warn_color : THEME_COLOR_PANEL,
+			apply_panel ? warn_color : WIDGET_COLOR_PANEL,
 			LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
 
@@ -765,7 +765,7 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 	/* Custom unit text */
 	lv_obj_t *ctxt = lv_label_create(box);
 	lv_label_set_text(ctxt, pd->custom_text);
-	lv_obj_set_style_text_color(ctxt, THEME_COLOR_TEXT_MUTED,
+	lv_obj_set_style_text_color(ctxt, WIDGET_COLOR_TEXT_MUTED,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(ctxt, 255,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -787,7 +787,7 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 	 * setting from the config modal. */
 	lv_obj_t *pk = lv_label_create(box);
 	lv_label_set_text(pk, "");
-	lv_obj_set_style_text_color(pk, THEME_COLOR_TEXT_MUTED,
+	lv_obj_set_style_text_color(pk, WIDGET_COLOR_TEXT_MUTED,
 	                             LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(pk, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
 	const lv_font_t *pk_font = widget_resolve_font(pd->peak_font);
@@ -915,15 +915,15 @@ static void _panel_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "border_radius", pd->border_radius);
 	if (pd->border_width != 3)
 		cJSON_AddNumberToObject(cfg, "border_width", pd->border_width);
-	if (pd->border_color.full != THEME_COLOR_PANEL.full)
+	if (pd->border_color.full != WIDGET_COLOR_PANEL.full)
 		cJSON_AddNumberToObject(cfg, "border_color", (int)pd->border_color.full);
-	if (pd->bg_color.full != THEME_COLOR_BG.full)
+	if (pd->bg_color.full != WIDGET_COLOR_BG.full)
 		cJSON_AddNumberToObject(cfg, "bg_color", (int)pd->bg_color.full);
 	if (pd->bg_opa != 255)
 		cJSON_AddNumberToObject(cfg, "bg_opa", pd->bg_opa);
-	if (pd->label_color.full != THEME_COLOR_TEXT_PRIMARY.full)
+	if (pd->label_color.full != WIDGET_COLOR_TEXT_PRIMARY.full)
 		cJSON_AddNumberToObject(cfg, "label_color", (int)pd->label_color.full);
-	if (pd->value_color.full != THEME_COLOR_TEXT_PRIMARY.full)
+	if (pd->value_color.full != WIDGET_COLOR_TEXT_PRIMARY.full)
 		cJSON_AddNumberToObject(cfg, "value_color", (int)pd->value_color.full);
 	if (pd->label_x_offset != 0)
 		cJSON_AddNumberToObject(cfg, "label_x_offset", pd->label_x_offset);
@@ -1625,11 +1625,11 @@ widget_t *widget_panel_create_instance(uint8_t slot) {
 	snprintf(pd->label, sizeof(pd->label), "Panel %u", pd->slot + 1);
 	pd->border_radius = 7;
 	pd->border_width = 3;
-	pd->border_color = THEME_COLOR_PANEL;
-	pd->bg_color = THEME_COLOR_BG;
+	pd->border_color = WIDGET_COLOR_PANEL;
+	pd->bg_color = WIDGET_COLOR_BG;
 	pd->bg_opa = 255;
-	pd->label_color = THEME_COLOR_TEXT_PRIMARY;
-	pd->value_color = THEME_COLOR_TEXT_PRIMARY;
+	pd->label_color = WIDGET_COLOR_TEXT_PRIMARY;
+	pd->value_color = WIDGET_COLOR_TEXT_PRIMARY;
 	pd->label_y_offset = -28;
 	pd->value_y_offset = 9;
 	pd->text_align = 1;   /* center (back-compat default) */

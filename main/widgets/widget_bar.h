@@ -77,14 +77,14 @@ typedef struct {
 	char     label_font[32];
 	char     value_font[32];
 	/* ── Appearance overrides ── */
-	lv_color_t bar_bg_color;         /* default: THEME_COLOR_PANEL */
+	lv_color_t bar_bg_color;         /* default: WIDGET_COLOR_PANEL */
 	uint8_t    bar_bg_opa;           /* track opacity 0-255, default: 255 */
 	uint8_t    bar_radius;           /* default: 5 */
 	uint8_t    bar_border_width;     /* default: 2 */
-	lv_color_t bar_border_color;     /* default: THEME_COLOR_PANEL */
+	lv_color_t bar_border_color;     /* default: WIDGET_COLOR_PANEL */
 	uint8_t    indicator_radius;     /* default: 5 */
-	lv_color_t label_color;          /* default: THEME_COLOR_TEXT_PRIMARY */
-	lv_color_t value_color;          /* default: THEME_COLOR_TEXT_PRIMARY */
+	lv_color_t label_color;          /* default: WIDGET_COLOR_TEXT_PRIMARY */
+	lv_color_t value_color;          /* default: WIDGET_COLOR_TEXT_PRIMARY */
 	/* ── Tick marks (optional) ──
 	 * Small rectangles overlaid as siblings of the bar, evenly spaced across
 	 * the bar width. tick_side: 0=Top, 1=Bottom, 2=Both. Default off so
@@ -94,7 +94,7 @@ typedef struct {
 	uint8_t    tick_count;           /* default: 5  — ticks evenly across width */
 	uint8_t    tick_length;          /* default: 6  — tick length in px */
 	uint8_t    tick_width;           /* default: 2  — tick thickness in px */
-	lv_color_t tick_color;           /* default: THEME_COLOR_TEXT_PRIMARY (0xE8E8E8) */
+	lv_color_t tick_color;           /* default: WIDGET_COLOR_TEXT_PRIMARY (0xE8E8E8) */
 	uint8_t    tick_side;            /* 0=Top,1=Bottom,2=Both, default: 2 */
 	/* ── Image-based bar (optional) ── */
 	/* Anchor-based non-linear scale. Maps a single DATA value to a specific

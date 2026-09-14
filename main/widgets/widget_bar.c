@@ -402,11 +402,11 @@ void widget_bar_create(lv_obj_t *parent) {
 	lv_obj_set_y(ui_Bar_1, 209);
 	lv_obj_set_align(ui_Bar_1, LV_ALIGN_CENTER);
 	lv_obj_set_style_radius(ui_Bar_1, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(ui_Bar_1, THEME_COLOR_PANEL,
+	lv_obj_set_style_bg_color(ui_Bar_1, WIDGET_COLOR_PANEL,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(ui_Bar_1, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(ui_Bar_1, 2, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_border_color(ui_Bar_1, THEME_COLOR_PANEL,
+	lv_obj_set_style_border_color(ui_Bar_1, WIDGET_COLOR_PANEL,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_pad_all(ui_Bar_1, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_radius(ui_Bar_1, 5, LV_PART_INDICATOR | LV_STATE_DEFAULT);
@@ -420,7 +420,7 @@ void widget_bar_create(lv_obj_t *parent) {
 	lv_obj_set_y(ui_Bar_1_Label, 181);
 	lv_obj_set_align(ui_Bar_1_Label, LV_ALIGN_CENTER);
 	lv_label_set_text(ui_Bar_1_Label, (bd1 && bd1->label[0]) ? bd1->label : "BAR1");
-	lv_obj_set_style_text_color(ui_Bar_1_Label, THEME_COLOR_TEXT_PRIMARY,
+	lv_obj_set_style_text_color(ui_Bar_1_Label, WIDGET_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_font(ui_Bar_1_Label, THEME_FONT_DASH_LABEL,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -432,7 +432,7 @@ void widget_bar_create(lv_obj_t *parent) {
 	lv_obj_set_x(ui_Bar_1_Value, -140);
 	lv_obj_set_y(ui_Bar_1_Value, 181);
 	lv_label_set_text(ui_Bar_1_Value, "--");
-	lv_obj_set_style_text_color(ui_Bar_1_Value, THEME_COLOR_TEXT_PRIMARY,
+	lv_obj_set_style_text_color(ui_Bar_1_Value, WIDGET_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_font(ui_Bar_1_Value, THEME_FONT_BODY,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -455,11 +455,11 @@ void widget_bar_create(lv_obj_t *parent) {
 	lv_obj_set_y(ui_Bar_2, 209);
 	lv_obj_set_align(ui_Bar_2, LV_ALIGN_CENTER);
 	lv_obj_set_style_radius(ui_Bar_2, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(ui_Bar_2, THEME_COLOR_PANEL,
+	lv_obj_set_style_bg_color(ui_Bar_2, WIDGET_COLOR_PANEL,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(ui_Bar_2, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(ui_Bar_2, 2, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_border_color(ui_Bar_2, THEME_COLOR_PANEL,
+	lv_obj_set_style_border_color(ui_Bar_2, WIDGET_COLOR_PANEL,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_pad_all(ui_Bar_2, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_radius(ui_Bar_2, 5, LV_PART_INDICATOR | LV_STATE_DEFAULT);
@@ -473,7 +473,7 @@ void widget_bar_create(lv_obj_t *parent) {
 	lv_obj_set_y(ui_Bar_2_Label, 181);
 	lv_obj_set_align(ui_Bar_2_Label, LV_ALIGN_CENTER);
 	lv_label_set_text(ui_Bar_2_Label, (bd2 && bd2->label[0]) ? bd2->label : "BAR2");
-	lv_obj_set_style_text_color(ui_Bar_2_Label, THEME_COLOR_TEXT_PRIMARY,
+	lv_obj_set_style_text_color(ui_Bar_2_Label, WIDGET_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_font(ui_Bar_2_Label, THEME_FONT_DASH_LABEL,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -485,7 +485,7 @@ void widget_bar_create(lv_obj_t *parent) {
 	lv_obj_set_x(ui_Bar_2_Value, 340);
 	lv_obj_set_y(ui_Bar_2_Value, 181);
 	lv_label_set_text(ui_Bar_2_Value, "--");
-	lv_obj_set_style_text_color(ui_Bar_2_Value, THEME_COLOR_TEXT_PRIMARY,
+	lv_obj_set_style_text_color(ui_Bar_2_Value, WIDGET_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_font(ui_Bar_2_Value, THEME_FONT_BODY,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -1261,7 +1261,7 @@ static void _bar_to_json(widget_t *w, cJSON *out) {
 		if (bd->channel_id[0] != '\0')
 			cJSON_AddStringToObject(cfg, "channel", bd->channel_id);
 		/* Appearance overrides — only serialize non-default values */
-		if (bd->bar_bg_color.full != THEME_COLOR_PANEL.full)
+		if (bd->bar_bg_color.full != WIDGET_COLOR_PANEL.full)
 			cJSON_AddNumberToObject(cfg, "bar_bg_color", (int)bd->bar_bg_color.full);
 		if (bd->bar_bg_opa != 255)
 			cJSON_AddNumberToObject(cfg, "bar_bg_opa", bd->bar_bg_opa);
@@ -1269,13 +1269,13 @@ static void _bar_to_json(widget_t *w, cJSON *out) {
 			cJSON_AddNumberToObject(cfg, "bar_radius", bd->bar_radius);
 		if (bd->bar_border_width != 2)
 			cJSON_AddNumberToObject(cfg, "bar_border_width", bd->bar_border_width);
-		if (bd->bar_border_color.full != THEME_COLOR_PANEL.full)
+		if (bd->bar_border_color.full != WIDGET_COLOR_PANEL.full)
 			cJSON_AddNumberToObject(cfg, "bar_border_color", (int)bd->bar_border_color.full);
 		if (bd->indicator_radius != 5)
 			cJSON_AddNumberToObject(cfg, "indicator_radius", bd->indicator_radius);
-		if (bd->label_color.full != THEME_COLOR_TEXT_PRIMARY.full)
+		if (bd->label_color.full != WIDGET_COLOR_TEXT_PRIMARY.full)
 			cJSON_AddNumberToObject(cfg, "label_color", (int)bd->label_color.full);
-		if (bd->value_color.full != THEME_COLOR_TEXT_PRIMARY.full)
+		if (bd->value_color.full != WIDGET_COLOR_TEXT_PRIMARY.full)
 			cJSON_AddNumberToObject(cfg, "value_color", (int)bd->value_color.full);
 		/* Tick marks — defaults-only. Defaults: show_ticks=false, tick_count=5,
 		 * tick_length=6, tick_width=2, tick_color=TEXT_PRIMARY, tick_side=2. */
@@ -1287,7 +1287,7 @@ static void _bar_to_json(widget_t *w, cJSON *out) {
 			cJSON_AddNumberToObject(cfg, "tick_length", bd->tick_length);
 		if (bd->tick_width != 2)
 			cJSON_AddNumberToObject(cfg, "tick_width", bd->tick_width);
-		if (bd->tick_color.full != THEME_COLOR_TEXT_PRIMARY.full)
+		if (bd->tick_color.full != WIDGET_COLOR_TEXT_PRIMARY.full)
 			cJSON_AddNumberToObject(cfg, "tick_color", (int)bd->tick_color.full);
 		if (bd->tick_side != 2)
 			cJSON_AddNumberToObject(cfg, "tick_side", bd->tick_side);
@@ -2110,14 +2110,14 @@ widget_t *widget_bar_create_instance(uint8_t slot) {
 	/* grad_stops zero-initialised by calloc — count=0 means no gradient,
 	 * render path falls back to the solid bar_in_range_color. */
 	bd->signal_index = -1;
-	bd->bar_bg_color = THEME_COLOR_PANEL;
+	bd->bar_bg_color = WIDGET_COLOR_PANEL;
 	bd->bar_bg_opa = 255;
 	bd->bar_radius = 5;
 	bd->bar_border_width = 2;
-	bd->bar_border_color = THEME_COLOR_PANEL;
+	bd->bar_border_color = WIDGET_COLOR_PANEL;
 	bd->indicator_radius = 5;
-	bd->label_color = THEME_COLOR_TEXT_PRIMARY;
-	bd->value_color = THEME_COLOR_TEXT_PRIMARY;
+	bd->label_color = WIDGET_COLOR_TEXT_PRIMARY;
+	bd->value_color = WIDGET_COLOR_TEXT_PRIMARY;
 	bd->show_bar_label = true;        /* show the text label above the bar by default */
 	bd->fill_edge_color = lv_color_hex(0xFFFFFF);  /* image-fill leading-edge highlight */
 	bd->fill_edge_width = 0;          /* 0 = off (no leading-edge line) */
@@ -2128,7 +2128,7 @@ widget_t *widget_bar_create_instance(uint8_t slot) {
 	bd->tick_count  = 5;
 	bd->tick_length = 6;
 	bd->tick_width  = 2;
-	bd->tick_color  = THEME_COLOR_TEXT_PRIMARY;   /* 0xE8E8E8 */
+	bd->tick_color  = WIDGET_COLOR_TEXT_PRIMARY;   /* 0xE8E8E8 */
 	bd->tick_side   = 2;                            /* Both */
 	bd->smooth.smoothing_ms = 20;   /* default: gentle 20 ms glide (snappy, no lag) */
 

@@ -17,6 +17,10 @@
 #include "ui/dashboard.h"
 #include "ui/menu/edit_mode.h"
 #include "ui/menu/menu_screen.h"
+#include "ui/menu/main_menu.h"
+#include "ui/kit/ui_kit.h"
+#include "storage/data_logger.h"
+#include "system/rdm_lv_async.h"
 #include "ui/screens/splash_screen.h"
 #include "ui/screens/first_run_wizard.h"
 #include "ui/theme.h"
@@ -55,8 +59,6 @@ int rpm_redline_value = 6000;
 uint8_t current_value_id;
 
 /* ── Coordinator-local state ────────────────────────────────────────────── */
-static lv_obj_t *ui_Setup_Menu_Screen = NULL;
-
 /* Cached count of switchable layouts. Computed ONCE per screen build (in
  * ui_Screen3_screen_init, i.e. on every layout reload) — NOT on every tap.
  * layout_switcher_count() reads NVS + stat()s each layout file on LittleFS;
@@ -64,6 +66,7 @@ static lv_obj_t *ui_Setup_Menu_Screen = NULL;
  * enough to hitch the live gauges (the "glitch on tap"). The reveal now reads
  * this cache instead. */
 static int s_layout_count = 0;
+static int s_layout_index = -1;   /* where the active layout sits in that cycle */
 
 /* How long the chrome (Menu / arrows / Edit pill) stays visible after a
  * background tap. Bumped from 6 s -> 10 s so the user has time to actually
@@ -82,13 +85,57 @@ void keyboard_ready_event_cb(lv_event_t *e) {
 }
 
 
-static void menu_button_hide_timer_cb(lv_timer_t *timer) {
-	if (ui_Menu_Button && lv_obj_is_valid(ui_Menu_Button))
-		lv_obj_add_flag(ui_Menu_Button, LV_OBJ_FLAG_HIDDEN);
-	if (ui_Layout_Prev_Button && lv_obj_is_valid(ui_Layout_Prev_Button))
-		lv_obj_add_flag(ui_Layout_Prev_Button, LV_OBJ_FLAG_HIDDEN);
-	if (ui_Layout_Next_Button && lv_obj_is_valid(ui_Layout_Next_Button))
-		lv_obj_add_flag(ui_Layout_Next_Button, LV_OBJ_FLAG_HIDDEN);
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  The dock (ADR-0075)
+ *  ───────────────────
+ *  One bar along the bottom that a tap on the dashboard brings up for
+ *  CHROME_AUTO_HIDE_MS: switch layout, set brightness, dim, start or stop
+ *  recording, open Setup. It replaced a Menu pill plus two arrow buttons in
+ *  the top corner, which opened a small card with two dropdowns.
+ *
+ *  Opaque on purpose: LVGL stops redrawing at the topmost opaque object, so
+ *  gauges updating underneath don't re-composite through it.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+static lv_obj_t   *s_dock        = NULL;
+static lv_obj_t   *s_dock_name   = NULL;
+static lv_obj_t   *s_dock_pips   = NULL;
+static lv_obj_t   *s_dock_slider = NULL;
+static lv_obj_t   *s_dock_dim    = NULL;
+static lv_obj_t   *s_dock_rec    = NULL;
+static lv_timer_t *s_dock_tick   = NULL;
+
+static void _dock_refresh(void) {
+	if (!s_dock || !lv_obj_is_valid(s_dock)) return;
+	if (s_dock_slider) lv_slider_set_value(s_dock_slider, current_brightness, LV_ANIM_OFF);
+	if (s_dock_dim) uk_btn_set_kind(s_dock_dim, display_is_dimmed() ? UK_BTN_ON : UK_BTN_NEUTRAL);
+	if (s_dock_rec) {
+		if (data_logger_is_active()) {
+			uint32_t s = data_logger_get_elapsed_ms() / 1000;
+			char t[12];
+			if (s >= 3600) snprintf(t, sizeof(t), "%u:%02u", (unsigned)(s / 3600), (unsigned)(s / 60 % 60));
+			else snprintf(t, sizeof(t), "%02u:%02u", (unsigned)(s / 60), (unsigned)(s % 60));
+			uk_btn_set_text(s_dock_rec, t);
+			uk_btn_set_kind(s_dock_rec, UK_BTN_ON);
+		} else {
+			uk_btn_set_text(s_dock_rec, "Rec");
+			uk_btn_set_kind(s_dock_rec, UK_BTN_NEUTRAL);
+		}
+	}
+}
+
+static void _dock_tick_cb(lv_timer_t *t) {
+	(void)t;
+	_dock_refresh();
+}
+
+static void chrome_hide(void) {
+	if (s_dock && lv_obj_is_valid(s_dock))
+		lv_obj_add_flag(s_dock, LV_OBJ_FLAG_HIDDEN);
+	if (s_dock_tick) {
+		lv_timer_del(s_dock_tick);
+		s_dock_tick = NULL;
+	}
 	/* Hide the Edit Mode pill in lockstep — no-op when armed (pinned). */
 	edit_mode_hide_pill();
 	if (menu_button_hide_timer) {
@@ -97,14 +144,21 @@ static void menu_button_hide_timer_cb(lv_timer_t *timer) {
 	}
 }
 
-/* Reveal all chrome (Menu / layout arrows / Edit pill) together and (re)arm
- * the auto-hide timer. Deferred via lv_async_call from the tap handler so it
- * runs after touch-event dispatch, not mid-event. Idempotent: a re-tap while
- * the chrome is already up just resets the hide countdown.
- *
- * (This used to be a 4-step cascade — one object per refresh tick — to dodge a
- * multi-rect RGB-LCD tear. With the vsync-gated flush now in place that
- * workaround is unnecessary, and the stagger itself read as a glitch.) */
+static void menu_button_hide_timer_cb(lv_timer_t *timer) {
+	(void)timer;
+	chrome_hide();
+}
+
+/* (Re)start the auto-hide countdown. Every touch on the dock calls this, so
+ * it never vanishes under a finger that is still using it. */
+static void _chrome_rearm(void) {
+	if (menu_button_hide_timer)
+		lv_timer_del(menu_button_hide_timer);
+	menu_button_hide_timer =
+		lv_timer_create(menu_button_hide_timer_cb, CHROME_AUTO_HIDE_MS, NULL);
+	lv_timer_set_repeat_count(menu_button_hide_timer, 1);
+}
+
 /* Fade a chrome object in from transparent instead of a hard pop. The dash's
  * flush isn't vsync-synced, so a sharp reveal over the live gauges shows a
  * tear stripe; spreading the repaint across a ~150 ms fade hides it. No-op if
@@ -117,24 +171,19 @@ static void _chrome_fade_in(lv_obj_t *o) {
 	lv_obj_fade_in(o, 150, 0);
 }
 
+/* Reveal the dock and (re)arm the auto-hide timer. Deferred via lv_async_call
+ * from the tap handler so it runs after touch-event dispatch, not mid-event.
+ * Idempotent: a re-tap while it is up just resets the countdown. */
 static void _chrome_show_cb(void *arg) {
 	(void)arg;
 	if (edit_mode_is_armed()) return;
 
-	_chrome_fade_in(ui_Menu_Button);
-
-	if (s_layout_count >= 2) {   /* cached — no filesystem on the tap path */
-		_chrome_fade_in(ui_Layout_Next_Button);
-		_chrome_fade_in(ui_Layout_Prev_Button);
-	}
+	_dock_refresh();
+	_chrome_fade_in(s_dock);
+	if (!s_dock_tick) s_dock_tick = lv_timer_create(_dock_tick_cb, 1000, NULL);
 
 	edit_mode_show_pill();
-
-	if (menu_button_hide_timer)
-		lv_timer_del(menu_button_hide_timer);
-	menu_button_hide_timer =
-		lv_timer_create(menu_button_hide_timer_cb, CHROME_AUTO_HIDE_MS, NULL);
-	lv_timer_set_repeat_count(menu_button_hide_timer, 1);
+	_chrome_rearm();
 }
 
 /* Dashboard-background tap handler.
@@ -162,34 +211,6 @@ void screen3_touch_event_cb(lv_event_t *e) {
 	lv_async_call(_chrome_show_cb, NULL);
 }
 
-static void setup_menu_close_btn_cb(lv_event_t *e) {
-	if (lv_event_get_code(e) != LV_EVENT_CLICKED)
-		return;
-	lv_obj_t *scr = ui_Setup_Menu_Screen;
-	if (ui_Screen3 && lv_obj_is_valid(ui_Screen3)) {
-		lv_scr_load(ui_Screen3);
-		if (scr && lv_obj_is_valid(scr)) {
-			rdm_obj_del_async(scr);
-			ui_Setup_Menu_Screen = NULL;
-		}
-	}
-}
-
-static void menu_device_settings_cb(lv_event_t *e) {
-	if (lv_event_get_code(e) != LV_EVENT_CLICKED)
-		return;
-	/* Close menu screen, then open device settings */
-	lv_obj_t *scr = ui_Setup_Menu_Screen;
-	device_settings_with_return_screen(ui_Screen3);
-	if (scr && lv_obj_is_valid(scr)) {
-		/* Canonical crash-safe deferred delete: raw lv_obj_del_async can't be
-		 * cancelled, so if anything else frees this screen first (layout reload,
-		 * wizard teardown) the queued delete double-frees. Mirrors line 171. */
-		rdm_obj_del_async(scr);
-		ui_Setup_Menu_Screen = NULL;
-	}
-}
-
 /* ── Deferred layout reload (called via lv_async_call after menu closes) ── */
 
 /* True while a layout cross-fade is in flight. Blocks a second switch from
@@ -202,9 +223,17 @@ static void _layout_switch_done_cb(lv_timer_t *t) {
 	lv_timer_del(t);
 }
 
+/* Set when a layout is picked from a menu: the dashboard it replaces is not the
+ * active screen then, so the load animation's auto-delete won't free it. */
+static lv_obj_t *s_stale_dash = NULL;
+
 static void _deferred_layout_reload(void *arg) {
 	(void)arg;
+	lv_obj_t *stale = s_stale_dash;
+	s_stale_dash = NULL;
 	ui_Screen3_screen_init();
+	if (stale && stale != ui_Screen3 && stale != lv_scr_act() && lv_obj_is_valid(stale))
+		rdm_obj_del_async(stale);
 	if (ui_Screen3) {
 		/* Cross-fade to the new layout instead of an instant swap. lv_scr_load
 		 * renders the whole new screen in ONE flush, which tears hard on the
@@ -216,70 +245,6 @@ static void _deferred_layout_reload(void *arg) {
 	}
 	lv_timer_t *done = lv_timer_create(_layout_switch_done_cb, 320, NULL);
 	lv_timer_set_repeat_count(done, 1);
-}
-
-/* ── Layout dropdown change callback ── */
-static void _menu_layout_changed_cb(lv_event_t *e) {
-	if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
-	lv_obj_t *dd = lv_event_get_target(e);
-	char name[LAYOUT_MAX_NAME];
-	lv_dropdown_get_selected_str(dd, name, sizeof(name));
-
-	layout_manager_set_active(name);
-	ui_Setup_Menu_Screen = NULL;
-
-	/* Defer full screen reload — _deferred_layout_reload will delete
-	 * the current screen (menu) and create a fresh dashboard. */
-	lv_async_call(_deferred_layout_reload, NULL);
-}
-
-/* ── Toast label (auto-delete after delay) ── */
-static void _toast_timer_cb(lv_timer_t *t) {
-	lv_obj_t *lbl = (lv_obj_t *)t->user_data;
-	if (lbl && lv_obj_is_valid(lbl))
-		lv_obj_del(lbl);
-}
-
-/* ── Splash dropdown change callback ── */
-static void _menu_splash_changed_cb(lv_event_t *e) {
-	if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
-	lv_obj_t *dd = lv_event_get_target(e);
-
-	const char *msg;
-	if (lv_dropdown_get_selected(dd) == 0) {
-		/* Option 0 = "Disable Splash" — boot straight to the dashboard. */
-		config_store_save_splash_enabled(false);
-		msg = LV_SYMBOL_OK " Splash disabled";
-	} else {
-		char name[LAYOUT_MAX_NAME];
-		lv_dropdown_get_selected_str(dd, name, sizeof(name));
-		config_store_save_splash_enabled(true);
-		layout_manager_set_active_splash(name);
-		msg = LV_SYMBOL_OK " Splash updated";
-	}
-
-	/* Show brief toast confirmation */
-	lv_obj_t *scr = lv_scr_act();
-	lv_obj_t *toast = lv_label_create(scr);
-	lv_label_set_text(toast, msg);
-	lv_obj_set_style_text_color(toast, THEME_COLOR_ACCENT_TEAL, 0);
-	lv_obj_set_style_text_font(toast, THEME_FONT_SMALL, 0);
-	lv_obj_align(toast, LV_ALIGN_BOTTOM_MID, 0, -12);
-	lv_timer_t *tt = lv_timer_create(_toast_timer_cb, 2000, toast);
-	lv_timer_set_repeat_count(tt, 1);
-}
-
-/** Style a dropdown to match the device-settings dark input look. */
-static void _style_dropdown(lv_obj_t *dd) {
-	lv_obj_set_style_bg_color(dd, THEME_COLOR_INPUT_BG, 0);
-	lv_obj_set_style_bg_opa(dd, LV_OPA_COVER, 0);
-	lv_obj_set_style_text_color(dd, THEME_COLOR_TEXT_PRIMARY, 0);
-	lv_obj_set_style_text_font(dd, THEME_FONT_SMALL, 0);
-	lv_obj_set_style_border_color(dd, THEME_COLOR_BORDER, 0);
-	lv_obj_set_style_border_width(dd, 1, 0);
-	lv_obj_set_style_radius(dd, THEME_RADIUS_NORMAL, 0);
-	lv_obj_set_style_pad_all(dd, 4, 0);
-	lv_obj_set_style_text_color(dd, THEME_COLOR_TEXT_MUTED, LV_PART_INDICATOR);
 }
 
 /* Arrow click → resolve next/prev pinned layout, swap to it. Uses the
@@ -301,247 +266,186 @@ static void _layout_arrow_step(int direction) {
 }
 static void _layout_prev_clicked_cb(lv_event_t *e) {
 	if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+	_chrome_rearm();
 	_layout_arrow_step(-1);
 }
 static void _layout_next_clicked_cb(lv_event_t *e) {
 	if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+	_chrome_rearm();
 	_layout_arrow_step(+1);
 }
 
-static void menu_button_clicked_cb(lv_event_t *e) {
-	if (lv_event_get_code(e) != LV_EVENT_CLICKED)
-		return;
-	if (ui_Menu_Button && lv_obj_is_valid(ui_Menu_Button))
-		lv_obj_add_flag(ui_Menu_Button, LV_OBJ_FLAG_HIDDEN);
-	/* Tear down the switcher arrows alongside so they don't linger when
-	 * the user enters the menu. */
-	if (ui_Layout_Prev_Button && lv_obj_is_valid(ui_Layout_Prev_Button))
-		lv_obj_add_flag(ui_Layout_Prev_Button, LV_OBJ_FLAG_HIDDEN);
-	if (ui_Layout_Next_Button && lv_obj_is_valid(ui_Layout_Next_Button))
-		lv_obj_add_flag(ui_Layout_Next_Button, LV_OBJ_FLAG_HIDDEN);
-	/* Hide the Edit Mode pill in lockstep — the pills appear together on
-	 * a dashboard short-tap and should disappear together when the user
-	 * commits to opening the menu. Otherwise the orange/grey pill remains
-	 * floating after returning from the menu. No-op in armed mode (the
-	 * Menu button is hidden anyway then, so we never get here). */
-	edit_mode_hide_pill();
-	if (menu_button_hide_timer) {
-		lv_timer_del(menu_button_hide_timer);
-		menu_button_hide_timer = NULL;
+static void _dock_setup_cb(lv_event_t *e) {
+	(void)e;
+	chrome_hide();
+	main_menu_open(ui_Screen3);
+}
+
+static void _dock_dim_cb(lv_event_t *e) {
+	(void)e;
+	display_toggle_dim();
+	_dock_refresh();
+	_chrome_rearm();
+}
+
+static void _dock_rec_cb(lv_event_t *e) {
+	(void)e;
+	if (data_logger_is_active()) data_logger_stop();
+	else data_logger_start();
+	_dock_refresh();
+	_chrome_rearm();
+}
+
+static void _dock_slider_cb(lv_event_t *e) {
+	lv_obj_t *s = lv_event_get_target(e);
+	set_display_brightness(lv_slider_get_value(s));
+	_chrome_rearm();
+}
+
+static void _dock_deleted_cb(lv_event_t *e) {
+	if (lv_event_get_target(e) != s_dock) return;
+	if (s_dock_tick) {
+		lv_timer_del(s_dock_tick);
+		s_dock_tick = NULL;
 	}
+	s_dock = s_dock_name = s_dock_pips = s_dock_slider = s_dock_dim = s_dock_rec = NULL;
+}
 
-	/* ── Full-screen backdrop ── */
-	ui_Setup_Menu_Screen = lv_obj_create(NULL);
-	lv_obj_clear_flag(ui_Setup_Menu_Screen, LV_OBJ_FLAG_SCROLLABLE);
-	lv_obj_set_style_bg_color(ui_Setup_Menu_Screen, THEME_COLOR_BG, 0);
-	lv_obj_set_style_bg_opa(ui_Setup_Menu_Screen, LV_OPA_COVER, 0);
+/* A dock segment: the rounded card-coloured group the controls sit in. */
+static lv_obj_t *_dock_seg(lv_obj_t *dock, lv_coord_t grow) {
+	lv_obj_t *seg = lv_obj_create(dock);
+	lv_obj_remove_style_all(seg);
+	lv_obj_set_style_bg_color(seg, THEME_COLOR_PANEL, 0);
+	lv_obj_set_style_bg_opa(seg, LV_OPA_COVER, 0);
+	lv_obj_set_style_radius(seg, 10, 0);
+	lv_obj_set_height(seg, lv_pct(100));
+	lv_obj_set_flex_grow(seg, grow);
+	lv_obj_set_flex_flow(seg, LV_FLEX_FLOW_ROW);
+	lv_obj_set_flex_align(seg, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+	lv_obj_clear_flag(seg, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+	return seg;
+}
 
-	/* ── Main container (matches device_settings style) ── */
-	lv_obj_t *container = lv_obj_create(ui_Setup_Menu_Screen);
-	lv_obj_set_size(container, 340, 380);
-	lv_obj_align(container, LV_ALIGN_CENTER, 0, 0);
-	lv_obj_set_style_bg_color(container, THEME_COLOR_SURFACE, 0);
-	lv_obj_set_style_bg_opa(container, LV_OPA_COVER, 0);
-	lv_obj_set_style_border_color(container, THEME_COLOR_BORDER, 0);
-	lv_obj_set_style_border_width(container, 1, 0);
-	lv_obj_set_style_radius(container, THEME_RADIUS_NORMAL, 0);
-	lv_obj_set_style_pad_all(container, 0, 0);
-	lv_obj_clear_flag(container, LV_OBJ_FLAG_SCROLLABLE);
+/* An icon-over-label dock button. */
+static lv_obj_t *_dock_btn(lv_obj_t *dock, uk_icon_t icon, const char *text, lv_event_cb_t cb) {
+	lv_obj_t *b = uk_btn(dock, icon, text, UK_BTN_NEUTRAL, cb, NULL);
+	lv_obj_set_size(b, 76, lv_pct(100));
+	lv_obj_set_flex_flow(b, LV_FLEX_FLOW_COLUMN);
+	lv_obj_set_style_pad_hor(b, 0, 0);
+	lv_obj_set_style_pad_row(b, 5, 0);
+	lv_obj_set_style_radius(b, 10, 0);
+	lv_obj_t *l = uk_btn_label(b);
+	lv_obj_set_style_text_font(l, uk_font(UK_FONT_SMALL), 0);
+	return b;
+}
 
-	/* ── Header bar ── */
-	lv_obj_t *header = lv_obj_create(container);
-	lv_obj_set_size(header, lv_pct(100), 44);
-	lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 0);
-	lv_obj_set_style_bg_color(header, THEME_COLOR_SURFACE, 0);
-	lv_obj_set_style_bg_opa(header, LV_OPA_COVER, 0);
-	lv_obj_set_style_radius(header, 0, 0);
-	lv_obj_set_style_border_width(header, 1, 0);
-	lv_obj_set_style_border_color(header, THEME_COLOR_BORDER, 0);
-	lv_obj_set_style_border_side(header, LV_BORDER_SIDE_BOTTOM, 0);
-	lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
+static void _dock_create(lv_obj_t *scr) {
+	uk_init();
+	s_dock = lv_obj_create(scr);
+	lv_obj_remove_style_all(s_dock);
+	lv_obj_set_size(s_dock, LV_HOR_RES - 20, 84);
+	lv_obj_align(s_dock, LV_ALIGN_BOTTOM_MID, 0, -10);
+	lv_obj_set_style_bg_color(s_dock, THEME_COLOR_INPUT_BG, 0);
+	lv_obj_set_style_bg_opa(s_dock, LV_OPA_COVER, 0);
+	lv_obj_set_style_border_color(s_dock, THEME_COLOR_BORDER_MED, 0);
+	lv_obj_set_style_border_width(s_dock, 1, 0);
+	lv_obj_set_style_radius(s_dock, 16, 0);
+	lv_obj_set_style_pad_all(s_dock, 8, 0);
+	lv_obj_set_style_pad_column(s_dock, 8, 0);
+	lv_obj_set_flex_flow(s_dock, LV_FLEX_FLOW_ROW);
+	lv_obj_clear_flag(s_dock, LV_OBJ_FLAG_SCROLLABLE);
+	/* Clickable so a tap on the dock's own padding doesn't fall through to
+	 * the dashboard (and re-trigger the reveal). */
+	lv_obj_add_flag(s_dock, LV_OBJ_FLAG_CLICKABLE);
+	lv_obj_add_flag(s_dock, LV_OBJ_FLAG_HIDDEN);
+	lv_obj_add_event_cb(s_dock, _dock_deleted_cb, LV_EVENT_DELETE, NULL);
 
-	lv_obj_t *title = lv_label_create(header);
-	lv_label_set_text(title, "Menu");
-	lv_obj_align(title, LV_ALIGN_LEFT_MID, 15, 0);
-	lv_obj_set_style_text_font(title, THEME_FONT_MEDIUM, 0);
-	lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
+	/* ── Layout: ◀ NAME ▶ with a pip per layout in the cycle ── */
+	lv_obj_t *lay = _dock_seg(s_dock, 19);
+	lv_obj_set_style_pad_all(lay, 4, 0);
+	ui_Layout_Prev_Button = uk_btn(lay, UK_ICON_LEFT, NULL, UK_BTN_NEUTRAL, _layout_prev_clicked_cb, NULL);
+	lv_obj_set_size(ui_Layout_Prev_Button, 50, lv_pct(100));
 
-	/* Close button in header */
-	lv_obj_t *close_btn = lv_btn_create(header);
-	lv_obj_set_size(close_btn, 60, 28);
-	lv_obj_align(close_btn, LV_ALIGN_RIGHT_MID, -10, 0);
-	lv_obj_set_style_bg_color(close_btn, THEME_COLOR_SECTION_BG, 0);
-	lv_obj_set_style_bg_opa(close_btn, LV_OPA_80, LV_STATE_PRESSED);
-	lv_obj_set_style_radius(close_btn, THEME_RADIUS_SMALL, 0);
-	lv_obj_set_style_border_width(close_btn, 1, 0);
-	lv_obj_set_style_border_color(close_btn, THEME_COLOR_BORDER, 0);
-	lv_obj_set_style_shadow_width(close_btn, 0, 0);
-	lv_obj_t *close_lbl = lv_label_create(close_btn);
-	lv_label_set_text(close_lbl, "Close");
-	lv_obj_center(close_lbl);
-	lv_obj_set_style_text_font(close_lbl, THEME_FONT_SMALL, 0);
-	lv_obj_set_style_text_color(close_lbl, THEME_COLOR_TEXT_MUTED, 0);
-	lv_obj_add_event_cb(close_btn, setup_menu_close_btn_cb,
-						LV_EVENT_CLICKED, NULL);
+	lv_obj_t *mid = lv_obj_create(lay);
+	lv_obj_remove_style_all(mid);
+	lv_obj_set_height(mid, lv_pct(100));
+	lv_obj_set_flex_grow(mid, 1);
+	lv_obj_set_flex_flow(mid, LV_FLEX_FLOW_COLUMN);
+	lv_obj_set_flex_align(mid, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+	lv_obj_set_style_pad_row(mid, 6, 0);
+	lv_obj_clear_flag(mid, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
-	/* ── Content area ── */
-	lv_obj_t *content = lv_obj_create(container);
-	lv_obj_set_size(content, lv_pct(100), 328);
-	lv_obj_align(content, LV_ALIGN_TOP_MID, 0, 48);
-	lv_obj_set_style_bg_opa(content, 0, 0);
-	lv_obj_set_style_border_width(content, 0, 0);
-	lv_obj_set_style_pad_all(content, 14, 0);
-	lv_obj_set_style_pad_row(content, 8, 0);
-	lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE);
-
-	/* ── Layout section card ── */
-	lv_obj_t *layout_card = lv_obj_create(content);
-	lv_obj_set_size(layout_card, 304, 100);
-	lv_obj_align(layout_card, LV_ALIGN_TOP_MID, 0, 0);
-	lv_obj_set_style_bg_color(layout_card, THEME_COLOR_SECTION_BG, 0);
-	lv_obj_set_style_bg_opa(layout_card, LV_OPA_COVER, 0);
-	lv_obj_set_style_radius(layout_card, THEME_RADIUS_NORMAL, 0);
-	lv_obj_set_style_border_color(layout_card, THEME_COLOR_BORDER, 0);
-	lv_obj_set_style_border_width(layout_card, 1, 0);
-	lv_obj_set_style_pad_all(layout_card, 12, 0);
-	lv_obj_clear_flag(layout_card, LV_OBJ_FLAG_SCROLLABLE);
-
-	lv_obj_t *layout_title = lv_label_create(layout_card);
-	lv_label_set_text(layout_title, "LAYOUT");
-	lv_obj_align(layout_title, LV_ALIGN_TOP_LEFT, 0, 0);
-	lv_obj_set_style_text_font(layout_title, THEME_FONT_TINY, 0);
-	lv_obj_set_style_text_color(layout_title, THEME_COLOR_ACCENT_BLUE, 0);
-	lv_obj_set_style_text_letter_space(layout_title, 1, 0);
-
-	lv_obj_t *layout_sublbl = lv_label_create(layout_card);
-	lv_label_set_text(layout_sublbl, "Active dashboard");
-	lv_obj_align(layout_sublbl, LV_ALIGN_TOP_LEFT, 0, 18);
-	lv_obj_set_style_text_font(layout_sublbl, THEME_FONT_SMALL, 0);
-	lv_obj_set_style_text_color(layout_sublbl, THEME_COLOR_TEXT_MUTED, 0);
-
-	lv_obj_t *layout_dd = lv_dropdown_create(layout_card);
-	lv_obj_set_size(layout_dd, 278, 32);
-	lv_obj_align(layout_dd, LV_ALIGN_TOP_LEFT, 0, 40);
-	_style_dropdown(layout_dd);
-
-	/* Populate layout dropdown */
-	char names[LAYOUT_MAX_COUNT][LAYOUT_MAX_NAME];
-	int count = layout_manager_list(names, LAYOUT_MAX_COUNT);
-	char active[LAYOUT_MAX_NAME];
+	char active[LAYOUT_MAX_NAME] = {0};
 	layout_manager_get_active(active, sizeof(active));
+	s_dock_name = uk_label(mid, active[0] ? active : "Layout", UK_FONT_TITLE, UK_TONE_TEXT);
+	/* DOT truncation needs a fixed width; content-sized labels just overflow
+	 * under the arrow. */
+	lv_obj_set_width(s_dock_name, lv_pct(100));
+	lv_label_set_long_mode(s_dock_name, LV_LABEL_LONG_DOT);
+	lv_obj_set_style_text_align(s_dock_name, LV_TEXT_ALIGN_CENTER, 0);
 
-	char options[640] = "";
-	int sel_idx = 0;
-	int opt_count = 0;
-	size_t pos = 0;
-	for (int i = 0; i < count; i++) {
-		if (names[i][0] == '_') continue;
-		size_t nlen = strlen(names[i]);
-		if (pos + nlen + 2 > sizeof(options)) break;
-		if (opt_count > 0) options[pos++] = '\n';
-		memcpy(&options[pos], names[i], nlen);
-		pos += nlen;
-		options[pos] = '\0';
-		if (strcmp(names[i], active) == 0) sel_idx = opt_count;
-		opt_count++;
+	s_dock_pips = lv_obj_create(mid);
+	lv_obj_remove_style_all(s_dock_pips);
+	lv_obj_set_size(s_dock_pips, LV_SIZE_CONTENT, 6);
+	lv_obj_set_flex_flow(s_dock_pips, LV_FLEX_FLOW_ROW);
+	lv_obj_set_style_pad_column(s_dock_pips, 5, 0);
+	lv_obj_clear_flag(s_dock_pips, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+	for (int i = 0; i < s_layout_count && i < 8; i++) {
+		lv_obj_t *pip = lv_obj_create(s_dock_pips);
+		lv_obj_remove_style_all(pip);
+		bool on = (i == s_layout_index);
+		lv_obj_set_size(pip, on ? 16 : 6, 6);
+		lv_obj_set_style_radius(pip, 3, 0);
+		lv_obj_set_style_bg_opa(pip, LV_OPA_COVER, 0);
+		lv_obj_set_style_bg_color(pip, on ? THEME_COLOR_ACCENT : THEME_COLOR_BTN_GRAY, 0);
 	}
-	lv_dropdown_set_options(layout_dd, options);
-	lv_dropdown_set_selected(layout_dd, sel_idx);
-	lv_obj_add_event_cb(layout_dd, _menu_layout_changed_cb,
-						LV_EVENT_VALUE_CHANGED, NULL);
 
-	/* ── Splash section card ── */
-	lv_obj_t *splash_card = lv_obj_create(content);
-	lv_obj_set_size(splash_card, 304, 100);
-	lv_obj_align(splash_card, LV_ALIGN_TOP_MID, 0, 108);
-	lv_obj_set_style_bg_color(splash_card, THEME_COLOR_SECTION_BG, 0);
-	lv_obj_set_style_bg_opa(splash_card, LV_OPA_COVER, 0);
-	lv_obj_set_style_radius(splash_card, THEME_RADIUS_NORMAL, 0);
-	lv_obj_set_style_border_color(splash_card, THEME_COLOR_BORDER, 0);
-	lv_obj_set_style_border_width(splash_card, 1, 0);
-	lv_obj_set_style_pad_all(splash_card, 12, 0);
-	lv_obj_clear_flag(splash_card, LV_OBJ_FLAG_SCROLLABLE);
-
-	lv_obj_t *splash_title = lv_label_create(splash_card);
-	lv_label_set_text(splash_title, "SPLASH SCREEN");
-	lv_obj_align(splash_title, LV_ALIGN_TOP_LEFT, 0, 0);
-	lv_obj_set_style_text_font(splash_title, THEME_FONT_TINY, 0);
-	lv_obj_set_style_text_color(splash_title, THEME_COLOR_ACCENT_TEAL, 0);
-	lv_obj_set_style_text_letter_space(splash_title, 1, 0);
-
-	lv_obj_t *splash_sublbl = lv_label_create(splash_card);
-	lv_label_set_text(splash_sublbl, "Shown on boot");
-	lv_obj_align(splash_sublbl, LV_ALIGN_TOP_LEFT, 0, 18);
-	lv_obj_set_style_text_font(splash_sublbl, THEME_FONT_SMALL, 0);
-	lv_obj_set_style_text_color(splash_sublbl, THEME_COLOR_TEXT_MUTED, 0);
-
-	lv_obj_t *splash_dd = lv_dropdown_create(splash_card);
-	lv_obj_set_size(splash_dd, 278, 32);
-	lv_obj_align(splash_dd, LV_ALIGN_TOP_LEFT, 0, 40);
-	_style_dropdown(splash_dd);
-
-	/* Populate splash dropdown */
-	char splash_names[LAYOUT_MAX_COUNT][LAYOUT_MAX_NAME];
-	int splash_count = layout_manager_list_splash(splash_names,
-												  LAYOUT_MAX_COUNT);
-	char active_splash[LAYOUT_MAX_NAME];
-	layout_manager_get_active_splash(active_splash, sizeof(active_splash));
-
-	bool splash_on = true;
-	config_store_load_splash_enabled(&splash_on);
-
-	/* Option 0 is always "Disable Splash"; the saved splash layouts follow. */
-	char splash_opts[640] = "Disable Splash";
-	size_t spos = strlen(splash_opts);
-	int splash_sel = 0;            /* default selection = Disable Splash */
-	int splash_opt_count = 1;      /* index 0 taken by Disable Splash     */
-	for (int i = 0; i < splash_count; i++) {
-		size_t slen = strlen(splash_names[i]);
-		if (spos + slen + 2 > sizeof(splash_opts)) break;
-		splash_opts[spos++] = '\n';
-		memcpy(&splash_opts[spos], splash_names[i], slen);
-		spos += slen;
-		splash_opts[spos] = '\0';
-		if (splash_on && strcmp(splash_names[i], active_splash) == 0)
-			splash_sel = splash_opt_count;
-		splash_opt_count++;
+	ui_Layout_Next_Button = uk_btn(lay, UK_ICON_RIGHT, NULL, UK_BTN_NEUTRAL, _layout_next_clicked_cb, NULL);
+	lv_obj_set_size(ui_Layout_Next_Button, 50, lv_pct(100));
+	if (s_layout_count < 2) {
+		/* One layout: nothing to step to. Keep the name, drop the arrows. */
+		lv_obj_add_state(ui_Layout_Prev_Button, LV_STATE_DISABLED);
+		lv_obj_add_state(ui_Layout_Next_Button, LV_STATE_DISABLED);
+		lv_obj_add_flag(s_dock_pips, LV_OBJ_FLAG_HIDDEN);
 	}
-	/* Splash enabled but the active name wasn't in the list → fall back to the
-	 * first real splash rather than leaving "Disable Splash" selected. */
-	if (splash_on && splash_sel == 0 && splash_opt_count > 1)
-		splash_sel = 1;
 
-	lv_dropdown_set_options(splash_dd, splash_opts);
-	lv_dropdown_set_selected(splash_dd, splash_sel);
-	lv_obj_add_event_cb(splash_dd, _menu_splash_changed_cb,
-						LV_EVENT_VALUE_CHANGED, NULL);
+	/* ── Brightness ── */
+	lv_obj_t *bri = _dock_seg(s_dock, 15);
+	lv_obj_set_style_pad_hor(bri, 14, 0);
+	lv_obj_set_style_pad_column(bri, 14, 0);
+	uk_icon(bri, UK_ICON_SUN, UK_ICON_MD, UK_TONE_MUTED);
+	s_dock_slider = lv_slider_create(bri);
+	lv_obj_set_height(s_dock_slider, 6);
+	lv_obj_set_flex_grow(s_dock_slider, 1);
+	lv_slider_set_range(s_dock_slider, 5, 100);
+	uk_style_slider(s_dock_slider);
+	lv_obj_set_ext_click_area(s_dock_slider, 24);
+	lv_obj_add_event_cb(s_dock_slider, _dock_slider_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
-	/* ── Bottom button row ── */
-	lv_obj_t *btn_row = lv_obj_create(content);
-	lv_obj_set_size(btn_row, 304, 48);
-	lv_obj_align(btn_row, LV_ALIGN_TOP_MID, 0, 218);
-	lv_obj_set_style_bg_opa(btn_row, 0, 0);
-	lv_obj_set_style_border_width(btn_row, 0, 0);
-	lv_obj_set_style_pad_all(btn_row, 0, 0);
-	lv_obj_clear_flag(btn_row, LV_OBJ_FLAG_SCROLLABLE);
+	/* ── Dim / Record / Setup ── */
+	s_dock_dim = _dock_btn(s_dock, UK_ICON_MOON, "Dim", _dock_dim_cb);
+	s_dock_rec = _dock_btn(s_dock, UK_ICON_REC, "Rec", _dock_rec_cb);
+	_dock_btn(s_dock, UK_ICON_GEAR, "Setup", _dock_setup_cb);
 
-	/* Device Settings button — blue accent */
-	lv_obj_t *ds = lv_btn_create(btn_row);
-	lv_obj_set_size(ds, 304, 40);
-	lv_obj_align(ds, LV_ALIGN_CENTER, 0, 0);
-	lv_obj_set_style_bg_color(ds, THEME_COLOR_ACCENT_BLUE, 0);
-	lv_obj_set_style_bg_color(ds, THEME_COLOR_ACCENT_BLUE_PRESSED,
-							  LV_STATE_PRESSED);
-	lv_obj_set_style_radius(ds, THEME_RADIUS_NORMAL, 0);
-	lv_obj_set_style_shadow_width(ds, 0, 0);
-	lv_obj_t *ds_lbl = lv_label_create(ds);
-	lv_label_set_text(ds_lbl, LV_SYMBOL_SETTINGS "  Device Settings");
-	lv_obj_center(ds_lbl);
-	lv_obj_set_style_text_font(ds_lbl, THEME_FONT_SMALL, 0);
-	lv_obj_set_style_text_color(ds_lbl, THEME_COLOR_TEXT_ON_ACCENT, 0);
-	lv_obj_add_event_cb(ds, menu_device_settings_cb, LV_EVENT_CLICKED, NULL);
+	/* Edit mode and older callers hide "the menu button" to clear the chrome;
+	 * the dock is that button now. */
+	ui_Menu_Button = s_dock;
+	_dock_refresh();
+}
 
-	lv_scr_load(ui_Setup_Menu_Screen);
+void ui_Screen3_rebuild(void) {
+	if (s_layout_switching) return;
+	s_layout_switching = true;
+	s_stale_dash = ui_Screen3;
+	lv_async_call(_deferred_layout_reload, NULL);
+}
+
+void ui_Screen3_switch_layout(const char *name) {
+	if (!name || !name[0] || s_layout_switching) return;
+	s_layout_switching = true;
+	s_stale_dash = ui_Screen3;
+	layout_manager_set_active(name);
+	lv_async_call(_deferred_layout_reload, NULL);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -660,7 +564,7 @@ void ui_Screen3_screen_init(void) {
 
 	ui_Screen3 = lv_obj_create(NULL);
 	lv_obj_clear_flag(ui_Screen3, LV_OBJ_FLAG_SCROLLABLE);
-	lv_obj_set_style_bg_color(ui_Screen3, THEME_COLOR_BG,
+	lv_obj_set_style_bg_color(ui_Screen3, WIDGET_COLOR_BG,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(ui_Screen3, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
 	/* Tap-on-background -> reveal chrome via LVGL's built-in short-click
@@ -703,97 +607,15 @@ void ui_Screen3_screen_init(void) {
 	 * falls back to direct widget_X_create() if the file is unavailable). */
 	dashboard_init(ui_Screen3);
 
-	/* Cache the switchable-layout count once, here — the chrome reveal reads
-	 * the cache so a tap never touches the filesystem (see s_layout_count). */
-	s_layout_count = layout_switcher_count();
+	/* Cache the switchable-layout cycle once, here — the dock reads the cache
+	 * so a tap never touches the filesystem (see s_layout_count). */
+	{
+		char active[LAYOUT_MAX_NAME] = {0};
+		layout_manager_get_active(active, sizeof(active));
+		s_layout_index = layout_switcher_position(active, &s_layout_count);
+	}
 
-	/* Menu button — floating top-right pill, blue accent with settings
-	 * icon. Replaces the former centre-dash glassmorphism style; the
-	 * top-right corner keeps it out of the driver's sight-line while
-	 * the icon + label read clearly against any layout behind it. */
-	ui_Menu_Button = lv_btn_create(ui_Screen3);
-	lv_obj_set_size(ui_Menu_Button, 100, 36);
-	lv_obj_align(ui_Menu_Button, LV_ALIGN_TOP_RIGHT, -12, 12);
-	/* Expand the touch target 20 px beyond the visual bounds. The GT911 jitters
-	 * the contact point between press and release (see notes on
-	 * screen3_touch_event_cb); on a small corner target that drift can push the
-	 * finger off the button mid-press, firing LV_EVENT_PRESS_LOST and clearing
-	 * the active object — so neither CLICKED nor SHORT_CLICKED fires on release
-	 * and the tap is silently dropped ("the menu sometimes didn't open"). The
-	 * ext click area keeps the press tracked through that jitter. No steal risk:
-	 * it grows toward the screen corner, and the only neighbour (Layout_Next) is
-	 * created later so it sits on top and wins the seam hit-test. Hidden objects
-	 * aren't hit-tested, so this is inert while the chrome is hidden — widget
-	 * long-press underneath is unaffected. */
-	lv_obj_set_ext_click_area(ui_Menu_Button, 20);
-	lv_obj_add_flag(ui_Menu_Button, LV_OBJ_FLAG_HIDDEN);
-	lv_obj_set_style_bg_color(ui_Menu_Button, THEME_COLOR_ACCENT_BLUE, 0);
-	lv_obj_set_style_bg_color(ui_Menu_Button, THEME_COLOR_ACCENT_BLUE_PRESSED,
-							  LV_STATE_PRESSED);
-	lv_obj_set_style_bg_opa(ui_Menu_Button, LV_OPA_COVER, 0);
-	lv_obj_set_style_border_width(ui_Menu_Button, 0, 0);
-	lv_obj_set_style_radius(ui_Menu_Button, THEME_RADIUS_NORMAL, 0);
-	/* No drop shadow: its semi-transparent halo sits over the live widgets
-	 * (RPM bar) and re-composites every time they update — that shimmer is
-	 * the "small glitch" on reveal. Flat reads cleaner anyway. */
-	lv_obj_set_style_shadow_width(ui_Menu_Button, 0, 0);
-	lv_obj_t *ml = lv_label_create(ui_Menu_Button);
-	lv_label_set_text(ml, LV_SYMBOL_SETTINGS "  Menu");
-	lv_obj_set_style_text_color(ml, THEME_COLOR_TEXT_ON_ACCENT, 0);
-	lv_obj_set_style_text_font(ml, THEME_FONT_SMALL, 0);
-	lv_obj_center(ml);
-	lv_obj_add_event_cb(ui_Menu_Button, menu_button_clicked_cb,
-						LV_EVENT_CLICKED, NULL);
-
-	/* Layout switcher arrows — flank the Menu button when the user taps
-	 * the dash. Same blue accent so they read as a related cluster, but
-	 * narrower (44 px) since they're symbol-only. Both hidden by default
-	 * and tied to the same show/hide timer as the Menu button — the
-	 * screen3_touch_event_cb only unhides them when the switcher cycle
-	 * has ≥2 entries (otherwise they wouldn't do anything useful). */
-	const int arrow_w = 44, arrow_h = 36;
-	/* Geometry: Menu_Button is 100 wide aligned top-right at -12. The
-	 * arrows sit to its LEFT (so the menu pill stays in the corner).
-	 * Prev = leftmost, Next = between Prev and Menu. 6px gaps. */
-	ui_Layout_Next_Button = lv_btn_create(ui_Screen3);
-	lv_obj_set_size(ui_Layout_Next_Button, arrow_w, arrow_h);
-	lv_obj_align(ui_Layout_Next_Button, LV_ALIGN_TOP_RIGHT,
-				 -(12 + 100 + 6), 12);
-	lv_obj_add_flag(ui_Layout_Next_Button, LV_OBJ_FLAG_HIDDEN);
-	lv_obj_set_style_bg_color(ui_Layout_Next_Button, THEME_COLOR_ACCENT_BLUE, 0);
-	lv_obj_set_style_bg_color(ui_Layout_Next_Button,
-							  THEME_COLOR_ACCENT_BLUE_PRESSED, LV_STATE_PRESSED);
-	lv_obj_set_style_bg_opa(ui_Layout_Next_Button, LV_OPA_COVER, 0);
-	lv_obj_set_style_border_width(ui_Layout_Next_Button, 0, 0);
-	lv_obj_set_style_radius(ui_Layout_Next_Button, THEME_RADIUS_NORMAL, 0);
-	lv_obj_set_style_shadow_width(ui_Layout_Next_Button, 0, 0);
-	lv_obj_t *nl = lv_label_create(ui_Layout_Next_Button);
-	lv_label_set_text(nl, LV_SYMBOL_RIGHT);
-	lv_obj_set_style_text_color(nl, THEME_COLOR_TEXT_ON_ACCENT, 0);
-	lv_obj_set_style_text_font(nl, THEME_FONT_SMALL, 0);
-	lv_obj_center(nl);
-	lv_obj_add_event_cb(ui_Layout_Next_Button, _layout_next_clicked_cb,
-						LV_EVENT_CLICKED, NULL);
-
-	ui_Layout_Prev_Button = lv_btn_create(ui_Screen3);
-	lv_obj_set_size(ui_Layout_Prev_Button, arrow_w, arrow_h);
-	lv_obj_align(ui_Layout_Prev_Button, LV_ALIGN_TOP_RIGHT,
-				 -(12 + 100 + 6 + arrow_w + 6), 12);
-	lv_obj_add_flag(ui_Layout_Prev_Button, LV_OBJ_FLAG_HIDDEN);
-	lv_obj_set_style_bg_color(ui_Layout_Prev_Button, THEME_COLOR_ACCENT_BLUE, 0);
-	lv_obj_set_style_bg_color(ui_Layout_Prev_Button,
-							  THEME_COLOR_ACCENT_BLUE_PRESSED, LV_STATE_PRESSED);
-	lv_obj_set_style_bg_opa(ui_Layout_Prev_Button, LV_OPA_COVER, 0);
-	lv_obj_set_style_border_width(ui_Layout_Prev_Button, 0, 0);
-	lv_obj_set_style_radius(ui_Layout_Prev_Button, THEME_RADIUS_NORMAL, 0);
-	lv_obj_set_style_shadow_width(ui_Layout_Prev_Button, 0, 0);
-	lv_obj_t *pl = lv_label_create(ui_Layout_Prev_Button);
-	lv_label_set_text(pl, LV_SYMBOL_LEFT);
-	lv_obj_set_style_text_color(pl, THEME_COLOR_TEXT_ON_ACCENT, 0);
-	lv_obj_set_style_text_font(pl, THEME_FONT_SMALL, 0);
-	lv_obj_center(pl);
-	lv_obj_add_event_cb(ui_Layout_Prev_Button, _layout_prev_clicked_cb,
-						LV_EVENT_CLICKED, NULL);
+	_dock_create(ui_Screen3);
 
 	/* Edit Mode pill — DISABLED for now. On-device edit mode is incomplete and
 	 * deferred to a later update, so the entry button is not created. Skipping
@@ -832,7 +654,7 @@ void ui_Screen3_preview_layout(cJSON *root) {
 	/* Create a new screen (offscreen — not yet loaded) */
 	ui_Screen3 = lv_obj_create(NULL);
 	lv_obj_clear_flag(ui_Screen3, LV_OBJ_FLAG_SCROLLABLE);
-	lv_obj_set_style_bg_color(ui_Screen3, THEME_COLOR_BG,
+	lv_obj_set_style_bg_color(ui_Screen3, WIDGET_COLOR_BG,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(ui_Screen3, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
 	/* Tap-on-background -> reveal chrome (see notes on screen3_touch_event_cb). */

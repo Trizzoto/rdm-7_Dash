@@ -25,12 +25,12 @@ typedef struct {
 	bool       is_momentary;
 	bool       invert_toggle;
 	/* ── Appearance overrides ── */
-	lv_color_t inactive_color;       /* default: THEME_COLOR_INACTIVE (0x292C29) */
+	lv_color_t inactive_color;       /* default: WIDGET_COLOR_INACTIVE (0x292C29) */
 	uint8_t    border_width;         /* default: 0 */
 	lv_color_t border_color;         /* default: 0x000000 */
 	uint8_t    radius;               /* default: 100 (circle) */
 	bool       show_label;           /* default: true */
-	lv_color_t label_color;          /* default: THEME_COLOR_TEXT_PRIMARY */
+	lv_color_t label_color;          /* default: WIDGET_COLOR_TEXT_PRIMARY */
 	char       label_font[32];       /* "Family:size", empty = THEME_FONT_TINY */
 	int8_t     label_y_offset;       /* extra vertical shift, default 0 */
 	uint8_t    label_text_align;     /* 0=Left, 1=Center, 2=Right (default 1) */

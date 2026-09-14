@@ -1,6 +1,7 @@
 #include "preset_picker.h"
 #include "esp_attr.h"
 #include "theme.h"
+#include "kit/ui_kit.h"
 #include <stdio.h>
 #include "lvgl.h"
 #include "screens/ui_Screen3.h"
@@ -153,18 +154,19 @@ static int _obd2_idx_to_unified(int oi)
 }
 
 /* =========================================================================
- * Full-screen 3-column preset browser
+ * Embedded 3-column preset browser (build_preset_picker_embedded)
  *
- * Layout (780 × 456 centred panel):
- *  ┌─ SELECT PRESET ─────────────────────────────────────────── [CLOSE] ─┐ 48px
- *  ├──────────────┬────────────────┬──────────────────────────────────────┤ 356px
- *  │  BRAND       │  PROTOCOL      │  CHANNEL                             │
- *  │  MaxxECU ●  │  v1.2          │  THROTTLE %                          │
- *  │  Haltech     │  v1.3 ●       │  MAP                                 │
- *  │  Ford        │                │  LAMBDA ...  (scrollable)            │
- *  ├──────────────┴────────────────┴──────────────────────────────────────┤ 52px
- *  │  ○ No channel selected                           [✓  APPLY PRESET]  │
+ * Layout inside the caller's w × h host (the host owns any card/title):
+ *  ┌──────────────┬────────────────┬──────────────────────────────────────┐ h - 42
+ *  │  BRAND       │  PROTOCOL      │  CHANNEL          (muted caps heads) │
+ *  │ [MaxxECU   ] │ [v1.2        ] │ [THROTTLE %                      o ] │
+ *  │ [Haltech   ] │ [v1.3        ] │ [MAP                               ] │
+ *  │ [Ford      ] │                │ [LAMBDA ...]         (scrollable)    │
+ *  ├──────────────┴────────────────┴──────────────────────────────────────┤ 42px
+ *  │  preview of the chosen channel                                       │
  *  └──────────────────────────────────────────────────────────────────────┘
+ * Rows are neutral kit rows (raised fill, radius 8); the chosen row in each
+ * column takes the soft accent fill with accent ink. "o" = the live dot.
  * ========================================================================= */
 
 /* ── State ──────────────────────────────────────────────────────────────── */
@@ -181,7 +183,7 @@ typedef struct {
     lv_obj_t *hi_ver;
     lv_obj_t *hi_sig;
     /* Live indicator timer: walks signal-column rows every ~500 ms and
-     * shows a blue dot next to channels whose signal is currently fresh
+     * shows a green dot next to channels whose signal is currently fresh
      * in the registry. Lets the user see at a glance which channels
      * will actually work without trial-and-error binding. */
     lv_timer_t       *live_timer;
@@ -223,17 +225,14 @@ static void col_sig_free_cb(lv_event_t *e)
     if (c) lv_mem_free(c);
 }
 
-/* ── Row highlight (accent left-bar + bright text) ───────────────────────── */
+/* ── Row highlight (soft accent fill + accent ink, the kit's selection) ──── */
 static void set_row_hi(lv_obj_t *row, bool on)
 {
     if (!row || !lv_obj_is_valid(row)) return;
-    lv_obj_set_style_bg_color(row, on ? THEME_COLOR_ACCENT_DIM : THEME_COLOR_SURFACE, 0);
-    lv_obj_set_style_border_width(row, on ? 3 : 0, 0);
-    lv_obj_set_style_border_side(row,  LV_BORDER_SIDE_LEFT, 0);
-    lv_obj_set_style_border_color(row, THEME_COLOR_ACCENT, 0);
+    lv_obj_set_style_bg_color(row, on ? THEME_COLOR_ACCENT_DIM : THEME_COLOR_CONTROL_BG, 0);
     lv_obj_t *lbl = lv_obj_get_child(row, 0);
     if (lbl) lv_obj_set_style_text_color(lbl,
-        on ? THEME_COLOR_TEXT_PRIMARY : THEME_COLOR_TEXT_MUTED, 0);
+        on ? ui_pal->accent_ink : THEME_COLOR_TEXT_PRIMARY, 0);
 }
 
 /* ── Click callbacks ─────────────────────────────────────────────────────── */
@@ -277,9 +276,9 @@ static void _apply_selection(picker_st_t *st)
     void *cb_ctx = st->apply_cb_ctx;
     if (st->preview_lbl) {
         char buf[96];
-        snprintf(buf, sizeof(buf), LV_SYMBOL_OK "  Applied: %s", it->label);
+        snprintf(buf, sizeof(buf), "Applied: %s", it->label);
         lv_label_set_text(st->preview_lbl, buf);
-        lv_obj_set_style_text_color(st->preview_lbl, THEME_COLOR_GREEN, 0);
+        lv_obj_set_style_text_color(st->preview_lbl, THEME_COLOR_STATUS_CONNECTED, 0);
     }
     cb(it, cb_ctx);   /* may free st — do NOT touch st after this */
 }
@@ -304,10 +303,10 @@ static void sig_click_cb(lv_event_t *e)
 static void update_picker_preview(picker_st_t *st, int idx)
 {
     if (!st->preview_lbl) return;
-    /* Reset colour in case it was set to green by a previous Apply */
+    /* Reset colour in case it was set to the ok tone by a previous Apply */
     lv_obj_set_style_text_color(st->preview_lbl, THEME_COLOR_TEXT_MUTED, 0);
     if (idx < 0) {
-        lv_label_set_text(st->preview_lbl, "Select a brand, protocol, then channel");
+        lv_label_set_text(st->preview_lbl, "Pick a brand, then a protocol, then a channel");
         if (st->apply_btn) lv_obj_add_state(st->apply_btn, LV_STATE_DISABLED);
     } else {
         const preconfig_item_t *it = _resolve_item(idx);
@@ -355,12 +354,15 @@ static lv_obj_t *make_col_list(lv_obj_t *col)
     lv_obj_set_flex_align(list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(list, 0, 0);
+    lv_obj_set_style_radius(list, 0, 0);
+    /* A small gutter so the rounded rows read as separate rows. */
     lv_obj_set_style_pad_all(list, 0, 0);
-    lv_obj_set_style_pad_row(list, 0, 0);
+    lv_obj_set_style_pad_hor(list, 6, 0);
+    lv_obj_set_style_pad_top(list, 2, 0);
+    lv_obj_set_style_pad_bottom(list, 6, 0);
+    lv_obj_set_style_pad_row(list, 4, 0);
     lv_obj_set_scroll_snap_y(list, LV_SCROLL_SNAP_NONE);
-    lv_obj_set_style_bg_color(list, THEME_COLOR_SCROLLBAR,
-                               LV_PART_SCROLLBAR | LV_STATE_DEFAULT);
-    lv_obj_set_style_width(list, 3, LV_PART_SCROLLBAR);
+    uk_style_scrollbar(list);
     return list;
 }
 
@@ -383,54 +385,41 @@ static lv_obj_t *make_col(lv_obj_t *body, const char *hdr_text, bool right_borde
         lv_obj_set_style_border_width(col, 1, 0);
     }
 
-    /* Column header label strip */
+    /* Column heading: the kit's muted caps section label, no strip. */
     lv_obj_t *chdr = lv_obj_create(col);
+    lv_obj_remove_style_all(chdr);
     lv_obj_set_size(chdr, lv_pct(100), 28);
-    lv_obj_clear_flag(chdr, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(chdr, THEME_COLOR_INPUT_BG, 0);
-    lv_obj_set_style_bg_opa(chdr, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(chdr, 0, 0);
-    lv_obj_set_style_border_width(chdr, 0, 0);
-    lv_obj_set_style_border_side(chdr, LV_BORDER_SIDE_BOTTOM, 0);
-    lv_obj_set_style_border_color(chdr, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_border_width(chdr, 1, 0);
-    lv_obj_set_style_pad_left(chdr, 12, 0);
+    lv_obj_clear_flag(chdr, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_pad_left(chdr, 8, 0);
     lv_obj_set_style_pad_right(chdr, 6, 0);
-    lv_obj_set_style_pad_top(chdr, 0, 0);
-    lv_obj_set_style_pad_bottom(chdr, 0, 0);
 
-    lv_obj_t *clbl = lv_label_create(chdr);
-    lv_label_set_text(clbl, hdr_text);
-    lv_obj_set_style_text_color(clbl, THEME_COLOR_ACCENT, 0);
-    lv_obj_set_style_text_font(clbl, THEME_FONT_SMALL, 0);
+    lv_obj_t *clbl = uk_section(chdr, hdr_text);
+    lv_obj_set_style_pad_top(clbl, 0, 0);
     lv_obj_align(clbl, LV_ALIGN_LEFT_MID, 0, 0);
 
     return make_col_list(col);
 }
 
-/* A single clickable row inside a column list */
+/* A single clickable row inside a column list: a neutral kit row. The label
+ * MUST stay child 0 and keep its text as given (Montserrat, not the caps
+ * face) — _preselect_ecu_from_nvs and the live timer read it back. */
 static lv_obj_t *make_col_row(lv_obj_t *list, const char *text)
 {
     lv_obj_t *row = lv_obj_create(list);
+    lv_obj_remove_style_all(row);
     lv_obj_set_size(row, lv_pct(100), 36);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_style_bg_color(row, THEME_COLOR_SURFACE, 0);
+    lv_obj_set_style_bg_color(row, THEME_COLOR_CONTROL_BG, 0);
     lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(row, 0, 0);
-    lv_obj_set_style_radius(row, 0, 0);
-    lv_obj_set_style_pad_left(row, 14, 0);
+    lv_obj_set_style_radius(row, UK_R_BTN, 0);
+    lv_obj_set_style_pad_left(row, 10, 0);
     lv_obj_set_style_pad_right(row, 6, 0);
-    lv_obj_set_style_pad_top(row, 0, 0);
-    lv_obj_set_style_pad_bottom(row, 0, 0);
-    lv_obj_set_style_bg_color(row, THEME_COLOR_INPUT_BG, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(row, THEME_COLOR_BTN_DIM_PRESSED, LV_STATE_PRESSED);
 
-    lv_obj_t *lbl = lv_label_create(row);
-    lv_label_set_text(lbl, text);
+    lv_obj_t *lbl = uk_label(row, text, UK_FONT_BODY, UK_TONE_TEXT);
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
     lv_obj_set_width(lbl, lv_pct(90));
-    lv_obj_set_style_text_color(lbl, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_set_style_text_font(lbl, THEME_FONT_BODY, 0);
     lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 0, 0);
     return row;
 }
@@ -631,14 +620,14 @@ static void populate_sig_col(picker_st_t *st)
         lv_obj_add_event_cb(row, sig_click_cb,   LV_EVENT_CLICKED, ctx);
         lv_obj_add_event_cb(row, col_sig_free_cb, LV_EVENT_DELETE, ctx);
 
-        /* Small accent-blue dot, right-aligned. Hidden by default; the
+        /* Small ok-green dot, right-aligned. Hidden by default; the
          * 500 ms refresh timer reveals it when the matching signal in
          * the registry has a fresh (non-stale) value. */
         lv_obj_t *dot = lv_obj_create(row);
         lv_obj_remove_style_all(dot);
-        lv_obj_set_size(dot, 9, 9);
+        lv_obj_set_size(dot, 8, 8);
         lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_bg_color(dot, THEME_COLOR_ACCENT_BLUE, 0);
+        lv_obj_set_style_bg_color(dot, THEME_COLOR_STATUS_CONNECTED, 0);
         lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
         lv_obj_align(dot, LV_ALIGN_RIGHT_MID, -8, 0);
         lv_obj_clear_flag(dot, LV_OBJ_FLAG_CLICKABLE);
@@ -740,8 +729,8 @@ void build_preset_picker_embedded(lv_obj_t *parent, lv_coord_t w, lv_coord_t h,
     lv_obj_t *footer = lv_obj_create(parent);
     lv_obj_set_size(footer, w, footer_h);
     lv_obj_clear_flag(footer, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(footer, THEME_COLOR_INPUT_BG, 0);
-    lv_obj_set_style_bg_opa(footer, LV_OPA_COVER, 0);
+    /* A hairline above, no fill: the preview reads as a caption. */
+    lv_obj_set_style_bg_opa(footer, LV_OPA_TRANSP, 0);
     lv_obj_set_style_radius(footer, 0, 0);
     lv_obj_set_style_border_side(footer, LV_BORDER_SIDE_TOP, 0);
     lv_obj_set_style_border_color(footer, THEME_COLOR_BORDER, 0);
@@ -751,10 +740,8 @@ void build_preset_picker_embedded(lv_obj_t *parent, lv_coord_t w, lv_coord_t h,
     lv_obj_set_style_pad_top(footer, 0, 0);
     lv_obj_set_style_pad_bottom(footer, 0, 0);
 
-    lv_obj_t *prev_lbl = lv_label_create(footer);
-    lv_label_set_text(prev_lbl, "Select a brand, protocol, then channel");
-    lv_obj_set_style_text_color(prev_lbl, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_set_style_text_font(prev_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_t *prev_lbl = uk_label(footer, "Pick a brand, then a protocol, then a channel",
+                                  UK_FONT_SMALL, UK_TONE_MUTED);
     lv_label_set_long_mode(prev_lbl, LV_LABEL_LONG_DOT);
     /* Apply button was removed (channel click auto-applies) — preview
      * label takes the full footer width and stays horizontally centered. */

@@ -4,8 +4,10 @@
  * Read-only at-a-glance view of CAN bus, SD card, WiFi, signals and system
  * health. Auto-refreshes every 1s so you can watch counters tick.
  *
- * Layout: 2-column grid of "cards", each card = title + label rows. Auto-fits
- * the 800x480 panel; scrollable if content overflows on smaller screen sizes.
+ * Layout: built from ui_kit parts (ADR-0071) — brand bar, then a 3x2 grid of
+ * cards, each card = caps section label + key/value rows. CAN has the most
+ * rows, so it takes the whole left column; the other four share the right two
+ * columns. Everything fits the 800x480 panel without scrolling.
  *
  * Threading: refresh callback runs on the LVGL task (lv_timer), so it can call
  * any LVGL or signal/wifi/sd API directly without locking.
@@ -13,6 +15,7 @@
 #include "ui_diagnostics.h"
 #include "ui_can_list.h"
 #include "../theme.h"
+#include "kit/ui_kit.h"
 #include "screen_config.h"
 #include "net/wifi_manager.h"
 #include "storage/sd_manager.h"
@@ -46,52 +49,19 @@ typedef struct {
 static kv_label_t s_kvs[MAX_KV];
 static uint8_t    s_kv_count = 0;
 
-/* ── Theme helpers (mirrors style used by ui_wifi.c) ─────────────────────── */
-
-static void _style_card(lv_obj_t *card)
-{
-	lv_obj_set_style_bg_color(card, THEME_COLOR_SURFACE, 0);
-	lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
-	lv_obj_set_style_border_color(card, THEME_COLOR_BORDER, 0);
-	lv_obj_set_style_border_width(card, 1, 0);
-	lv_obj_set_style_radius(card, THEME_RADIUS_NORMAL, 0);
-	lv_obj_set_style_pad_all(card, 10, 0);
-	lv_obj_set_style_pad_gap(card, 4, 0);
-	lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-	lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-}
-
-static void _style_card_title(lv_obj_t *lbl, lv_color_t accent)
-{
-	lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
-	lv_obj_set_style_text_color(lbl, accent, 0);
-	lv_obj_set_style_text_letter_space(lbl, 1, 0);
-	lv_obj_set_style_pad_bottom(lbl, 4, 0);
-}
+/* ── Card helpers ────────────────────────────────────────────────────────── */
 
 /* Add a "Label: value" row to a card and register the value label so the
  * refresh callback can update it. Returns the value label so the caller can
- * also style it (e.g. red for error states). */
+ * also style it (e.g. red for error states). The row is a kit row made a
+ * little tighter, so five rows fit a half-height card; long values (an SSID,
+ * the replay position) end in dots rather than running under the key. */
 static lv_obj_t *_add_kv(lv_obj_t *parent, const char *name)
 {
-	lv_obj_t *row = lv_obj_create(parent);
-	lv_obj_set_size(row, lv_pct(100), LV_SIZE_CONTENT);
-	lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
-	lv_obj_set_style_border_width(row, 0, 0);
-	lv_obj_set_style_pad_all(row, 0, 0);
-	lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-
-	lv_obj_t *name_lbl = lv_label_create(row);
-	lv_label_set_text(name_lbl, name);
-	lv_obj_set_style_text_font(name_lbl, THEME_FONT_TINY, 0);
-	lv_obj_set_style_text_color(name_lbl, THEME_COLOR_TEXT_MUTED, 0);
-	lv_obj_align(name_lbl, LV_ALIGN_LEFT_MID, 0, 0);
-
-	lv_obj_t *val_lbl = lv_label_create(row);
-	lv_label_set_text(val_lbl, "-");
-	lv_obj_set_style_text_font(val_lbl, THEME_FONT_TINY, 0);
-	lv_obj_set_style_text_color(val_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
-	lv_obj_align(val_lbl, LV_ALIGN_RIGHT_MID, 0, 0);
+	lv_obj_t *val_lbl = uk_row(parent, name, "-");
+	lv_obj_set_style_pad_ver(lv_obj_get_parent(val_lbl), 4, 0);
+	lv_obj_set_flex_grow(val_lbl, 1);
+	lv_label_set_long_mode(val_lbl, LV_LABEL_LONG_DOT);
 
 	if (s_kv_count < MAX_KV) {
 		s_kvs[s_kv_count].name  = name;
@@ -120,7 +90,7 @@ static const char *_wifi_state_str(wifi_mgr_state_t s)
 		case WIFI_MGR_STATE_SCANNING:   return "Scanning";
 		case WIFI_MGR_STATE_CONNECTING: return "Connecting";
 		case WIFI_MGR_STATE_CONNECTED:  return "Connected";
-		case WIFI_MGR_STATE_AP_ONLY:    return "AP Only";
+		case WIFI_MGR_STATE_AP_ONLY:    return "Hotspot only";
 		case WIFI_MGR_STATE_FAILED:     return "Failed";
 		default:                         return "?";
 	}
@@ -185,7 +155,7 @@ static void _refresh(lv_timer_t *t)
 		snprintf(buf, sizeof(buf), "%lu", (unsigned long)can.rx_missed_count);
 		lv_label_set_text(_kv("RX missed"), buf);
 	} else {
-		lv_label_set_text(_kv("State"), "(driver not init)");
+		lv_label_set_text(_kv("State"), "Driver not started");
 	}
 
 	/* ── SD ── */
@@ -311,15 +281,28 @@ static void _can_ids_btn_cb(lv_event_t *e)
 
 /* ── Build / teardown ────────────────────────────────────────────────────── */
 
-static lv_obj_t *_make_card(lv_obj_t *parent, lv_coord_t w, lv_coord_t h,
-                             const char *title, lv_color_t accent)
+/* A screen-wide action in the brand bar, left of Back. uk_bar's status strip
+ * (its child 2) is the only slot there; the kit has no uk_bar_action() yet. */
+static lv_obj_t *_bar_action(lv_obj_t *bar, uk_icon_t icon, const char *text,
+                             lv_event_cb_t cb)
 {
-	lv_obj_t *card = lv_obj_create(parent);
-	lv_obj_set_size(card, w, h);
-	_style_card(card);
-	lv_obj_t *t = lv_label_create(card);
-	lv_label_set_text(t, title);
-	_style_card_title(t, accent);
+	lv_obj_t *strip = lv_obj_get_child(bar, 2);
+	lv_obj_t *b = uk_btn(strip ? strip : bar, icon, text, UK_BTN_NEUTRAL, cb, NULL);
+	lv_obj_set_height(b, 36);
+	lv_obj_set_ext_click_area(b, 6);
+	return b;
+}
+
+static lv_obj_t *_make_card(lv_obj_t *grid, uint8_t col, uint8_t row,
+                            uint8_t row_span, const char *title)
+{
+	lv_obj_t *card = uk_card(grid);
+	uk_grid_place(card, col, row, 1, row_span);
+	lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+	/* Rows carry their own hairlines; the gap goes under the title only. */
+	lv_obj_set_style_pad_row(card, 0, 0);
+	lv_obj_t *t = uk_section(card, title);
+	lv_obj_set_style_pad_bottom(t, 6, 0);
 	return card;
 }
 
@@ -327,117 +310,30 @@ static void _create(void)
 {
 	s_kv_count = 0;
 
-	s_screen = lv_obj_create(NULL);
-	lv_obj_set_style_bg_color(s_screen, THEME_COLOR_BG, 0);
-	lv_obj_set_style_bg_opa(s_screen, LV_OPA_COVER, 0);
-	lv_obj_clear_flag(s_screen, LV_OBJ_FLAG_SCROLLABLE);
+	s_screen = uk_screen();
 
-	/* Header — Back / Title / Refresh */
-	lv_obj_t *header = lv_obj_create(s_screen);
-	lv_obj_set_size(header, SCREEN_W, 44);
-	lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 0);
-	lv_obj_set_style_bg_color(header, THEME_COLOR_SURFACE, 0);
-	lv_obj_set_style_bg_opa(header, LV_OPA_COVER, 0);
-	lv_obj_set_style_border_color(header, THEME_COLOR_BORDER, 0);
-	lv_obj_set_style_border_side(header, LV_BORDER_SIDE_BOTTOM, 0);
-	lv_obj_set_style_border_width(header, 1, 0);
-	lv_obj_set_style_radius(header, 0, 0);
-	lv_obj_set_style_pad_hor(header, 10, 0);
-	lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
+	/* Brand bar — title, Live CAN IDs, Refresh, Back */
+	lv_obj_t *bar = uk_bar(s_screen, "Diagnostics", UK_BAR_BACK, _back_btn_cb, NULL);
+	/* "Live CAN IDs" opens the live per-ID list screen. */
+	_bar_action(bar, UK_ICON_CAN, "Live CAN IDs", _can_ids_btn_cb);
+	_bar_action(bar, UK_ICON_NONE, "Refresh", _refresh_btn_cb);
 
-	lv_obj_t *back_btn = lv_btn_create(header);
-	lv_obj_set_size(back_btn, 80, 30);
-	lv_obj_align(back_btn, LV_ALIGN_LEFT_MID, 0, 0);
-	lv_obj_set_style_bg_color(back_btn, THEME_COLOR_SECTION_BG, 0);
-	lv_obj_set_style_border_color(back_btn, THEME_COLOR_BORDER, 0);
-	lv_obj_set_style_border_width(back_btn, 1, 0);
-	lv_obj_set_style_radius(back_btn, THEME_RADIUS_SMALL, 0);
-	lv_obj_set_style_shadow_width(back_btn, 0, 0);
-	lv_obj_add_event_cb(back_btn, _back_btn_cb, LV_EVENT_CLICKED, NULL);
-	lv_obj_t *back_lbl = lv_label_create(back_btn);
-	lv_label_set_text(back_lbl, LV_SYMBOL_LEFT " Back");
-	lv_obj_set_style_text_font(back_lbl, THEME_FONT_SMALL, 0);
-	lv_obj_set_style_text_color(back_lbl, THEME_COLOR_TEXT_MUTED, 0);
-	lv_obj_center(back_lbl);
-
-	lv_obj_t *title = lv_label_create(header);
-	lv_label_set_text(title, "System Diagnostics");
-	lv_obj_set_style_text_font(title, THEME_FONT_LARGE, 0);
-	lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
-	lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
-
-	lv_obj_t *refresh_btn = lv_btn_create(header);
-	lv_obj_set_size(refresh_btn, 80, 30);
-	lv_obj_align(refresh_btn, LV_ALIGN_RIGHT_MID, 0, 0);
-	lv_obj_set_style_bg_color(refresh_btn, THEME_COLOR_SECTION_BG, 0);
-	lv_obj_set_style_border_color(refresh_btn, THEME_COLOR_BORDER, 0);
-	lv_obj_set_style_border_width(refresh_btn, 1, 0);
-	lv_obj_set_style_radius(refresh_btn, THEME_RADIUS_SMALL, 0);
-	lv_obj_set_style_shadow_width(refresh_btn, 0, 0);
-	lv_obj_add_event_cb(refresh_btn, _refresh_btn_cb, LV_EVENT_CLICKED, NULL);
-	lv_obj_t *refresh_lbl = lv_label_create(refresh_btn);
-	lv_label_set_text(refresh_lbl, LV_SYMBOL_REFRESH " Now");
-	lv_obj_set_style_text_font(refresh_lbl, THEME_FONT_SMALL, 0);
-	lv_obj_set_style_text_color(refresh_lbl, THEME_COLOR_TEXT_MUTED, 0);
-	lv_obj_center(refresh_lbl);
-
-	/* "CAN IDs" — opens the live per-ID list screen. Sits to the left of
-	 * the Refresh button (80 wide + 6 gap = 86, so -86 offset). */
-	lv_obj_t *can_ids_btn = lv_btn_create(header);
-	lv_obj_set_size(can_ids_btn, 90, 30);
-	lv_obj_align(can_ids_btn, LV_ALIGN_RIGHT_MID, -86, 0);
-	lv_obj_set_style_bg_color(can_ids_btn, THEME_COLOR_SECTION_BG, 0);
-	lv_obj_set_style_border_color(can_ids_btn, THEME_COLOR_ACCENT_BLUE, 0);
-	lv_obj_set_style_border_width(can_ids_btn, 1, 0);
-	lv_obj_set_style_radius(can_ids_btn, THEME_RADIUS_SMALL, 0);
-	lv_obj_set_style_shadow_width(can_ids_btn, 0, 0);
-	lv_obj_add_event_cb(can_ids_btn, _can_ids_btn_cb, LV_EVENT_CLICKED, NULL);
-	lv_obj_t *can_ids_lbl = lv_label_create(can_ids_btn);
-	lv_label_set_text(can_ids_lbl, "CAN IDs");
-	lv_obj_set_style_text_font(can_ids_lbl, THEME_FONT_SMALL, 0);
-	lv_obj_set_style_text_color(can_ids_lbl, THEME_COLOR_ACCENT_BLUE, 0);
-	lv_obj_center(can_ids_lbl);
-
-	/* Body — 3-column flex-wrap grid. Cards size to their content height so
-	 * SD/Signals (3 rows) sit shorter than CAN/WiFi/System (5-6 rows), which
-	 * lets the whole thing fit in 800x480 without scrolling. The body is
-	 * scrollable as a safety net if a future card grows beyond what fits.
-	 *
-	 * Math at this resolution:
-	 *   body height = 480 - 44 (header) = 436
-	 *   3-col card width = (800 - 8 pad - 8 pad - 6 gap*2) / 3 ≈ 260
-	 *   2 rows of ~140-180px tall + 6px gap easily fits ≤ 366. */
-	lv_obj_t *body = lv_obj_create(s_screen);
-	lv_obj_set_size(body, SCREEN_W, SCREEN_H - 44);
-	lv_obj_align(body, LV_ALIGN_TOP_MID, 0, 44);
-	lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, 0);
-	lv_obj_set_style_border_width(body, 0, 0);
-	lv_obj_set_style_pad_all(body, 8, 0);
-	lv_obj_set_style_pad_gap(body, 6, 0);
-	lv_obj_set_flex_flow(body, LV_FLEX_FLOW_ROW_WRAP);
-	/* Scrollable as a safety net — content currently fits, but future cards
-	 * could push beyond 480. Vertical scroll only; horizontal disabled. */
-	lv_obj_set_scroll_dir(body, LV_DIR_VER);
-	lv_obj_set_scrollbar_mode(body, LV_SCROLLBAR_MODE_AUTO);
-	lv_obj_set_style_bg_color(body, THEME_COLOR_SCROLLBAR, LV_PART_SCROLLBAR);
-	lv_obj_set_style_bg_opa(body, LV_OPA_50, LV_PART_SCROLLBAR);
-	lv_obj_set_style_radius(body, 2, LV_PART_SCROLLBAR);
-	lv_obj_set_style_width(body, 4, LV_PART_SCROLLBAR);
-
-	/* All cards share the same fixed footprint for a uniform grid look.
-	 *   width  = (SCREEN_W - 16 padding - 12 gap) / 3   ≈ 257
-	 *   height = sized for the 6-row max (CAN, SYSTEM); shorter cards leave
-	 *            empty space at the bottom rather than mismatched heights.
-	 *
-	 * Math: pad_all(10) + title(~16) + pad_gap(4) + 6 rows × (16+4 gap)
-	 *       + pad_all(10) - 4 (last gap) = 28 + 120 - 4 = ~144. Round to
-	 *       150 for a little breathing room. */
-	const lv_coord_t CARD_W = (SCREEN_W - 16 - 12) / 3;
-	const lv_coord_t CARD_H = 150;
+	/* Body — 3 columns x 2 rows. The CAN column is a little narrower (its
+	 * values are short counters) and spans both rows for its six readings;
+	 * WiFi / System take the top of the other two columns and SD / Signals
+	 * the bottom. Math at this resolution:
+	 *   body content = 776 x 404, gaps 10  -> rows 197 tall
+	 *   five kit rows at 4 px padding (~25 each) + title + card padding
+	 *   = ~183, so the half-height cards fit without scrolling. */
+	static const lv_coord_t col_dsc[] = { LV_GRID_FR(4), LV_GRID_FR(5), LV_GRID_FR(5),
+	                                      LV_GRID_TEMPLATE_LAST };
+	static const lv_coord_t row_dsc[] = { LV_GRID_FR(1), LV_GRID_FR(1),
+	                                      LV_GRID_TEMPLATE_LAST };
+	lv_obj_t *grid = uk_grid(uk_body(s_screen), 3, 2);
+	lv_obj_set_grid_dsc_array(grid, col_dsc, row_dsc);
 
 	/* CAN BUS */
-	lv_obj_t *can_card = _make_card(body, CARD_W, CARD_H,
-	                                  "CAN BUS", THEME_COLOR_ACCENT_BLUE);
+	lv_obj_t *can_card = _make_card(grid, 0, 0, 2, "CAN bus");
 	_add_kv(can_card, "State");
 	_add_kv(can_card, "Pending RX");
 	_add_kv(can_card, "TX errors");
@@ -446,8 +342,7 @@ static void _create(void)
 	_add_kv(can_card, "RX missed");
 
 	/* WiFi */
-	lv_obj_t *wf_card = _make_card(body, CARD_W, CARD_H,
-	                                 "WI-FI", THEME_COLOR_ACCENT_BLUE);
+	lv_obj_t *wf_card = _make_card(grid, 1, 0, 1, "WiFi");
 	_add_kv(wf_card, "WiFi");
 	_add_kv(wf_card, "SSID");
 	_add_kv(wf_card, "STA IP");
@@ -455,8 +350,7 @@ static void _create(void)
 	_add_kv(wf_card, "AP IP");
 
 	/* SYSTEM — 5 KV rows */
-	lv_obj_t *sys_card = _make_card(body, CARD_W, CARD_H,
-	                                  "SYSTEM", THEME_COLOR_ACCENT_BLUE);
+	lv_obj_t *sys_card = _make_card(grid, 2, 0, 1, "System");
 	_add_kv(sys_card, "Uptime");
 	_add_kv(sys_card, "Free heap");
 	_add_kv(sys_card, "Free PSRAM");
@@ -464,15 +358,13 @@ static void _create(void)
 	_add_kv(sys_card, "Replay");
 
 	/* SD CARD */
-	lv_obj_t *sd_card = _make_card(body, CARD_W, CARD_H,
-	                                 "SD CARD", THEME_COLOR_ACCENT_AMBER);
+	lv_obj_t *sd_card = _make_card(grid, 1, 1, 1, "SD card");
 	_add_kv(sd_card, "SD");
 	_add_kv(sd_card, "Usage");
 	_add_kv(sd_card, "Free");
 
 	/* SIGNALS */
-	lv_obj_t *sig_card = _make_card(body, CARD_W, CARD_H,
-	                                  "SIGNALS", THEME_COLOR_ACCENT_AMBER);
+	lv_obj_t *sig_card = _make_card(grid, 2, 1, 1, "Signals");
 	_add_kv(sig_card, "Total");
 	_add_kv(sig_card, "Fresh");
 	_add_kv(sig_card, "Stale");

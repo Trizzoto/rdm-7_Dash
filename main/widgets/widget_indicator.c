@@ -286,7 +286,7 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 
 	// Create the configuration screen
 	lv_obj_t *config_screen = lv_obj_create(NULL);
-	lv_obj_set_style_bg_color(config_screen, THEME_COLOR_BG, 0);
+	lv_obj_set_style_bg_color(config_screen, WIDGET_COLOR_BG, 0);
 	lv_obj_set_style_bg_opa(config_screen, LV_OPA_COVER, 0);
 	lv_obj_clear_flag(config_screen, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -298,7 +298,7 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 	lv_obj_set_y(main_border, 67);
 	lv_obj_clear_flag(main_border, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_set_style_radius(main_border, 7, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(main_border, THEME_COLOR_INACTIVE,
+	lv_obj_set_style_bg_color(main_border, WIDGET_COLOR_INACTIVE,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(main_border, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(main_border, 0,
@@ -313,7 +313,7 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 	lv_obj_set_align(input_border, LV_ALIGN_CENTER);
 	lv_obj_clear_flag(input_border, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_set_style_radius(input_border, 7, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(input_border, THEME_COLOR_INPUT_BG,
+	lv_obj_set_style_bg_color(input_border, WIDGET_COLOR_INPUT_BG,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(input_border, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(input_border, 0,
@@ -328,20 +328,20 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 	lv_obj_set_align(preview_panel, LV_ALIGN_CENTER);
 	lv_obj_clear_flag(preview_panel, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_set_style_radius(preview_panel, 7, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(preview_panel, THEME_COLOR_SURFACE,
+	lv_obj_set_style_bg_color(preview_panel, WIDGET_COLOR_SURFACE,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(preview_panel, 255,
 							LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(preview_panel, 1,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_border_color(preview_panel, THEME_COLOR_CONTROL_BG,
+	lv_obj_set_style_border_color(preview_panel, WIDGET_COLOR_CONTROL_BG,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	// Create preview title
 	lv_obj_t *preview_title = lv_label_create(preview_panel);
 	lv_label_set_text(preview_title, "Live Preview");
 	lv_obj_align(preview_title, LV_ALIGN_TOP_MID, 0, 10);
-	lv_obj_set_style_text_color(preview_title, THEME_COLOR_TEXT_PRIMARY, 0);
+	lv_obj_set_style_text_color(preview_title, WIDGET_COLOR_TEXT_PRIMARY, 0);
 	lv_obj_set_style_text_font(preview_title, THEME_FONT_BODY, 0);
 
 	// Create preview lamp centered in the panel — same drawn arrow as the
@@ -376,7 +376,7 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 		lv_obj_set_style_text_color(status_text, THEME_COLOR_GREEN,
 									0); // Green when active
 	} else {
-		lv_obj_set_style_text_color(status_text, THEME_COLOR_TEXT_MUTED,
+		lv_obj_set_style_text_color(status_text, WIDGET_COLOR_TEXT_MUTED,
 									0); // Gray when inactive
 	}
 
@@ -400,7 +400,7 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 	lv_label_set_text_fmt(title, "%s Indicator Configuration",
 						  indicator_idx == 0 ? "Left" : "Right");
 	lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 15);
-	lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
+	lv_obj_set_style_text_color(title, WIDGET_COLOR_TEXT_PRIMARY, 0);
 	lv_obj_set_style_text_font(title, THEME_FONT_MEDIUM, 0);
 
 	// Create a container for inputs
@@ -415,7 +415,7 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 	lv_obj_t *input_title = lv_label_create(inputs_container);
 	lv_label_set_text(input_title, "Configuration Settings");
 	lv_obj_align(input_title, LV_ALIGN_CENTER, -244, -75);
-	lv_obj_set_style_text_color(input_title, THEME_COLOR_TEXT_PRIMARY, 0);
+	lv_obj_set_style_text_color(input_title, WIDGET_COLOR_TEXT_PRIMARY, 0);
 	lv_obj_set_style_text_font(input_title, THEME_FONT_BODY, 0);
 
 	// INPUT: Wire / CANBUS dropdown (top row - functionality to be added)
@@ -424,7 +424,7 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 	lv_obj_set_width(input_src_label, 110);
 	lv_obj_set_style_text_align(input_src_label, LV_TEXT_ALIGN_LEFT, 0);
 	lv_obj_align(input_src_label, LV_ALIGN_CENTER, -312, -32);
-	lv_obj_set_style_text_color(input_src_label, THEME_COLOR_TEXT_MUTED, 0);
+	lv_obj_set_style_text_color(input_src_label, WIDGET_COLOR_TEXT_MUTED, 0);
 	lv_obj_set_style_text_font(input_src_label, THEME_FONT_SMALL, 0);
 
 	lv_obj_t *input_src_dropdown = lv_dropdown_create(inputs_container);
@@ -444,14 +444,14 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 	lv_obj_set_width(can_id_label, 110);
 	lv_obj_set_style_text_align(can_id_label, LV_TEXT_ALIGN_LEFT, 0);
 	lv_obj_align(can_id_label, LV_ALIGN_CENTER, -312, 8);
-	lv_obj_set_style_text_color(can_id_label, THEME_COLOR_TEXT_MUTED, 0);
+	lv_obj_set_style_text_color(can_id_label, WIDGET_COLOR_TEXT_MUTED, 0);
 	lv_obj_set_style_text_font(can_id_label, THEME_FONT_SMALL, 0);
 
 	// CAN ID "0x" prefix
 	lv_obj_t *can_id_0x = lv_label_create(inputs_container);
 	lv_label_set_text(can_id_0x, "0x");
 	lv_obj_set_width(can_id_0x, 20);
-	lv_obj_set_style_text_color(can_id_0x, THEME_COLOR_TEXT_MUTED, 0);
+	lv_obj_set_style_text_color(can_id_0x, WIDGET_COLOR_TEXT_MUTED, 0);
 	lv_obj_align(can_id_0x, LV_ALIGN_CENTER, -200, 8);
 	lv_obj_set_style_text_align(can_id_0x, LV_TEXT_ALIGN_RIGHT, 0);
 	lv_obj_set_style_text_font(can_id_0x, THEME_FONT_SMALL, 0);
@@ -487,7 +487,7 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 	lv_obj_set_width(bit_pos_label, 110);
 	lv_obj_set_style_text_align(bit_pos_label, LV_TEXT_ALIGN_LEFT, 0);
 	lv_obj_align(bit_pos_label, LV_ALIGN_CENTER, -312, 48);
-	lv_obj_set_style_text_color(bit_pos_label, THEME_COLOR_TEXT_MUTED, 0);
+	lv_obj_set_style_text_color(bit_pos_label, WIDGET_COLOR_TEXT_MUTED, 0);
 	lv_obj_set_style_text_font(bit_pos_label, THEME_FONT_SMALL, 0);
 
 	lv_obj_t *bit_pos_dropdown = lv_dropdown_create(inputs_container);
@@ -518,7 +518,7 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 	lv_obj_set_width(toggle_mode_label, 110);
 	lv_obj_set_style_text_align(toggle_mode_label, LV_TEXT_ALIGN_LEFT, 0);
 	lv_obj_align(toggle_mode_label, LV_ALIGN_CENTER, -312, 88);
-	lv_obj_set_style_text_color(toggle_mode_label, THEME_COLOR_TEXT_MUTED, 0);
+	lv_obj_set_style_text_color(toggle_mode_label, WIDGET_COLOR_TEXT_MUTED, 0);
 	lv_obj_set_style_text_font(toggle_mode_label, THEME_FONT_SMALL, 0);
 
 	lv_obj_t *toggle_mode_dropdown = lv_dropdown_create(inputs_container);
@@ -547,7 +547,7 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 	lv_obj_set_width(animation_label, 110);
 	lv_obj_set_style_text_align(animation_label, LV_TEXT_ALIGN_LEFT, 0);
 	lv_obj_align(animation_label, LV_ALIGN_CENTER, -312, 128);
-	lv_obj_set_style_text_color(animation_label, THEME_COLOR_TEXT_MUTED, 0);
+	lv_obj_set_style_text_color(animation_label, WIDGET_COLOR_TEXT_MUTED, 0);
 	lv_obj_set_style_text_font(animation_label, THEME_FONT_SMALL, 0);
 
 	lv_obj_t *animation_switch = lv_switch_create(inputs_container);
@@ -611,7 +611,7 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 	lv_obj_t *save_btn = lv_btn_create(config_screen);
 	lv_obj_t *save_label = lv_label_create(save_btn);
 	lv_label_set_text(save_label, "Save");
-	lv_obj_set_style_bg_color(save_btn, THEME_COLOR_BTN_SAVE, LV_PART_MAIN);
+	lv_obj_set_style_bg_color(save_btn, WIDGET_COLOR_BTN_SAVE, LV_PART_MAIN);
 	lv_obj_set_align(save_btn, LV_ALIGN_CENTER);
 	lv_obj_set_pos(save_btn, 200, 200);
 	lv_obj_center(save_label);
@@ -620,7 +620,7 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 	lv_obj_t *back_btn = lv_btn_create(config_screen);
 	lv_obj_t *back_label = lv_label_create(back_btn);
 	lv_label_set_text(back_label, "Cancel");
-	lv_obj_set_style_bg_color(back_btn, THEME_COLOR_BTN_CANCEL, LV_PART_MAIN);
+	lv_obj_set_style_bg_color(back_btn, WIDGET_COLOR_BTN_CANCEL, LV_PART_MAIN);
 	lv_obj_set_align(back_btn, LV_ALIGN_CENTER);
 	lv_obj_set_pos(back_btn, 300, 200);
 	lv_obj_center(back_label);
@@ -700,7 +700,7 @@ void update_config_preview(uint8_t indicator_idx) {
 										0); // Green when active
 		} else {
 			lv_obj_set_style_text_color(preview_status_text_config,
-										THEME_COLOR_TEXT_MUTED,
+										WIDGET_COLOR_TEXT_MUTED,
 										0); // Gray when inactive
 		}
 	}

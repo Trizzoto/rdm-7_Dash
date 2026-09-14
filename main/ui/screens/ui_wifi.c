@@ -1,5 +1,6 @@
 #include "ui_wifi.h"
 #include "../theme.h"
+#include "kit/ui_kit.h"
 #include "screen_config.h"
 #include "net/wifi_manager.h"
 #include "storage/config_store.h"
@@ -74,6 +75,8 @@ static lv_obj_t *scan_btn          = NULL;
 /* Containers for conditional visibility */
 static lv_obj_t *ap_info_container      = NULL;  /* AP SSID/IP rows */
 static lv_obj_t *right_panel            = NULL;   /* available networks panel */
+static lv_obj_t *s_mode_note            = NULL;   /* stands in for it when not joining */
+static lv_obj_t *s_mode_note_text       = NULL;
 
 /* State */
 static lv_obj_t   *return_screen   = NULL;
@@ -92,12 +95,10 @@ static void _populate_scan_list(void);
 static void _show_password_modal(const char *ssid);
 static void _close_password_modal(void);
 static void _update_visibility(void);
-static void _style_section_card(lv_obj_t *card);
-static void _style_section_title(lv_obj_t *label);
-static void _style_keyboard(lv_obj_t *kb);
 static lv_obj_t *_add_password_eye(lv_obj_t *parent, lv_obj_t *ta);
 static lv_obj_t *_create_info_row(lv_obj_t *parent, const char *label_text,
                                   lv_obj_t **value_out);
+static lv_obj_t *_create_dropdown_row(lv_obj_t *parent, const char *label_text);
 
 /* Event callbacks */
 static void _back_btn_cb(lv_event_t *e);
@@ -201,286 +202,134 @@ const char *wifi_get_ap_ssid(void)
 
 static void _create_screen(void)
 {
-    wifi_screen = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(wifi_screen, THEME_COLOR_BG, 0);
-    lv_obj_set_style_bg_opa(wifi_screen, LV_OPA_COVER, 0);
-    lv_obj_clear_flag(wifi_screen, LV_OBJ_FLAG_SCROLLABLE);
+    wifi_screen = uk_screen();
 
-    /* -- Main container -------------------------------------------------- */
-    lv_obj_t *main_cont = lv_obj_create(wifi_screen);
-    lv_obj_set_size(main_cont, 780, 460);
-    lv_obj_align(main_cont, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(main_cont, THEME_COLOR_SURFACE, 0);
-    lv_obj_set_style_bg_opa(main_cont, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(main_cont, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_border_width(main_cont, 1, 0);
-    lv_obj_set_style_radius(main_cont, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_pad_all(main_cont, 0, 0);
-    lv_obj_clear_flag(main_cont, LV_OBJ_FLAG_SCROLLABLE);
+    /* -- Brand bar: title, live status, Back ------------------------------ */
+    lv_obj_t *bar = uk_bar(wifi_screen, "WiFi", UK_BAR_BACK, _back_btn_cb, NULL);
 
-    /* -- Header bar ------------------------------------------------------ */
-    lv_obj_t *header = lv_obj_create(main_cont);
-    lv_obj_set_size(header, 780, 44);
-    lv_obj_align(header, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_bg_color(header, THEME_COLOR_SURFACE, 0);
-    lv_obj_set_style_bg_opa(header, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(header, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_border_width(header, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_side(header, LV_BORDER_SIDE_BOTTOM, 0);
-    lv_obj_set_style_radius(header, 0, 0);
-    lv_obj_set_style_pad_hor(header, 10, 0);
-    lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
-
-    /* Back button */
-    lv_obj_t *back_btn = lv_btn_create(header);
-    lv_obj_set_size(back_btn, 70, 30);
-    lv_obj_align(back_btn, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_bg_color(back_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(back_btn, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(back_btn, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_border_width(back_btn, 1, 0);
-    lv_obj_set_style_radius(back_btn, THEME_RADIUS_SMALL, 0);
-    lv_obj_set_style_shadow_width(back_btn, 0, 0);
-    lv_obj_add_event_cb(back_btn, _back_btn_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t *back_lbl = lv_label_create(back_btn);
-    lv_label_set_text(back_lbl, LV_SYMBOL_LEFT " Back");
-    lv_obj_set_style_text_font(back_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(back_lbl, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_center(back_lbl);
-
-    /* Title */
-    lv_obj_t *title = lv_label_create(header);
-    lv_label_set_text(title, "Wi-Fi Settings");
-    lv_obj_set_style_text_font(title, THEME_FONT_LARGE, 0);
-    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
-
-    /* Status */
-    status_label = lv_label_create(header);
-    lv_label_set_text(status_label, "");
-    lv_obj_set_style_text_font(status_label, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(status_label, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_align(status_label, LV_ALIGN_RIGHT_MID, -5, 0);
+    /* Status text in the bar's status strip; _refresh_status repaints it
+     * (text and colour) every tick. */
+    status_label = uk_bar_status(bar, false, UK_TONE_MUTED, "");
 
     /* -- Body area ------------------------------------------------------- */
-    lv_obj_t *body = lv_obj_create(main_cont);
-    lv_obj_set_size(body, 780, 416);
-    lv_obj_align(body, LV_ALIGN_TOP_LEFT, 0, 44);
-    lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(body, 0, 0);
-    lv_obj_set_style_pad_all(body, 10, 0);
-    lv_obj_set_style_pad_gap(body, 10, 0);
-    lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *body = uk_body(wifi_screen);
 
     /* == LEFT PANEL (controls) =========================================== */
     lv_obj_t *left_panel = lv_obj_create(body);
-    lv_obj_set_size(left_panel, 350, 396);
+    lv_obj_remove_style_all(left_panel);
+    lv_obj_set_size(left_panel, 340, LV_PCT(100));
     lv_obj_align(left_panel, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_bg_opa(left_panel, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(left_panel, 0, 0);
-    lv_obj_set_style_pad_all(left_panel, 0, 0);
-    lv_obj_set_style_pad_gap(left_panel, 10, 0);
+    lv_obj_set_style_pad_row(left_panel, UK_GAP, 0);
     lv_obj_set_flex_flow(left_panel, LV_FLEX_FLOW_COLUMN);
-    lv_obj_clear_flag(left_panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(left_panel, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
-    /* -- Controls section card ------------------------------------------- */
-    lv_obj_t *ctrl_card = lv_obj_create(left_panel);
-    lv_obj_set_size(ctrl_card, 350, LV_SIZE_CONTENT);
-    lv_obj_set_style_min_height(ctrl_card, 80, 0);
-    _style_section_card(ctrl_card);
+    /* -- Connection card -------------------------------------------------- */
+    lv_obj_t *ctrl_card = uk_card(left_panel);
     lv_obj_set_flex_flow(ctrl_card, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_gap(ctrl_card, 6, 0);
 
-    /* Section title */
-    lv_obj_t *ctrl_title = lv_label_create(ctrl_card);
-    lv_label_set_text(ctrl_title, "CONTROLS");
-    _style_section_title(ctrl_title);
+    uk_section(ctrl_card, "Connection");
 
     /* Mode dropdown row — replaces the old WiFi on/off + Hotspot on/off
      * toggles with a single mutually-exclusive selector. */
-    lv_obj_t *mode_row = lv_obj_create(ctrl_card);
-    lv_obj_set_size(mode_row, LV_PCT(100), 36);
-    lv_obj_set_style_bg_opa(mode_row, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(mode_row, 0, 0);
-    lv_obj_set_style_pad_all(mode_row, 0, 0);
-    lv_obj_clear_flag(mode_row, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *mode_lbl = lv_label_create(mode_row);
-    lv_label_set_text(mode_lbl, "Mode");
-    lv_obj_set_style_text_font(mode_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(mode_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_align(mode_lbl, LV_ALIGN_LEFT_MID, 0, 0);
-
-    mode_dropdown = lv_dropdown_create(mode_row);
-    lv_dropdown_set_options_static(mode_dropdown, "Off\nWiFi (Client)\nHotspot (AP)");
-    lv_obj_set_size(mode_dropdown, 170, 30);
-    lv_obj_align(mode_dropdown, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_bg_color(mode_dropdown, THEME_COLOR_INPUT_BG, 0);
-    lv_obj_set_style_bg_opa(mode_dropdown, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(mode_dropdown, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_border_width(mode_dropdown, 1, 0);
-    lv_obj_set_style_radius(mode_dropdown, THEME_RADIUS_SMALL, 0);
-    lv_obj_set_style_text_color(mode_dropdown, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_set_style_text_font(mode_dropdown, THEME_FONT_SMALL, 0);
+    mode_dropdown = _create_dropdown_row(ctrl_card, "Right now");
     lv_obj_add_event_cb(mode_dropdown, _mode_dropdown_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     /* AP info container (hidden when not in Hotspot mode) */
     ap_info_container = lv_obj_create(ctrl_card);
+    lv_obj_remove_style_all(ap_info_container);
     lv_obj_set_size(ap_info_container, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_opa(ap_info_container, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(ap_info_container, 0, 0);
-    lv_obj_set_style_pad_all(ap_info_container, 0, 0);
-    lv_obj_set_style_pad_gap(ap_info_container, 4, 0);
+    lv_obj_set_style_pad_row(ap_info_container, 4, 0);
     lv_obj_set_flex_flow(ap_info_container, LV_FLEX_FLOW_COLUMN);
-    lv_obj_clear_flag(ap_info_container, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(ap_info_container, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
-    _create_info_row(ap_info_container, "SSID:", &ap_ssid_label);
-    _create_info_row(ap_info_container, "IP:", &ap_ip_label);
+    _create_info_row(ap_info_container, "Hotspot name", &ap_ssid_label);
+    _create_info_row(ap_info_container, "Address", &ap_ip_label);
 
-    /* AP password row */
-    lv_obj_t *pass_lbl = lv_label_create(ap_info_container);
-    lv_label_set_text(pass_lbl, "Hotspot Password:");
-    lv_obj_set_style_text_font(pass_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(pass_lbl, THEME_COLOR_TEXT_MUTED, 0);
-
+    /* AP password row: key, field, Save. Kept high on the screen on purpose:
+     * the hotspot keyboard covers the bottom 200 px, and the field must stay
+     * visible above it while typing. */
     lv_obj_t *pass_row = lv_obj_create(ap_info_container);
-    lv_obj_set_size(pass_row, LV_PCT(100), 34);
-    lv_obj_set_style_bg_opa(pass_row, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(pass_row, 0, 0);
-    lv_obj_set_style_pad_all(pass_row, 0, 0);
-    lv_obj_clear_flag(pass_row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_style_all(pass_row);
+    lv_obj_set_size(pass_row, LV_PCT(100), UK_BTN_H);
+    lv_obj_set_flex_flow(pass_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(pass_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(pass_row, 8, 0);
+    lv_obj_clear_flag(pass_row, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+    uk_label(pass_row, "Password", UK_FONT_BODY, UK_TONE_MUTED);
 
     ap_pass_input = lv_textarea_create(pass_row);
-    lv_obj_set_size(ap_pass_input, 200, 30);
-    lv_obj_align(ap_pass_input, LV_ALIGN_LEFT_MID, 0, 0);
     lv_textarea_set_one_line(ap_pass_input, true);
     lv_textarea_set_max_length(ap_pass_input, 63);
-    lv_textarea_set_placeholder_text(ap_pass_input, "Min 8 chars");
-    lv_obj_set_style_bg_color(ap_pass_input, THEME_COLOR_INPUT_BG, 0);
-    lv_obj_set_style_bg_opa(ap_pass_input, LV_OPA_COVER, 0);
-    lv_obj_set_style_text_color(ap_pass_input, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_set_style_text_font(ap_pass_input, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_border_color(ap_pass_input, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_border_width(ap_pass_input, 1, 0);
-    lv_obj_set_style_radius(ap_pass_input, THEME_RADIUS_SMALL, 0);
-    lv_obj_set_style_text_color(ap_pass_input, THEME_COLOR_TEXT_GHOST,
-                                LV_PART_TEXTAREA_PLACEHOLDER);
+    lv_textarea_set_placeholder_text(ap_pass_input, "8+ characters");
+    lv_obj_set_flex_grow(ap_pass_input, 1);
+    uk_style_textarea(ap_pass_input);
     /* CLICKED, not FOCUSED: with a touchscreen and no input group there is
      * nothing to move focus, so FOCUSED never fires and the field looked
      * dead — tapping it did nothing at all. */
     lv_obj_add_event_cb(ap_pass_input, _ap_pass_tap_cb, LV_EVENT_CLICKED, NULL);
 
-    lv_obj_t *set_btn = lv_btn_create(pass_row);
-    lv_obj_set_size(set_btn, 60, 28);
-    lv_obj_align(set_btn, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_bg_color(set_btn, THEME_COLOR_BTN_SAVE, 0);
-    lv_obj_set_style_bg_opa(set_btn, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(set_btn, THEME_RADIUS_SMALL, 0);
-    lv_obj_set_style_shadow_width(set_btn, 0, 0);
-    lv_obj_set_style_bg_color(set_btn, THEME_COLOR_BTN_SAVE_PRESSED, LV_STATE_PRESSED);
-    lv_obj_add_event_cb(set_btn, _ap_pass_set_cb, LV_EVENT_CLICKED, NULL);
+    uk_btn(pass_row, UK_ICON_NONE, "Save", UK_BTN_PRIMARY, _ap_pass_set_cb, NULL);
 
-    lv_obj_t *set_lbl = lv_label_create(set_btn);
-    lv_label_set_text(set_lbl, "Set");
-    lv_obj_set_style_text_font(set_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(set_lbl, THEME_COLOR_TEXT_ON_ACCENT, 0);
-    lv_obj_center(set_lbl);
-
-    /* Error/status label below password row */
-    ap_pass_error = lv_label_create(ap_info_container);
-    lv_label_set_text(ap_pass_error, "");
-    lv_obj_set_style_text_font(ap_pass_error, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(ap_pass_error, THEME_COLOR_STATUS_ERROR, 0);
+    /* Error/status line below the password row */
+    ap_pass_error = uk_label(ap_info_container, "", UK_FONT_SMALL, UK_TONE_DANGER);
 
     /* Boot-mode dropdown — same 3 options, persisted via config_store_save_wifi_boot.
      * Replaces the old pair of "WiFi on Boot" / "Hotspot on Boot" toggles. */
-    lv_obj_t *boot_row = lv_obj_create(ctrl_card);
-    lv_obj_set_size(boot_row, LV_PCT(100), 36);
-    lv_obj_set_style_bg_opa(boot_row, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(boot_row, 0, 0);
-    lv_obj_set_style_pad_all(boot_row, 0, 0);
-    lv_obj_clear_flag(boot_row, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *boot_lbl = lv_label_create(boot_row);
-    lv_label_set_text(boot_lbl, "Start on Boot");
-    lv_obj_set_style_text_font(boot_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(boot_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_align(boot_lbl, LV_ALIGN_LEFT_MID, 0, 0);
-
-    boot_dropdown = lv_dropdown_create(boot_row);
-    lv_dropdown_set_options_static(boot_dropdown, "Off\nWiFi (Client)\nHotspot (AP)");
-    lv_obj_set_size(boot_dropdown, 170, 30);
-    lv_obj_align(boot_dropdown, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_bg_color(boot_dropdown, THEME_COLOR_INPUT_BG, 0);
-    lv_obj_set_style_bg_opa(boot_dropdown, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(boot_dropdown, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_border_width(boot_dropdown, 1, 0);
-    lv_obj_set_style_radius(boot_dropdown, THEME_RADIUS_SMALL, 0);
-    lv_obj_set_style_text_color(boot_dropdown, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_set_style_text_font(boot_dropdown, THEME_FONT_SMALL, 0);
+    boot_dropdown = _create_dropdown_row(ctrl_card, "At start-up");
     lv_obj_add_event_cb(boot_dropdown, _boot_dropdown_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     /* == RIGHT PANEL (available networks) ================================ */
-    right_panel = lv_obj_create(body);
-    lv_obj_set_size(right_panel, 390, 396);
+    right_panel = uk_card(body);
+    lv_obj_set_size(right_panel, 426, LV_PCT(100));
     lv_obj_align(right_panel, LV_ALIGN_TOP_RIGHT, 0, 0);
-    _style_section_card(right_panel);
     lv_obj_set_flex_flow(right_panel, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_gap(right_panel, 6, 0);
 
-    lv_obj_t *scan_title = lv_label_create(right_panel);
-    lv_label_set_text(scan_title, "AVAILABLE NETWORKS");
-    _style_section_title(scan_title);
+    uk_section(right_panel, "Networks nearby");
+
+    /* Same place, other modes: a hotspot or WiFi-off screen has no networks
+     * to list, and half a screen of nothing read as broken. */
+    s_mode_note = uk_card(body);
+    lv_obj_set_size(s_mode_note, 426, LV_PCT(100));
+    lv_obj_align(s_mode_note, LV_ALIGN_TOP_RIGHT, 0, 0);
+    lv_obj_set_flex_flow(s_mode_note, LV_FLEX_FLOW_COLUMN);
+    uk_section(s_mode_note, "How it connects");
+    s_mode_note_text = uk_label(s_mode_note, "", UK_FONT_BODY, UK_TONE_MUTED);
+    lv_obj_set_width(s_mode_note_text, LV_PCT(100));
+    lv_label_set_long_mode(s_mode_note_text, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_line_space(s_mode_note_text, 5, 0);
+    lv_obj_add_flag(s_mode_note, LV_OBJ_FLAG_HIDDEN);
 
     /* Scan results list — flex-grows to fill the panel so the footer (Scan
      * button + spinner) always sits pinned at the bottom. */
     wifi_list = lv_list_create(right_panel);
     lv_obj_set_width(wifi_list, LV_PCT(100));
     lv_obj_set_flex_grow(wifi_list, 1);
-    lv_obj_set_style_bg_color(wifi_list, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(wifi_list, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(wifi_list, 0, 0);
-    lv_obj_set_style_radius(wifi_list, THEME_RADIUS_SMALL, 0);
+    uk_style_list(wifi_list);
     lv_obj_set_style_pad_all(wifi_list, 0, 0);
     lv_obj_set_style_pad_gap(wifi_list, 0, 0);
-    lv_obj_set_style_bg_color(wifi_list, THEME_COLOR_SCROLLBAR, LV_PART_SCROLLBAR);
-    lv_obj_set_style_bg_opa(wifi_list, LV_OPA_50, LV_PART_SCROLLBAR);
 
-    /* Footer row — spinner (left) + Scan Again (right), pinned at the bottom. */
+    /* Footer row — spinner (left) + Scan again (right), pinned at the bottom. */
     lv_obj_t *footer = lv_obj_create(right_panel);
-    lv_obj_set_size(footer, LV_PCT(100), 40);
-    lv_obj_set_style_bg_opa(footer, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(footer, 0, 0);
-    lv_obj_set_style_pad_all(footer, 0, 0);
-    lv_obj_clear_flag(footer, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_style_all(footer);
+    lv_obj_set_size(footer, LV_PCT(100), UK_BTN_H);
+    lv_obj_clear_flag(footer, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
     /* Connection spinner (hidden by default) */
     connection_spinner = lv_spinner_create(footer, 1000, 60);
     lv_obj_set_size(connection_spinner, 28, 28);
     lv_obj_align(connection_spinner, LV_ALIGN_LEFT_MID, 4, 0);
-    lv_obj_set_style_arc_color(connection_spinner, THEME_COLOR_ACCENT_BLUE, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_color(connection_spinner, THEME_COLOR_SECTION_BG, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(connection_spinner, THEME_COLOR_TEXT_PRIMARY, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(connection_spinner, THEME_COLOR_CONTROL_BG, LV_PART_MAIN);
     lv_obj_set_style_arc_width(connection_spinner, 4, LV_PART_INDICATOR);
     lv_obj_set_style_arc_width(connection_spinner, 4, LV_PART_MAIN);
     lv_obj_add_flag(connection_spinner, LV_OBJ_FLAG_HIDDEN);
 
     /* Scan button — pinned bottom-right */
-    scan_btn = lv_btn_create(footer);
-    lv_obj_set_size(scan_btn, 134, 34);
-    lv_obj_align(scan_btn, LV_ALIGN_RIGHT_MID, -2, 0);
-    lv_obj_set_style_bg_color(scan_btn, THEME_COLOR_BTN_SAVE, 0);
-    lv_obj_set_style_bg_opa(scan_btn, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(scan_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_shadow_width(scan_btn, 0, 0);
-    lv_obj_set_style_bg_color(scan_btn, THEME_COLOR_BTN_SAVE_PRESSED, LV_STATE_PRESSED);
-    lv_obj_add_event_cb(scan_btn, _scan_btn_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t *scan_lbl = lv_label_create(scan_btn);
-    lv_label_set_text(scan_lbl, LV_SYMBOL_REFRESH "  Scan Again");
-    lv_obj_set_style_text_font(scan_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(scan_lbl, THEME_COLOR_TEXT_ON_ACCENT, 0);
-    lv_obj_center(scan_lbl);
+    scan_btn = uk_btn(footer, UK_ICON_RESET, "Scan again", UK_BTN_NEUTRAL,
+                      _scan_btn_cb, NULL);
+    lv_obj_align(scan_btn, LV_ALIGN_RIGHT_MID, 0, 0);
 
     /* -- Load initial state ---------------------------------------------- */
     lv_dropdown_set_selected(mode_dropdown, (uint16_t)_current_mode());
@@ -530,10 +379,10 @@ static void _destroy_screen(void)
         lv_timer_del(connect_timeout_timer);
         connect_timeout_timer = NULL;
     }
-    /* Clear modal pointers before deleting screen (children deleted by parent) */
-    password_modal = NULL;
-    password_input = NULL;
-    wifi_keyboard  = NULL;
+    /* The join-network popup and its keyboard live on lv_layer_top(), which
+     * survives the screen, so close them explicitly. The hotspot keyboard is
+     * a child of the screen and goes with it — just drop the pointer. */
+    _close_password_modal();
     ap_keyboard    = NULL;
     if (wifi_screen) {
         lv_obj_del(wifi_screen);
@@ -552,70 +401,47 @@ static void _destroy_screen(void)
     scan_btn = NULL;
     ap_info_container = NULL;
     right_panel = NULL;
+    s_mode_note = NULL;
+    s_mode_note_text = NULL;
 }
 
 /* =========================================================================
  * Style helpers
  * ========================================================================= */
 
-static void _style_section_card(lv_obj_t *card)
+/* Label on the left, a kit dropdown on the right offering the three modes.
+ * The Right now and At start-up rows are the same shape, so they share it. */
+static lv_obj_t *_create_dropdown_row(lv_obj_t *parent, const char *label_text)
 {
-    lv_obj_set_style_bg_color(card, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(card, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_border_width(card, 1, 0);
-    lv_obj_set_style_radius(card, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_pad_all(card, THEME_PAD_NORMAL, 0);
-    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-}
+    lv_obj_t *row = lv_obj_create(parent);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, LV_PCT(100), UK_BTN_H);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
-static void _style_section_title(lv_obj_t *label)
-{
-    lv_obj_set_style_text_font(label, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(label, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_set_style_text_letter_space(label, 1, 0);
-}
+    lv_obj_t *lbl = uk_label(row, label_text, UK_FONT_BODY, UK_TONE_TEXT);
+    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 0, 0);
 
-/* Shared look for both on-screen keyboards (join-network modal and the
- * hotspot-password row), so the second one can never drift from the first. */
-static void _style_keyboard(lv_obj_t *kb)
-{
-    lv_obj_set_style_bg_color(kb, THEME_COLOR_SURFACE, 0);
-    lv_obj_set_style_bg_opa(kb, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(kb, 0, 0);
-    lv_obj_set_style_pad_all(kb, 4, 0);
-    lv_obj_set_style_pad_gap(kb, 4, 0);
-
-    lv_obj_set_style_bg_color(kb, THEME_COLOR_SECTION_BG, LV_PART_ITEMS);
-    lv_obj_set_style_bg_opa(kb, LV_OPA_COVER, LV_PART_ITEMS);
-    lv_obj_set_style_text_color(kb, THEME_COLOR_TEXT_PRIMARY, LV_PART_ITEMS);
-    lv_obj_set_style_text_font(kb, THEME_FONT_BODY, LV_PART_ITEMS);
-    lv_obj_set_style_border_width(kb, 1, LV_PART_ITEMS);
-    lv_obj_set_style_border_color(kb, THEME_COLOR_BORDER, LV_PART_ITEMS);
-    lv_obj_set_style_radius(kb, THEME_RADIUS_NORMAL, LV_PART_ITEMS);
-    lv_obj_set_style_bg_color(kb, THEME_COLOR_ACCENT_BLUE,
-                              LV_PART_ITEMS | LV_STATE_PRESSED);
+    /* Option order is wifi_ui_mode_t: Off, client (STA), hotspot (AP). */
+    lv_obj_t *dd = lv_dropdown_create(row);
+    lv_dropdown_set_options_static(dd, "Off\nJoin a network\nHotspot");
+    lv_obj_set_size(dd, 180, UK_BTN_H);
+    lv_obj_align(dd, LV_ALIGN_RIGHT_MID, 0, 0);
+    uk_style_dropdown(dd);
+    return dd;
 }
 
 /* Show/hide toggle for a masked password field. LVGL v8 has no built-in
- * reveal, so this flips lv_textarea_set_password_mode() and swaps the icon.
- * The button carries the textarea as user data — there are two password
- * fields on this screen and a static would tie the toggle to whichever
- * was built last. */
+ * reveal, so this flips lv_textarea_set_password_mode() and swaps the glyph.
+ * The kit has no eye icon, so the button's label carries LVGL's eye symbol.
+ * The button carries the textarea as user data — there could be more than
+ * one password field on this screen and a static would tie the toggle to
+ * whichever was built last. */
 static lv_obj_t *_add_password_eye(lv_obj_t *parent, lv_obj_t *ta)
 {
-    lv_obj_t *eye = lv_btn_create(parent);
-    lv_obj_set_size(eye, 40, 40);
-    lv_obj_set_style_bg_opa(eye, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(eye, 0, 0);
-    lv_obj_set_style_shadow_width(eye, 0, 0);
-    lv_obj_add_event_cb(eye, _password_eye_cb, LV_EVENT_CLICKED, ta);
-
-    lv_obj_t *icon = lv_label_create(eye);
-    lv_label_set_text(icon, LV_SYMBOL_EYE_OPEN);
-    lv_obj_set_style_text_font(icon, THEME_FONT_BODY, 0);
-    lv_obj_set_style_text_color(icon, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_center(icon);
+    lv_obj_t *eye = uk_btn(parent, UK_ICON_NONE, LV_SYMBOL_EYE_OPEN, UK_BTN_NEUTRAL,
+                           _password_eye_cb, ta);
+    lv_obj_set_size(eye, 44, UK_BTN_H);
+    lv_obj_set_style_pad_hor(eye, 0, 0);
     return eye;
 }
 
@@ -628,38 +454,24 @@ static void _password_eye_cb(lv_event_t *e)
     bool masked = lv_textarea_get_password_mode(ta);
     lv_textarea_set_password_mode(ta, !masked);
 
-    lv_obj_t *icon = lv_obj_get_child(btn, 0);
+    lv_obj_t *icon = uk_btn_label(btn);
     if (icon) {
         /* Now unmasked -> offer "hide"; still masked -> offer "show". */
         lv_label_set_text(icon, masked ? LV_SYMBOL_EYE_CLOSE
                                        : LV_SYMBOL_EYE_OPEN);
-        lv_obj_set_style_text_color(icon,
-                                    masked ? THEME_COLOR_ACCENT_BLUE
-                                           : THEME_COLOR_TEXT_MUTED, 0);
     }
+    /* Revealed reads as a toggle that is on. */
+    uk_btn_set_kind(btn, masked ? UK_BTN_ON : UK_BTN_NEUTRAL);
 }
 
+/* Key / value row (kit row, a little tighter so the hotspot rows keep the
+ * password field above the keyboard). Hands back the value label. */
 static lv_obj_t *_create_info_row(lv_obj_t *parent, const char *label_text,
                                   lv_obj_t **value_out)
 {
-    lv_obj_t *row = lv_obj_create(parent);
-    lv_obj_set_size(row, LV_PCT(100), 20);
-    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(row, 0, 0);
-    lv_obj_set_style_pad_all(row, 0, 0);
-    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *lbl = lv_label_create(row);
-    lv_label_set_text(lbl, label_text);
-    lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(lbl, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 0, 0);
-
-    lv_obj_t *val = lv_label_create(row);
-    lv_label_set_text(val, "---");
-    lv_obj_set_style_text_font(val, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(val, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_align(val, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_t *val = uk_row(parent, label_text, "---");
+    lv_obj_t *row = lv_obj_get_parent(val);
+    lv_obj_set_style_pad_ver(row, 4, 0);
 
     if (value_out) *value_out = val;
     return row;
@@ -700,6 +512,26 @@ static void _update_visibility(void)
         if (mode == WIFI_UI_MODE_STA) lv_obj_clear_flag(right_panel, LV_OBJ_FLAG_HIDDEN);
         else                          lv_obj_add_flag  (right_panel, LV_OBJ_FLAG_HIDDEN);
     }
+    if (s_mode_note && s_mode_note_text) {
+        if (mode == WIFI_UI_MODE_STA) {
+            lv_obj_add_flag(s_mode_note, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_clear_flag(s_mode_note, LV_OBJ_FLAG_HIDDEN);
+            if (mode == WIFI_UI_MODE_AP) {
+                lv_label_set_text_fmt(s_mode_note_text,
+                    "The dash is its own WiFi hotspot.\n\n"
+                    "On your phone or laptop, join %s with the password on the "
+                    "left, then open 192.168.4.1 to use the web editor.\n\n"
+                    "To put the dash on your own WiFi instead, set Right now to "
+                    "Join a network.", wifi_manager_get_ap_ssid());
+            } else {
+                lv_label_set_text(s_mode_note_text,
+                    "WiFi is off.\n\n"
+                    "Set Right now to Hotspot to reach the dash from your phone, "
+                    "or to Join a network to put it on your own WiFi.");
+            }
+        }
+    }
 }
 
 /* =========================================================================
@@ -727,11 +559,11 @@ static void _refresh_status(lv_timer_t *t)
             break;
         case WIFI_MGR_STATE_SCANNING:
             status_text = "Scanning...";
-            status_color = THEME_COLOR_ACCENT_BLUE;
+            status_color = THEME_COLOR_TEXT_PRIMARY;
             break;
         case WIFI_MGR_STATE_CONNECTING:
             status_text = "Connecting...";
-            status_color = THEME_COLOR_ACCENT_BLUE;
+            status_color = THEME_COLOR_TEXT_PRIMARY;
             break;
         case WIFI_MGR_STATE_CONNECTED: {
             const char *ip = wifi_manager_get_sta_ip();
@@ -745,11 +577,11 @@ static void _refresh_status(lv_timer_t *t)
             break;
         }
         case WIFI_MGR_STATE_AP_ONLY:
-            status_text = "AP Only";
+            status_text = "Hotspot only";
             status_color = THEME_COLOR_ACCENT_ORANGE;
             break;
         case WIFI_MGR_STATE_FAILED:
-            status_text = "Connection Failed";
+            status_text = "Could not connect";
             status_color = THEME_COLOR_STATUS_ERROR;
             break;
         }
@@ -838,8 +670,8 @@ static bool _ssid_is_saved(const wifi_credentials_t *list, uint8_t list_count,
 }
 
 /* Draw a compact 4-bar signal-strength indicator (increasing height) pinned to
- * the right edge of `parent`. Bars below the RSSI level use the accent colour;
- * the remainder stay on a dim track. */
+ * the right edge of `parent`. Bars below the RSSI level are drawn in the text
+ * colour; the remainder stay on a dim track. */
 static void _add_signal_bars(lv_obj_t *parent, int8_t rssi)
 {
     int level = _rssi_level(rssi);
@@ -859,13 +691,13 @@ static void _add_signal_bars(lv_obj_t *parent, int8_t rssi)
         lv_obj_set_style_radius(bar, 1, 0);
         lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
         lv_obj_set_style_bg_color(bar,
-            (i < level) ? THEME_COLOR_ACCENT_BLUE : THEME_COLOR_SCROLLBAR, 0);
+            (i < level) ? THEME_COLOR_TEXT_PRIMARY : THEME_COLOR_BORDER_MED, 0);
     }
 }
 
-/* Build one network row in the scan list with a polished two-line layout:
+/* Build one network row in the scan list with a two-line layout:
  *   [wifi]  SSID                                       [signal bars]
- *           open / dBm                          [Forget]
+ *           open, dBm                           [Forget]
  * Wires up the tap-to-connect handler and (for saved networks) an inline
  * Forget button. `out_of_range` marks a saved entry not seen in the last scan
  * (rssi ignored, no bars, not tappable). */
@@ -875,29 +707,28 @@ static void _add_network_row(const char *ssid_raw, int8_t rssi, bool secured,
     char safe[33];
     _sanitize_ssid(ssid_raw, safe, sizeof(safe));
 
+    /* Rows sit on the list's own fill; pressed lifts to the raised neutral,
+     * and a hairline divides one network from the next. */
     lv_obj_t *row = lv_btn_create(wifi_list);
+    lv_obj_remove_style_all(row);
     lv_obj_set_width(row, LV_PCT(100));
-    lv_obj_set_height(row, 46);
-    lv_obj_set_style_bg_color(row, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(row, THEME_COLOR_SCROLLBAR, LV_STATE_PRESSED);
-    lv_obj_set_style_radius(row, 0, 0);
-    lv_obj_set_style_shadow_width(row, 0, 0);
-    lv_obj_set_style_pad_all(row, 0, 0);
-    /* Hairline divider between networks — medium grey on the dark-grey rows. */
-    lv_obj_set_style_border_color(row, THEME_COLOR_SCROLLBAR, 0);
+    lv_obj_set_height(row, 50);
+    lv_obj_set_style_bg_color(row, THEME_COLOR_HIGHLIGHT, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(row, THEME_COLOR_BORDER, 0);
     lv_obj_set_style_border_width(row, 1, 0);
     lv_obj_set_style_border_side(row, LV_BORDER_SIDE_BOTTOM, 0);
-    lv_obj_set_style_border_opa(row, LV_OPA_50, 0);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
 
-    /* Connected network gets a blue accent stripe down the left edge. */
+    /* The connected network is the selected one: a short accent bar at the
+     * left edge, inset so it stays clear of the list's rounded corner. */
     if (connected) {
         lv_obj_t *stripe = lv_obj_create(row);
         lv_obj_remove_style_all(stripe);
-        lv_obj_set_size(stripe, 3, 46);
-        lv_obj_align(stripe, LV_ALIGN_LEFT_MID, 0, 0);
-        lv_obj_set_style_bg_color(stripe, THEME_COLOR_ACCENT_BLUE, 0);
+        lv_obj_set_size(stripe, 3, 30);
+        lv_obj_align(stripe, LV_ALIGN_LEFT_MID, 3, 0);
+        lv_obj_set_style_radius(stripe, 2, 0);
+        lv_obj_set_style_bg_color(stripe, THEME_COLOR_ACCENT, 0);
         lv_obj_set_style_bg_opa(stripe, LV_OPA_COVER, 0);
         lv_obj_clear_flag(stripe, LV_OBJ_FLAG_CLICKABLE);
     }
@@ -913,40 +744,37 @@ static void _add_network_row(const char *ssid_raw, int8_t rssi, bool secured,
     }
 
     /* WiFi glyph */
-    lv_obj_t *icon = lv_label_create(row);
-    lv_label_set_text(icon, LV_SYMBOL_WIFI);
-    lv_obj_set_style_text_font(icon, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(icon,
-        connected ? THEME_COLOR_STATUS_CONNECTED : THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_align(icon, LV_ALIGN_LEFT_MID, 10, 0);
+    lv_obj_t *icon = uk_icon(row, UK_ICON_WIFI, UK_ICON_MD,
+                             connected ? UK_TONE_OK : UK_TONE_MUTED);
+    lv_obj_align(icon, LV_ALIGN_LEFT_MID, 12, 0);
 
     /* SSID name */
     lv_obj_t *name = lv_label_create(row);
     lv_label_set_text(name, safe);
-    lv_obj_set_style_text_font(name, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_font(name, uk_font(UK_FONT_BODY), 0);
     lv_obj_set_style_text_color(name,
         connected ? THEME_COLOR_STATUS_CONNECTED : THEME_COLOR_TEXT_PRIMARY, 0);
     lv_obj_set_width(name, 196);
     lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
-    lv_obj_align(name, LV_ALIGN_TOP_LEFT, 34, 7);
+    lv_obj_align(name, LV_ALIGN_TOP_LEFT, 44, 8);
     if (out_of_range) lv_obj_set_style_text_opa(name, LV_OPA_60, 0);
 
     /* Secondary line: security + signal in dBm (or out-of-range note) */
     char meta[48];
     if (out_of_range) {
-        snprintf(meta, sizeof(meta), "saved  \xE2\x80\xA2  out of range");
+        snprintf(meta, sizeof(meta), "Saved, out of range");
     } else if (connected) {
-        snprintf(meta, sizeof(meta), "connected  \xE2\x80\xA2  %d dBm", (int)rssi);
+        snprintf(meta, sizeof(meta), "Connected, %d dBm", (int)rssi);
     } else {
         snprintf(meta, sizeof(meta), "%s%d dBm",
-                 secured ? "" : "open  \xE2\x80\xA2  ", (int)rssi);
+                 secured ? "" : "Open, ", (int)rssi);
     }
     lv_obj_t *sub = lv_label_create(row);
     lv_label_set_text(sub, meta);
-    lv_obj_set_style_text_font(sub, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_font(sub, uk_font(UK_FONT_SMALL), 0);
     lv_obj_set_style_text_color(sub,
         connected ? THEME_COLOR_STATUS_CONNECTED : THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_align(sub, LV_ALIGN_TOP_LEFT, 34, 25);
+    lv_obj_align(sub, LV_ALIGN_TOP_LEFT, 44, 28);
 
     /* Signal bars (skip for out-of-range) */
     if (!out_of_range) {
@@ -960,25 +788,30 @@ static void _add_network_row(const char *ssid_raw, int8_t rssi, bool secured,
             strncpy(forget_ssid, ssid_raw, 32);
             forget_ssid[32] = '\0';
         }
-        lv_obj_t *fb = lv_btn_create(row);
-        lv_obj_set_size(fb, 52, 22);
+        lv_obj_t *fb = uk_btn(row, UK_ICON_NONE, "Forget", UK_BTN_DANGER, NULL, NULL);
+        lv_obj_set_size(fb, 72, 30);
+        lv_obj_set_style_pad_hor(fb, 0, 0);
         /* Sit left of the signal bars when they're present, else far right. */
         lv_obj_align(fb, LV_ALIGN_RIGHT_MID, out_of_range ? -10 : -48, 0);
-        lv_obj_set_style_bg_color(fb, THEME_COLOR_BTN_DANGER_BG, 0);
-        lv_obj_set_style_bg_opa(fb, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_color(fb, THEME_COLOR_STATUS_ERROR, 0);
-        lv_obj_set_style_border_width(fb, 1, 0);
-        lv_obj_set_style_radius(fb, THEME_RADIUS_SMALL, 0);
-        lv_obj_set_style_shadow_width(fb, 0, 0);
-        lv_obj_set_style_pad_all(fb, 0, 0);
+        /* LV_EVENT_ALL, not just CLICKED: the DELETE event frees forget_ssid. */
         lv_obj_add_event_cb(fb, _forget_cb, LV_EVENT_ALL, forget_ssid);
-
-        lv_obj_t *fl = lv_label_create(fb);
-        lv_label_set_text(fl, "Forget");
-        lv_obj_set_style_text_font(fl, THEME_FONT_TINY, 0);
-        lv_obj_set_style_text_color(fl, THEME_COLOR_STATUS_ERROR, 0);
-        lv_obj_center(fl);
     }
+}
+
+/* A line in the network list that is not a network: the connected banner,
+ * an empty-state note, a group heading. No fill of its own, and it wraps
+ * instead of scrolling (lv_list_add_text defaults to a circular scroll). */
+static lv_obj_t *_add_list_note(const char *text, const lv_font_t *font,
+                                lv_color_t color)
+{
+    lv_obj_t *t = lv_list_add_text(wifi_list, text);
+    lv_label_set_long_mode(t, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(t, font, 0);
+    lv_obj_set_style_text_color(t, color, 0);
+    lv_obj_set_style_bg_opa(t, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_pad_hor(t, 12, 0);
+    lv_obj_set_style_pad_ver(t, 8, 0);
+    return t;
 }
 
 static void _populate_scan_list(void)
@@ -1014,38 +847,31 @@ static void _populate_scan_list(void)
         char safe_conn[33];
         _sanitize_ssid(connected, safe_conn, sizeof(safe_conn));
         char banner[64];
-        snprintf(banner, sizeof(banner),
-                 LV_SYMBOL_OK "  Connected to %s", safe_conn);
-        lv_obj_t *hdr = lv_list_add_text(wifi_list, banner);
-        lv_obj_set_style_text_font(hdr, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(hdr, THEME_COLOR_STATUS_CONNECTED, 0);
-        lv_obj_set_style_bg_opa(hdr, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_pad_bottom(hdr, 2, 0);
+        snprintf(banner, sizeof(banner), "Connected to %s", safe_conn);
+        lv_obj_t *hdr = _add_list_note(banner, uk_font(UK_FONT_BODY),
+                                       THEME_COLOR_STATUS_CONNECTED);
+        lv_obj_set_style_pad_bottom(hdr, 4, 0);
     }
 
     if (count == 0 && saved_count == 0) {
-        lv_obj_t *empty = lv_list_add_text(wifi_list, "No networks found");
-        lv_obj_set_style_text_font(empty, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(empty, THEME_COLOR_TEXT_MUTED, 0);
+        _add_list_note("No networks found", uk_font(UK_FONT_BODY),
+                       THEME_COLOR_TEXT_MUTED);
 
         /* ESP32-S3 radio is 2.4 GHz only. Phone hotspots (especially
          * newer Androids) often default to 5 GHz or "auto-band" — those
          * networks are physically invisible to the dash. Surface this
          * so the user doesn't blame the scan. */
-        lv_obj_t *hint = lv_list_add_text(wifi_list,
-            "Tip: ESP32 only sees 2.4 GHz networks.\n"
-            "On Android Hotspot, set AP Band to 2.4 GHz.");
-        lv_obj_set_style_text_font(hint, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(hint, THEME_COLOR_TEXT_MUTED, 0);
+        _add_list_note("The dash only sees 2.4 GHz networks. On an Android "
+                       "hotspot, set the band to 2.4 GHz.",
+                       uk_font(UK_FONT_SMALL), THEME_COLOR_TEXT_MUTED);
         return;
     }
 
     if (count == 0) {
         /* No scan results but we have saved networks — fall through to the
          * "out of range" loop at the bottom so they're at least manageable. */
-        lv_obj_t *empty = lv_list_add_text(wifi_list, "No networks in range");
-        lv_obj_set_style_text_font(empty, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(empty, THEME_COLOR_TEXT_MUTED, 0);
+        _add_list_note("No networks in range", uk_font(UK_FONT_BODY),
+                       THEME_COLOR_TEXT_MUTED);
     }
 
     for (uint16_t i = 0; i < count; i++) {
@@ -1082,12 +908,14 @@ static void _populate_scan_list(void)
         }
         if (in_scan) continue;
 
-        /* Section header before the first out-of-range entry */
+        /* Section header before the first out-of-range entry — drawn like
+         * the kit's caps section labels. */
         if (!any_out_of_range) {
-            lv_obj_t *hdr = lv_list_add_text(wifi_list, "SAVED (out of range)");
-            lv_obj_set_style_text_font(hdr, THEME_FONT_TINY, 0);
-            lv_obj_set_style_text_color(hdr, THEME_COLOR_TEXT_MUTED, 0);
-            lv_obj_set_style_pad_top(hdr, 8, 0);
+            lv_obj_t *hdr = _add_list_note("SAVED, OUT OF RANGE",
+                                           uk_font(UK_FONT_LABEL),
+                                           THEME_COLOR_TEXT_MUTED);
+            lv_obj_set_style_text_letter_space(hdr, 1, 0);
+            lv_obj_set_style_pad_top(hdr, 12, 0);
             any_out_of_range = true;
         }
 
@@ -1108,123 +936,64 @@ static void _show_password_modal(const char *ssid)
     strncpy(selected_ssid, ssid, sizeof(selected_ssid) - 1);
     selected_ssid[sizeof(selected_ssid) - 1] = '\0';
 
-    /* Overlay */
-    password_modal = lv_obj_create(wifi_screen);
-    lv_obj_set_size(password_modal, SCREEN_W, SCREEN_H);
-    lv_obj_align(password_modal, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(password_modal, THEME_COLOR_BG, 0);
-    lv_obj_set_style_bg_opa(password_modal, LV_OPA_50, 0);
-    lv_obj_set_style_border_width(password_modal, 0, 0);
-    lv_obj_clear_flag(password_modal, LV_OBJ_FLAG_SCROLLABLE);
+    /* Kit popup on lv_layer_top() over a tap-eating backdrop, pulled up to
+     * the top of the glass so the keyboard fits under it. Its Close button
+     * cancels, same as the Cancel button. Content width is 440 - 2 x 18. */
+    password_modal = uk_popup(440, 212, "Join network", _password_cancel_cb);
+    lv_obj_align(password_modal, LV_ALIGN_TOP_MID, 0, 12);
 
-    /* Modal dialog */
-    lv_obj_t *dialog = lv_obj_create(password_modal);
-    lv_obj_set_size(dialog, 420, 260);
-    lv_obj_align(dialog, LV_ALIGN_TOP_MID, 0, 10);
-    lv_obj_set_style_bg_color(dialog, THEME_COLOR_SURFACE, 0);
-    lv_obj_set_style_bg_opa(dialog, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(dialog, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_border_width(dialog, 1, 0);
-    lv_obj_set_style_radius(dialog, THEME_RADIUS_LARGE, 0);
-    lv_obj_set_style_shadow_width(dialog, 20, 0);
-    lv_obj_set_style_shadow_ofs_y(dialog, 4, 0);
-    lv_obj_set_style_shadow_opa(dialog, 140, 0);
-    lv_obj_set_style_shadow_color(dialog, lv_color_black(), 0);
-    lv_obj_set_style_pad_all(dialog, THEME_PAD_MEDIUM, 0);
-    lv_obj_clear_flag(dialog, LV_OBJ_FLAG_SCROLLABLE);
-
-    /* Title */
-    lv_obj_t *modal_title = lv_label_create(dialog);
+    /* Which network */
     char safe_modal_ssid[33];
     _sanitize_ssid(selected_ssid, safe_modal_ssid, sizeof(safe_modal_ssid));
-    lv_label_set_text_fmt(modal_title, LV_SYMBOL_WIFI "  Connect to %s", safe_modal_ssid);
-    lv_obj_set_style_text_font(modal_title, THEME_FONT_MEDIUM, 0);
-    lv_obj_set_style_text_color(modal_title, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_align(modal_title, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_width(modal_title, 390);
-    lv_label_set_long_mode(modal_title, LV_LABEL_LONG_DOT);
-
-    /* Password label */
-    lv_obj_t *pw_label = lv_label_create(dialog);
-    lv_label_set_text(pw_label, "Password:");
-    lv_obj_set_style_text_font(pw_label, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(pw_label, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_align(pw_label, LV_ALIGN_TOP_LEFT, 0, 35);
+    lv_obj_t *net_name = uk_label(password_modal, safe_modal_ssid,
+                                  UK_FONT_BODY, UK_TONE_TEXT);
+    lv_obj_set_width(net_name, 404);
+    lv_label_set_long_mode(net_name, LV_LABEL_LONG_DOT);
+    lv_obj_align(net_name, LV_ALIGN_TOP_LEFT, 0, 50);
 
     /* Password text area */
-    password_input = lv_textarea_create(dialog);
-    /* 344 not 390: the reveal toggle takes the right-hand 46 px of the row. */
-    lv_obj_set_size(password_input, 344, 40);
-    lv_obj_align(password_input, LV_ALIGN_TOP_LEFT, 0, 55);
-    lv_textarea_set_placeholder_text(password_input, "Enter password...");
+    password_input = lv_textarea_create(password_modal);
+    lv_textarea_set_placeholder_text(password_input, "Password");
     lv_textarea_set_password_mode(password_input, true);
     lv_textarea_set_one_line(password_input, true);
     lv_textarea_set_max_length(password_input, 64);
-    lv_obj_set_style_bg_color(password_input, THEME_COLOR_INPUT_BG, 0);
-    lv_obj_set_style_bg_opa(password_input, LV_OPA_COVER, 0);
-    lv_obj_set_style_text_color(password_input, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_set_style_text_font(password_input, THEME_FONT_BODY, 0);
-    lv_obj_set_style_border_color(password_input, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_border_width(password_input, 1, 0);
-    lv_obj_set_style_border_color(password_input, THEME_COLOR_ACCENT_BLUE,
-                                  LV_PART_MAIN | LV_STATE_FOCUSED);
-    lv_obj_set_style_radius(password_input, THEME_RADIUS_SMALL, 0);
-    lv_obj_set_style_text_color(password_input, THEME_COLOR_TEXT_GHOST,
-                                LV_PART_TEXTAREA_PLACEHOLDER);
+    /* 356 not 404: the reveal toggle takes the right-hand 48 px of the row. */
+    lv_obj_set_width(password_input, 356);
+    lv_obj_align(password_input, LV_ALIGN_TOP_LEFT, 0, 76);
+    uk_style_textarea(password_input);
 
     /* Reveal toggle — typing a long WPA key blind on a touchscreen is the
      * single most common way to end up "connecting" forever. */
-    lv_obj_t *pw_eye = _add_password_eye(dialog, password_input);
-    lv_obj_align(pw_eye, LV_ALIGN_TOP_RIGHT, 0, 55);
+    lv_obj_t *pw_eye = _add_password_eye(password_modal, password_input);
+    lv_obj_align(pw_eye, LV_ALIGN_TOP_RIGHT, 0, 76);
 
     /* Buttons row */
-    lv_obj_t *cancel_btn = lv_btn_create(dialog);
-    lv_obj_set_size(cancel_btn, 140, 36);
-    lv_obj_align(cancel_btn, LV_ALIGN_TOP_LEFT, 20, 110);
-    lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(cancel_btn, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(cancel_btn, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_border_width(cancel_btn, 1, 0);
-    lv_obj_set_style_radius(cancel_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_shadow_width(cancel_btn, 0, 0);
-    lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_SCROLLBAR, LV_STATE_PRESSED);
-    lv_obj_add_event_cb(cancel_btn, _password_cancel_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *cancel_btn = uk_btn(password_modal, UK_ICON_NONE, "Cancel",
+                                  UK_BTN_GHOST, _password_cancel_cb, NULL);
+    lv_obj_set_width(cancel_btn, 120);
+    lv_obj_align(cancel_btn, LV_ALIGN_TOP_LEFT, 0, 132);
 
-    lv_obj_t *cancel_lbl = lv_label_create(cancel_btn);
-    lv_label_set_text(cancel_lbl, LV_SYMBOL_CLOSE "  Cancel");
-    lv_obj_set_style_text_font(cancel_lbl, THEME_FONT_BODY, 0);
-    lv_obj_set_style_text_color(cancel_lbl, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_center(cancel_lbl);
+    lv_obj_t *connect_btn = uk_btn(password_modal, UK_ICON_CHECK, "Connect",
+                                   UK_BTN_PRIMARY, _password_connect_cb, NULL);
+    lv_obj_set_width(connect_btn, 150);
+    lv_obj_align(connect_btn, LV_ALIGN_TOP_RIGHT, 0, 132);
 
-    lv_obj_t *connect_btn = lv_btn_create(dialog);
-    lv_obj_set_size(connect_btn, 140, 36);
-    lv_obj_align(connect_btn, LV_ALIGN_TOP_RIGHT, -20, 110);
-    lv_obj_set_style_bg_color(connect_btn, THEME_COLOR_BTN_CONNECT, 0);
-    lv_obj_set_style_bg_opa(connect_btn, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(connect_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_shadow_width(connect_btn, 0, 0);
-    lv_obj_set_style_bg_color(connect_btn, THEME_COLOR_BTN_CONNECT_PRESSED,
-                              LV_STATE_PRESSED);
-    lv_obj_add_event_cb(connect_btn, _password_connect_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t *conn_lbl = lv_label_create(connect_btn);
-    lv_label_set_text(conn_lbl, LV_SYMBOL_OK "  Connect");
-    lv_obj_set_style_text_font(conn_lbl, THEME_FONT_BODY, 0);
-    lv_obj_set_style_text_color(conn_lbl, THEME_COLOR_TEXT_ON_ACCENT, 0);
-    lv_obj_center(conn_lbl);
-
-    /* Keyboard */
-    wifi_keyboard = lv_keyboard_create(password_modal);
+    /* Keyboard — also on the top layer, created after the popup so it sits
+     * above the popup's backdrop and gets the taps. It is not a child of the
+     * popup, so _close_password_modal deletes it by hand. */
+    wifi_keyboard = lv_keyboard_create(lv_layer_top());
     lv_obj_set_size(wifi_keyboard, SCREEN_W, 200);
     lv_obj_align(wifi_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_keyboard_set_textarea(wifi_keyboard, password_input);
-    _style_keyboard(wifi_keyboard);
+    uk_style_keyboard(wifi_keyboard);
 }
 
 static void _close_password_modal(void)
 {
     if (!password_modal) return;
-    lv_obj_del(password_modal);
+    if (wifi_keyboard && lv_obj_is_valid(wifi_keyboard)) lv_obj_del(wifi_keyboard);
+    /* Deleting the popup card takes its backdrop with it (uk_popup). */
+    if (lv_obj_is_valid(password_modal)) lv_obj_del(password_modal);
     password_modal = NULL;
     password_input = NULL;
     wifi_keyboard = NULL;
@@ -1340,7 +1109,9 @@ static void _ap_pass_tap_cb(lv_event_t *e)
          * the user scrolls the network list underneath it. */
         lv_obj_add_flag(ap_keyboard, LV_OBJ_FLAG_FLOATING);
         lv_obj_align(ap_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
-        _style_keyboard(ap_keyboard);
+        /* Same kit look as the join-network keyboard, so the two can never
+         * drift apart. */
+        uk_style_keyboard(ap_keyboard);
         lv_obj_add_event_cb(ap_keyboard, _ap_keyboard_cb, LV_EVENT_READY, NULL);
         lv_obj_add_event_cb(ap_keyboard, _ap_keyboard_cb, LV_EVENT_CANCEL, NULL);
     }

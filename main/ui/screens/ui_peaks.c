@@ -1,15 +1,18 @@
 /*
- * ui_peaks.c — Live signal peak/min viewer.
+ * ui_peaks.c — Live signal peak/min viewer ("Live values").
  *
  * Shows a scrollable table where every row is a registered signal and the
  * three numeric columns are:
- *   • Current  — sig->current_value (or — if stale)
- *   • Min      — sig->min_value     (or — if never sampled / FLT_MAX sentinel)
- *   • Max      — sig->peak_value    (or — if never sampled / -FLT_MAX sentinel)
+ *   • Current  — sig->current_value (or - if stale)
+ *   • Min      — sig->min_value     (or - if never sampled / FLT_MAX sentinel)
+ *   • Max      — sig->peak_value    (or - if never sampled / -FLT_MAX sentinel)
  *
  * The signal layer always tracks peaks (since signal.h was set up that way);
- * this screen is the user-facing view of that data. A "Reset All" button at
- * the top wipes all peaks via signal_reset_peaks().
+ * this screen is the user-facing view of that data. The "Reset min / max"
+ * button in the brand bar wipes all peaks via signal_reset_peaks().
+ *
+ * Built from ui_kit parts (ADR-0071): brand bar, one card holding the column
+ * headers and the scrolling rows.
  *
  * Threading: the refresh callback is an lv_timer running on the LVGL task,
  * same constraints as ui_diagnostics.c.
@@ -17,6 +20,7 @@
 #include "ui_peaks.h"
 #include "esp_attr.h"
 #include "../theme.h"
+#include "kit/ui_kit.h"
 #include "screen_config.h"
 #include "widgets/signal.h"
 #include <float.h>
@@ -27,13 +31,14 @@
  * still cheap (label set_text only repaints when text changes). */
 #define REFRESH_PERIOD_MS  100
 #define MAX_TRACKED        128   /* matches MAX_SIGNALS */
+#define ROW_H              40
 
 /* One LVGL row per signal. We cache the labels so the refresh callback
  * just rewrites text instead of rebuilding the row. The signal name,
  * three value labels, and the freshness dot all live here.
  *
  * The dot is a tiny circle on the left edge of the row that fills in
- * blue when sig->is_stale == false (= a frame arrived inside
+ * green when sig->is_stale == false (= a frame arrived inside
  * SIGNAL_TIMEOUT_MS), and grey when stale. last_dot_state caches the
  * last painted state so the 100 ms refresh skips redundant style
  * writes (LVGL invalidates on every style write regardless of value). */
@@ -68,6 +73,18 @@ static void _format_value(float v, char *out, size_t outsz)
 	}
 }
 
+/* A screen-wide action in the brand bar, left of Back. uk_bar's status strip
+ * (its child 2) is the only slot there; the kit has no uk_bar_action() yet. */
+static lv_obj_t *_bar_action(lv_obj_t *bar, uk_icon_t icon, const char *text,
+                             lv_event_cb_t cb)
+{
+	lv_obj_t *strip = lv_obj_get_child(bar, 2);
+	lv_obj_t *b = uk_btn(strip ? strip : bar, icon, text, UK_BTN_NEUTRAL, cb, NULL);
+	lv_obj_set_height(b, 36);
+	lv_obj_set_ext_click_area(b, 6);
+	return b;
+}
+
 /* ── Row builder ─────────────────────────────────────────────────────────── */
 
 /* Per-row reset button click — sig_idx is encoded in user_data as
@@ -82,85 +99,66 @@ static void _row_reset_btn_cb(lv_event_t *e)
 	 * label sentinel check ("-" for FLT_MAX) renders the empty state. */
 }
 
+static lv_obj_t *_cell(lv_obj_t *row, lv_coord_t pct_x, lv_coord_t pct_w,
+                       lv_color_t color)
+{
+	lv_obj_t *l = lv_label_create(row);
+	lv_label_set_text(l, "-");
+	lv_obj_set_style_text_font(l, uk_font(UK_FONT_BODY), 0);
+	lv_obj_set_style_text_color(l, color, 0);
+	lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_RIGHT, 0);
+	lv_obj_set_width(l, lv_pct(pct_w));
+	lv_obj_align(l, LV_ALIGN_LEFT_MID, lv_pct(pct_x), 0);
+	return l;
+}
+
 /* Build one row in the scroll container for the given signal. */
 static void _add_row(lv_obj_t *parent, int16_t sig_idx, signal_t *sig)
 {
 	if (s_row_count >= MAX_TRACKED) return;
 
+	/* A table row on the card: no fill of its own, a hairline under it. */
 	lv_obj_t *row = lv_obj_create(parent);
-	lv_obj_set_size(row, lv_pct(100), 32);
-	lv_obj_set_style_bg_color(row, THEME_COLOR_SECTION_BG, 0);
-	lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+	lv_obj_remove_style_all(row);
+	lv_obj_set_size(row, lv_pct(100), ROW_H);
 	lv_obj_set_style_border_color(row, THEME_COLOR_BORDER, 0);
 	lv_obj_set_style_border_width(row, 1, 0);
 	lv_obj_set_style_border_side(row, LV_BORDER_SIDE_BOTTOM, 0);
-	lv_obj_set_style_radius(row, 0, 0);
-	lv_obj_set_style_pad_all(row, 4, 0);
 	lv_obj_set_style_pad_hor(row, 8, 0);
 	lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
 
-	/* Layout: dot | 35% name | 20% cur | 18% min | 18% max | 9% reset btn
-	 * The dot sits in the row's left padding (4 px) — name aligns at 16 px
+	/* Layout: dot | 33% name | 20% cur | 18% min | 18% max | reset btn
+	 * The dot sits at the row's left edge — name aligns at 16 px
 	 * to leave clearance. */
 
 	lv_obj_t *dot = lv_obj_create(row);
 	lv_obj_remove_style_all(dot);
-	lv_obj_set_size(dot, 10, 10);
+	lv_obj_set_size(dot, 8, 8);
 	lv_obj_align(dot, LV_ALIGN_LEFT_MID, 0, 0);
 	lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, LV_PART_MAIN);
-	lv_obj_set_style_bg_color(dot, THEME_COLOR_BORDER_MED, LV_PART_MAIN);
+	lv_obj_set_style_bg_color(dot, THEME_COLOR_TEXT_HINT, LV_PART_MAIN);
 	lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, LV_PART_MAIN);
 	lv_obj_clear_flag(dot, LV_OBJ_FLAG_CLICKABLE);
 
 	lv_obj_t *name = lv_label_create(row);
 	lv_label_set_text(name, sig->name);
-	lv_obj_set_style_text_font(name, THEME_FONT_SMALL, 0);
+	lv_obj_set_style_text_font(name, uk_font(UK_FONT_BODY), 0);
 	lv_obj_set_style_text_color(name, THEME_COLOR_TEXT_PRIMARY, 0);
 	lv_obj_set_width(name, lv_pct(33));
 	lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
 	lv_obj_align(name, LV_ALIGN_LEFT_MID, 16, 0);
 
-	lv_obj_t *cur = lv_label_create(row);
-	lv_label_set_text(cur, "-");
-	lv_obj_set_style_text_font(cur, THEME_FONT_SMALL, 0);
-	lv_obj_set_style_text_color(cur, THEME_COLOR_TEXT_PRIMARY, 0);
-	lv_obj_set_style_text_align(cur, LV_TEXT_ALIGN_RIGHT, 0);
-	lv_obj_set_width(cur, lv_pct(20));
-	lv_obj_align(cur, LV_ALIGN_LEFT_MID, lv_pct(35), 0);
+	lv_obj_t *cur = _cell(row, 35, 20, THEME_COLOR_TEXT_PRIMARY);
+	lv_obj_t *mn  = _cell(row, 55, 18, THEME_COLOR_STATUS_CONNECTED);
+	lv_obj_t *mx  = _cell(row, 73, 18, THEME_COLOR_ACCENT_AMBER);
 
-	lv_obj_t *mn = lv_label_create(row);
-	lv_label_set_text(mn, "-");
-	lv_obj_set_style_text_font(mn, THEME_FONT_SMALL, 0);
-	lv_obj_set_style_text_color(mn, THEME_COLOR_STATUS_CONNECTED, 0);
-	lv_obj_set_style_text_align(mn, LV_TEXT_ALIGN_RIGHT, 0);
-	lv_obj_set_width(mn, lv_pct(18));
-	lv_obj_align(mn, LV_ALIGN_LEFT_MID, lv_pct(55), 0);
-
-	lv_obj_t *mx = lv_label_create(row);
-	lv_label_set_text(mx, "-");
-	lv_obj_set_style_text_font(mx, THEME_FONT_SMALL, 0);
-	lv_obj_set_style_text_color(mx, THEME_COLOR_ACCENT_AMBER, 0);
-	lv_obj_set_style_text_align(mx, LV_TEXT_ALIGN_RIGHT, 0);
-	lv_obj_set_width(mx, lv_pct(18));
-	lv_obj_align(mx, LV_ALIGN_LEFT_MID, lv_pct(73), 0);
-
-	/* Per-row reset button — small ↺ in the rightmost slot. Click clears
-	 * just this signal's peak/min via signal_reset_peak(). */
-	lv_obj_t *rst = lv_btn_create(row);
-	lv_obj_set_size(rst, 56, 22);
+	/* Per-row reset button in the rightmost slot. Click clears just this
+	 * signal's peak/min via signal_reset_peak(). */
+	lv_obj_t *rst = uk_btn(row, UK_ICON_RESET, NULL, UK_BTN_GHOST, _row_reset_btn_cb,
+	                       (void *)(intptr_t)(sig_idx + 1));
+	lv_obj_set_size(rst, 44, 30);
 	lv_obj_align(rst, LV_ALIGN_RIGHT_MID, 0, 0);
-	lv_obj_set_style_bg_color(rst, THEME_COLOR_BG, 0);
-	lv_obj_set_style_border_color(rst, THEME_COLOR_BORDER, 0);
-	lv_obj_set_style_border_width(rst, 1, 0);
-	lv_obj_set_style_radius(rst, THEME_RADIUS_SMALL, 0);
-	lv_obj_set_style_shadow_width(rst, 0, 0);
-	lv_obj_add_event_cb(rst, _row_reset_btn_cb, LV_EVENT_CLICKED,
-	                    (void *)(intptr_t)(sig_idx + 1));
-	lv_obj_t *rst_lbl = lv_label_create(rst);
-	lv_label_set_text(rst_lbl, LV_SYMBOL_REFRESH);
-	lv_obj_set_style_text_font(rst_lbl, THEME_FONT_TINY, 0);
-	lv_obj_set_style_text_color(rst_lbl, THEME_COLOR_TEXT_MUTED, 0);
-	lv_obj_center(rst_lbl);
+	lv_obj_set_ext_click_area(rst, 4);
 
 	s_rows[s_row_count].signal_index   = sig_idx;
 	s_rows[s_row_count].dot            = dot;
@@ -207,14 +205,14 @@ static void _refresh(lv_timer_t *t)
 		signal_t *sig = signal_get_by_index((uint16_t)s_rows[i].signal_index);
 		if (!sig) continue;
 
-		/* Freshness dot — blue when receiving a recent frame, grey when
+		/* Freshness dot — green when receiving a recent frame, grey when
 		 * stale. The last_dot_fresh cache lets us skip lv_obj_set_style_*
 		 * when nothing's changed (LVGL invalidates on every style write
 		 * regardless of value). */
 		int8_t want = sig->is_stale ? 0 : 1;
 		if (want != s_rows[i].last_dot_fresh && s_rows[i].dot) {
-			lv_color_t c = want ? THEME_COLOR_ACCENT_BLUE
-			                    : THEME_COLOR_BORDER_MED;
+			lv_color_t c = want ? THEME_COLOR_STATUS_CONNECTED
+			                    : THEME_COLOR_TEXT_HINT;
 			lv_obj_set_style_bg_color(s_rows[i].dot, c, LV_PART_MAIN);
 			s_rows[i].last_dot_fresh = want;
 		}
@@ -268,120 +266,62 @@ static void _create(void)
 	s_row_count         = 0;
 	s_seen_signal_count = 0;
 
-	s_screen = lv_obj_create(NULL);
-	lv_obj_set_style_bg_color(s_screen, THEME_COLOR_BG, 0);
-	lv_obj_set_style_bg_opa(s_screen, LV_OPA_COVER, 0);
-	lv_obj_clear_flag(s_screen, LV_OBJ_FLAG_SCROLLABLE);
+	s_screen = uk_screen();
 
-	/* Header — Back / Title / Reset All */
-	lv_obj_t *header = lv_obj_create(s_screen);
-	lv_obj_set_size(header, SCREEN_W, 44);
-	lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 0);
-	lv_obj_set_style_bg_color(header, THEME_COLOR_SURFACE, 0);
-	lv_obj_set_style_bg_opa(header, LV_OPA_COVER, 0);
-	lv_obj_set_style_border_color(header, THEME_COLOR_BORDER, 0);
-	lv_obj_set_style_border_side(header, LV_BORDER_SIDE_BOTTOM, 0);
-	lv_obj_set_style_border_width(header, 1, 0);
-	lv_obj_set_style_radius(header, 0, 0);
-	lv_obj_set_style_pad_hor(header, 10, 0);
-	lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
+	/* Brand bar — title, Reset min / max, Back */
+	lv_obj_t *bar = uk_bar(s_screen, "Live values", UK_BAR_BACK, _back_btn_cb, NULL);
+	_bar_action(bar, UK_ICON_RESET, "Reset min / max", _reset_btn_cb);
 
-	lv_obj_t *back_btn = lv_btn_create(header);
-	lv_obj_set_size(back_btn, 80, 30);
-	lv_obj_align(back_btn, LV_ALIGN_LEFT_MID, 0, 0);
-	lv_obj_set_style_bg_color(back_btn, THEME_COLOR_SECTION_BG, 0);
-	lv_obj_set_style_border_color(back_btn, THEME_COLOR_BORDER, 0);
-	lv_obj_set_style_border_width(back_btn, 1, 0);
-	lv_obj_set_style_radius(back_btn, THEME_RADIUS_SMALL, 0);
-	lv_obj_set_style_shadow_width(back_btn, 0, 0);
-	lv_obj_add_event_cb(back_btn, _back_btn_cb, LV_EVENT_CLICKED, NULL);
-	lv_obj_t *back_lbl = lv_label_create(back_btn);
-	lv_label_set_text(back_lbl, LV_SYMBOL_LEFT " Back");
-	lv_obj_set_style_text_font(back_lbl, THEME_FONT_SMALL, 0);
-	lv_obj_set_style_text_color(back_lbl, THEME_COLOR_TEXT_MUTED, 0);
-	lv_obj_center(back_lbl);
+	/* One card under the bar: sticky column headers over the scrolling rows. */
+	lv_obj_t *card = uk_card(uk_body(s_screen));
+	lv_obj_set_size(card, lv_pct(100), lv_pct(100));
+	lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+	lv_obj_set_style_pad_row(card, 0, 0);
 
-	lv_obj_t *title = lv_label_create(header);
-	lv_label_set_text(title, "Signal Peaks");
-	lv_obj_set_style_text_font(title, THEME_FONT_LARGE, 0);
-	lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
-	lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
-
-	lv_obj_t *reset_btn = lv_btn_create(header);
-	lv_obj_set_size(reset_btn, 100, 30);
-	lv_obj_align(reset_btn, LV_ALIGN_RIGHT_MID, 0, 0);
-	lv_obj_set_style_bg_color(reset_btn, THEME_COLOR_SECTION_BG, 0);
-	lv_obj_set_style_border_color(reset_btn, THEME_COLOR_STATUS_ERROR, 0);
-	lv_obj_set_style_border_width(reset_btn, 1, 0);
-	lv_obj_set_style_radius(reset_btn, THEME_RADIUS_SMALL, 0);
-	lv_obj_set_style_shadow_width(reset_btn, 0, 0);
-	lv_obj_add_event_cb(reset_btn, _reset_btn_cb, LV_EVENT_CLICKED, NULL);
-	lv_obj_t *reset_lbl = lv_label_create(reset_btn);
-	lv_label_set_text(reset_lbl, "Reset All");
-	lv_obj_set_style_text_font(reset_lbl, THEME_FONT_SMALL, 0);
-	lv_obj_set_style_text_color(reset_lbl, THEME_COLOR_STATUS_ERROR, 0);
-	lv_obj_center(reset_lbl);
-
-	/* Column headers — sticky at the top, right above the scroll list. */
-	lv_obj_t *col_hdr = lv_obj_create(s_screen);
-	lv_obj_set_size(col_hdr, SCREEN_W, 28);
-	lv_obj_align(col_hdr, LV_ALIGN_TOP_MID, 0, 44);
-	lv_obj_set_style_bg_color(col_hdr, THEME_COLOR_SURFACE, 0);
-	lv_obj_set_style_bg_opa(col_hdr, LV_OPA_COVER, 0);
-	lv_obj_set_style_border_width(col_hdr, 0, 0);
-	lv_obj_set_style_radius(col_hdr, 0, 0);
-	lv_obj_set_style_pad_all(col_hdr, 4, 0);
+	lv_obj_t *col_hdr = lv_obj_create(card);
+	lv_obj_remove_style_all(col_hdr);
+	lv_obj_set_size(col_hdr, lv_pct(100), 28);
 	lv_obj_set_style_pad_hor(col_hdr, 8, 0);
-	lv_obj_clear_flag(col_hdr, LV_OBJ_FLAG_SCROLLABLE);
+	lv_obj_set_style_border_color(col_hdr, THEME_COLOR_BORDER, 0);
+	lv_obj_set_style_border_width(col_hdr, 1, 0);
+	lv_obj_set_style_border_side(col_hdr, LV_BORDER_SIDE_BOTTOM, 0);
+	lv_obj_clear_flag(col_hdr, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
-	struct { const char *txt; lv_coord_t pct_offset; lv_coord_t pct_w; lv_color_t color; } cols[] = {
-		{ "Signal",  0,  35, THEME_COLOR_TEXT_MUTED },
-		{ "Current", 35, 20, THEME_COLOR_TEXT_MUTED },
-		{ "Min",     55, 18, THEME_COLOR_STATUS_CONNECTED },
-		{ "Max",     73, 18, THEME_COLOR_ACCENT_AMBER },
+	struct { const char *txt; lv_coord_t pct_offset; lv_coord_t pct_w; uk_tone_t tone; } cols[] = {
+		{ "Reading", 0,  35, UK_TONE_MUTED },
+		{ "Now",     35, 20, UK_TONE_MUTED },
+		{ "Min",     55, 18, UK_TONE_OK },
+		{ "Max",     73, 18, UK_TONE_WARN },
 	};
 	for (size_t i = 0; i < sizeof(cols) / sizeof(cols[0]); i++) {
-		lv_obj_t *l = lv_label_create(col_hdr);
-		lv_label_set_text(l, cols[i].txt);
-		lv_obj_set_style_text_font(l, THEME_FONT_TINY, 0);
-		lv_obj_set_style_text_color(l, cols[i].color, 0);
-		lv_obj_set_style_text_letter_space(l, 1, 0);
+		lv_obj_t *l = uk_label(col_hdr, cols[i].txt, UK_FONT_LABEL, cols[i].tone);
 		lv_obj_set_width(l, lv_pct(cols[i].pct_w));
 		if (i == 0) {
-			lv_obj_align(l, LV_ALIGN_LEFT_MID, 0, 0);
+			lv_obj_align(l, LV_ALIGN_LEFT_MID, 16, 0);
 		} else {
 			lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_RIGHT, 0);
 			lv_obj_align(l, LV_ALIGN_LEFT_MID, lv_pct(cols[i].pct_offset), 0);
 		}
 	}
 
-	/* Scrollable list container fills the remaining space */
-	s_list_container = lv_obj_create(s_screen);
-	lv_obj_set_size(s_list_container, SCREEN_W, SCREEN_H - 44 - 28);
-	lv_obj_align(s_list_container, LV_ALIGN_TOP_MID, 0, 44 + 28);
-	lv_obj_set_style_bg_color(s_list_container, THEME_COLOR_BG, 0);
-	lv_obj_set_style_bg_opa(s_list_container, LV_OPA_COVER, 0);
-	lv_obj_set_style_border_width(s_list_container, 0, 0);
-	lv_obj_set_style_radius(s_list_container, 0, 0);
-	lv_obj_set_style_pad_all(s_list_container, 0, 0);
-	lv_obj_set_flex_flow(s_list_container, LV_FLEX_FLOW_COLUMN);
-	lv_obj_set_scroll_dir(s_list_container, LV_DIR_VER);
+	/* Scrollable list fills the rest of the card */
+	s_list_container = uk_scroll(card);
+	lv_obj_set_height(s_list_container, 0);
+	lv_obj_set_flex_grow(s_list_container, 1);
+	lv_obj_set_style_pad_row(s_list_container, 0, 0);
 	lv_obj_set_scrollbar_mode(s_list_container, LV_SCROLLBAR_MODE_AUTO);
-	lv_obj_set_style_bg_color(s_list_container, THEME_COLOR_SCROLLBAR, LV_PART_SCROLLBAR);
-	lv_obj_set_style_bg_opa(s_list_container, LV_OPA_50, LV_PART_SCROLLBAR);
-	lv_obj_set_style_radius(s_list_container, 2, LV_PART_SCROLLBAR);
-	lv_obj_set_style_width(s_list_container, 4, LV_PART_SCROLLBAR);
 
 	/* Initial population */
 	uint16_t total = signal_get_count();
 	if (total == 0) {
-		lv_obj_t *empty = lv_label_create(s_list_container);
-		lv_label_set_text(empty, "No signals registered.\n"
-		                          "Load a layout with CAN signals to see peaks.");
+		lv_obj_t *empty = uk_label(s_list_container,
+		                           "Nothing to show yet.\n"
+		                           "Load a layout that reads values from the car.",
+		                           UK_FONT_BODY, UK_TONE_MUTED);
+		lv_obj_set_width(empty, lv_pct(100));
 		lv_obj_set_style_text_align(empty, LV_TEXT_ALIGN_CENTER, 0);
-		lv_obj_set_style_text_color(empty, THEME_COLOR_TEXT_MUTED, 0);
-		lv_obj_set_style_text_font(empty, THEME_FONT_SMALL, 0);
-		lv_obj_align(empty, LV_ALIGN_CENTER, 0, 0);
+		lv_obj_set_style_text_line_space(empty, 4, 0);
+		lv_obj_set_style_pad_top(empty, 48, 0);
 	} else {
 		for (uint16_t i = 0; i < total && i < MAX_TRACKED; i++) {
 			signal_t *sig = signal_get_by_index(i);

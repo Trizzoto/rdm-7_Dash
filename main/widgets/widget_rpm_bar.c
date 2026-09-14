@@ -354,9 +354,9 @@ void create_rpm_color_wheel_popup(void) {
 	color_wheel_popup = lv_obj_create(lv_scr_act());
 	lv_obj_set_size(color_wheel_popup, 400, 350);
 	lv_obj_center(color_wheel_popup);
-	lv_obj_set_style_bg_color(color_wheel_popup, THEME_COLOR_PANEL,
+	lv_obj_set_style_bg_color(color_wheel_popup, WIDGET_COLOR_PANEL,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_border_color(color_wheel_popup, THEME_COLOR_BORDER_MED,
+	lv_obj_set_style_border_color(color_wheel_popup, WIDGET_COLOR_BORDER_MED,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(color_wheel_popup, 2,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -364,7 +364,7 @@ void create_rpm_color_wheel_popup(void) {
 							LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_shadow_width(color_wheel_popup, 15,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_shadow_color(color_wheel_popup, THEME_COLOR_BG,
+	lv_obj_set_style_shadow_color(color_wheel_popup, WIDGET_COLOR_BG,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_shadow_opa(color_wheel_popup, 150,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -372,7 +372,7 @@ void create_rpm_color_wheel_popup(void) {
 	// Title label
 	lv_obj_t *title_label = lv_label_create(color_wheel_popup);
 	lv_label_set_text(title_label, "Select Custom RPM Colour");
-	lv_obj_set_style_text_color(title_label, THEME_COLOR_TEXT_PRIMARY,
+	lv_obj_set_style_text_color(title_label, WIDGET_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_font(title_label, THEME_FONT_MEDIUM,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -397,13 +397,13 @@ void create_rpm_color_wheel_popup(void) {
 	lv_obj_t *ok_btn = lv_btn_create(color_wheel_popup);
 	lv_obj_set_size(ok_btn, 80, 35);
 	lv_obj_align(ok_btn, LV_ALIGN_BOTTOM_LEFT, 50, -20);
-	lv_obj_set_style_bg_color(ok_btn, THEME_COLOR_BTN_SAVE,
+	lv_obj_set_style_bg_color(ok_btn, WIDGET_COLOR_BTN_SAVE,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_radius(ok_btn, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	lv_obj_t *ok_label = lv_label_create(ok_btn);
 	lv_label_set_text(ok_label, "OK");
-	lv_obj_set_style_text_color(ok_label, THEME_COLOR_TEXT_PRIMARY,
+	lv_obj_set_style_text_color(ok_label, WIDGET_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_center(ok_label);
 
@@ -414,13 +414,13 @@ void create_rpm_color_wheel_popup(void) {
 	lv_obj_t *cancel_btn = lv_btn_create(color_wheel_popup);
 	lv_obj_set_size(cancel_btn, 80, 35);
 	lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_RIGHT, -50, -20);
-	lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_BTN_CANCEL,
+	lv_obj_set_style_bg_color(cancel_btn, WIDGET_COLOR_BTN_CANCEL,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_radius(cancel_btn, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	lv_obj_t *cancel_label = lv_label_create(cancel_btn);
 	lv_label_set_text(cancel_label, "Cancel");
-	lv_obj_set_style_text_color(cancel_label, THEME_COLOR_TEXT_PRIMARY,
+	lv_obj_set_style_text_color(cancel_label, WIDGET_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_center(cancel_label);
 
@@ -476,10 +476,10 @@ void create_limiter_color_wheel_popup(void) {
 	limiter_color_wheel_popup = lv_obj_create(lv_scr_act());
 	lv_obj_set_size(limiter_color_wheel_popup, 400, 350);
 	lv_obj_center(limiter_color_wheel_popup);
-	lv_obj_set_style_bg_color(limiter_color_wheel_popup, THEME_COLOR_PANEL,
+	lv_obj_set_style_bg_color(limiter_color_wheel_popup, WIDGET_COLOR_PANEL,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_color(limiter_color_wheel_popup,
-								  THEME_COLOR_BORDER_MED,
+								  WIDGET_COLOR_BORDER_MED,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(limiter_color_wheel_popup, 2,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -487,7 +487,7 @@ void create_limiter_color_wheel_popup(void) {
 							LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_shadow_width(limiter_color_wheel_popup, 15,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_shadow_color(limiter_color_wheel_popup, THEME_COLOR_BG,
+	lv_obj_set_style_shadow_color(limiter_color_wheel_popup, WIDGET_COLOR_BG,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_shadow_opa(limiter_color_wheel_popup, 150,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -495,7 +495,7 @@ void create_limiter_color_wheel_popup(void) {
 	// Title label
 	lv_obj_t *title_label = lv_label_create(limiter_color_wheel_popup);
 	lv_label_set_text(title_label, "Select Custom Limiter Colour");
-	lv_obj_set_style_text_color(title_label, THEME_COLOR_TEXT_PRIMARY,
+	lv_obj_set_style_text_color(title_label, WIDGET_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_font(title_label, THEME_FONT_MEDIUM,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -521,13 +521,13 @@ void create_limiter_color_wheel_popup(void) {
 	lv_obj_t *ok_btn = lv_btn_create(limiter_color_wheel_popup);
 	lv_obj_set_size(ok_btn, 80, 35);
 	lv_obj_align(ok_btn, LV_ALIGN_BOTTOM_LEFT, 50, -20);
-	lv_obj_set_style_bg_color(ok_btn, THEME_COLOR_BTN_SAVE,
+	lv_obj_set_style_bg_color(ok_btn, WIDGET_COLOR_BTN_SAVE,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_radius(ok_btn, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	lv_obj_t *ok_label = lv_label_create(ok_btn);
 	lv_label_set_text(ok_label, "OK");
-	lv_obj_set_style_text_color(ok_label, THEME_COLOR_TEXT_PRIMARY,
+	lv_obj_set_style_text_color(ok_label, WIDGET_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_center(ok_label);
 
@@ -538,13 +538,13 @@ void create_limiter_color_wheel_popup(void) {
 	lv_obj_t *cancel_btn = lv_btn_create(limiter_color_wheel_popup);
 	lv_obj_set_size(cancel_btn, 80, 35);
 	lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_RIGHT, -50, -20);
-	lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_BTN_CANCEL,
+	lv_obj_set_style_bg_color(cancel_btn, WIDGET_COLOR_BTN_CANCEL,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_radius(cancel_btn, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	lv_obj_t *cancel_label = lv_label_create(cancel_btn);
 	lv_label_set_text(cancel_label, "Cancel");
-	lv_obj_set_style_text_color(cancel_label, THEME_COLOR_TEXT_PRIMARY,
+	lv_obj_set_style_text_color(cancel_label, WIDGET_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_center(cancel_label);
 
@@ -1173,7 +1173,7 @@ void update_rpm_lines(lv_obj_t *parent) {
 	/* Night-aware tick colour: a wholesale rebuild (which is how tick colour
 	 * changes are applied, including on night-mode transitions) picks the
 	 * night override when night mode is active and an override is set. */
-	lv_color_t tick_color  = rd_ticks ? rd_ticks->tick_color  : THEME_COLOR_BG;
+	lv_color_t tick_color  = rd_ticks ? rd_ticks->tick_color  : WIDGET_COLOR_BG;
 	if (rd_ticks)
 		tick_color = NIGHT_PICK_COLOR(night_mode_is_active(), rd_ticks->night,
 		                              tick_color, rd_ticks->tick_color);
@@ -1656,7 +1656,7 @@ static void _rpm_bar_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "tick_length", rd->tick_length);
 	if (rd->tick_width != 3)        /* default 3 */
 		cJSON_AddNumberToObject(cfg, "tick_width", rd->tick_width);
-	if (rd->tick_color.full != THEME_COLOR_BG.full)
+	if (rd->tick_color.full != WIDGET_COLOR_BG.full)
 		cJSON_AddNumberToObject(cfg, "tick_color", (int)rd->tick_color.full);
 	if (rd->bar_bg_color.full != THEME_COLOR_RPM_BAR_BG.full)
 		cJSON_AddNumberToObject(cfg, "bar_bg_color", (int)rd->bar_bg_color.full);
@@ -1670,7 +1670,7 @@ static void _rpm_bar_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddBoolToObject(cfg, "show_rpm_value", true);
 	if (rd->rpm_value_font[0] != '\0')
 		cJSON_AddStringToObject(cfg, "rpm_value_font", rd->rpm_value_font);
-	if (rd->rpm_value_color.full != THEME_COLOR_TEXT_PRIMARY.full)
+	if (rd->rpm_value_color.full != WIDGET_COLOR_TEXT_PRIMARY.full)
 		cJSON_AddNumberToObject(cfg, "rpm_value_color", (int)rd->rpm_value_color.full);
 	if (rd->rpm_value_x_offset != 0)
 		cJSON_AddNumberToObject(cfg, "rpm_value_x_offset", rd->rpm_value_x_offset);
@@ -2212,11 +2212,11 @@ widget_t *widget_rpm_bar_create_instance(void) {
 	rd->label_every  = 1;               /* every thousand, the historical look */
 	rd->tick_length  = 12;              /* matches the old 12px main-tick height */
 	rd->tick_width   = 3;               /* matches the old 3px main-tick width */
-	rd->tick_color   = THEME_COLOR_BG;  /* old hardcoded tick/label colour */
+	rd->tick_color   = WIDGET_COLOR_BG;  /* old hardcoded tick/label colour */
 	rd->bar_bg_color = THEME_COLOR_RPM_BAR_BG; /* old hardcoded track bg */
 	rd->show_rpm_value = false;         /* no numeric readout historically */
 	rd->rpm_value_font[0] = '\0';       /* empty → THEME_FONT_DASH_RPM fallback */
-	rd->rpm_value_color   = THEME_COLOR_TEXT_PRIMARY;
+	rd->rpm_value_color   = WIDGET_COLOR_TEXT_PRIMARY;
 	rd->rpm_value_obj     = NULL;
 
 	w->type_data = rd;

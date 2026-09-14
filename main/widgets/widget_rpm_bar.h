@@ -78,13 +78,13 @@ typedef struct {
 	uint8_t    label_every;    /* default 1, range 1..10 */
 	uint8_t    tick_length;    /* nominal main-tick length px (default 12) */
 	uint8_t    tick_width;     /* nominal main-tick width px (default 3) */
-	lv_color_t tick_color;     /* default THEME_COLOR_BG (0x000000) */
+	lv_color_t tick_color;     /* default WIDGET_COLOR_BG (0x000000) */
 	/* Bar track background (the unfilled portion, PART_MAIN). */
 	lv_color_t bar_bg_color;   /* default THEME_COLOR_RPM_BAR_BG (0xF0F0F0) */
 	/* Numeric RPM readout overlaid on the bar. */
 	bool       show_rpm_value;      /* default false — no number historically */
 	char       rpm_value_font[32];  /* "Family:size" or legacy; empty → THEME font */
-	lv_color_t rpm_value_color;     /* default THEME_COLOR_TEXT_PRIMARY (0xE8E8E8) */
+	lv_color_t rpm_value_color;     /* default WIDGET_COLOR_TEXT_PRIMARY (0xE8E8E8) */
 	/* Nudge on top of the label's computed home, which is 20 px from the
 	 * container's left edge scaled by width. 0/0 keeps every existing
 	 * layout exactly where it was. */

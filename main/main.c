@@ -1513,7 +1513,7 @@ void app_main(void) {
   lv_disp_t *disp = lv_disp_drv_register(&disp_drv);
 
   // Set display background to black immediately to prevent white flicker
-  lv_disp_set_bg_color(disp, THEME_COLOR_BG);
+  lv_disp_set_bg_color(disp, WIDGET_COLOR_BG);
   ESP_LOGI(TAG, "Display background set to black to prevent white flicker");
 
   /* NOTE: Display rotation at boot is intentionally disabled for now.
@@ -1597,7 +1597,7 @@ void app_main(void) {
   // Create a black screen BEFORE starting LVGL task to prevent white flash
   ESP_LOGI(TAG, "Creating initial black screen to prevent white flash");
   lv_obj_t *black_screen = lv_obj_create(NULL);
-  lv_obj_set_style_bg_color(black_screen, THEME_COLOR_BG, 0);
+  lv_obj_set_style_bg_color(black_screen, WIDGET_COLOR_BG, 0);
   lv_obj_set_style_bg_opa(black_screen, LV_OPA_COVER, 0);
   lv_obj_clear_flag(black_screen, LV_OBJ_FLAG_SCROLLABLE);
   lv_scr_load(black_screen);

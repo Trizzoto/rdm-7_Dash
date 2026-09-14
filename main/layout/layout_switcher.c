@@ -115,3 +115,11 @@ int layout_switcher_count(void)
     char names[MAX_PINNED][LAYOUT_MAX_NAME];
     return _load_cycle(names);
 }
+
+int layout_switcher_position(const char *current, int *count)
+{
+    char names[MAX_PINNED][LAYOUT_MAX_NAME];
+    int n = _load_cycle(names);
+    if (count) *count = n;
+    return _index_of(names, n, current);
+}

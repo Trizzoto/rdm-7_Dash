@@ -11,12 +11,17 @@
  * dozens of IDs at high frame rates. New IDs are appended to the table
  * without rebuilding existing rows.
  *
+ * Built from ui_kit parts (ADR-0071). The full screen is a brand bar over one
+ * card holding the table; the embedded variant draws the same table straight
+ * into the caller's container, so the two look alike.
+ *
  * Threading: refresh runs on LVGL task. The tracker is also fed from the
  * LVGL task (from can_process_queued_frames), so no locking needed.
  */
 #include "ui_can_list.h"
 #include "esp_attr.h"
 #include "../theme.h"
+#include "kit/ui_kit.h"
 #include "screen_config.h"
 #include "can/can_id_tracker.h"
 #include <stdio.h>
@@ -31,6 +36,7 @@
 #define HZ_RECOMPUTE_EVERY_TICKS  4   /* 250 ms × 4 = 1 s */
 
 #define MAX_TRACKED  CAN_ID_TRACKER_MAX_IDS
+#define ROW_H        32
 
 typedef struct {
     uint32_t  can_id;
@@ -86,56 +92,47 @@ static void _format_hz(float hz, char *out, size_t outsz)
 
 /* ── Row builder ─────────────────────────────────────────────────────────── */
 
-/* One row per CAN ID. Layout: 18% ID | 14% Hz | 10% DLC | 58% bytes. */
+static lv_obj_t *_cell(lv_obj_t *row, const char *text, lv_coord_t pct_x,
+                       lv_coord_t pct_w, lv_text_align_t align, lv_color_t color)
+{
+    lv_obj_t *l = lv_label_create(row);
+    lv_label_set_text(l, text);
+    lv_obj_set_style_text_font(l, uk_font(UK_FONT_BODY), 0);
+    lv_obj_set_style_text_color(l, color, 0);
+    lv_obj_set_style_text_align(l, align, 0);
+    lv_obj_set_width(l, lv_pct(pct_w));
+    lv_obj_align(l, LV_ALIGN_LEFT_MID, lv_pct(pct_x), 0);
+    return l;
+}
+
+/* One row per CAN ID. Layout: 18% ID | 14% Hz | 10% DLC | 56% bytes. */
 static void _add_row(lv_obj_t *parent, const can_id_entry_t *e)
 {
     if (s_row_count >= MAX_TRACKED) return;
 
+    /* A table row: no fill of its own (it sits on a card or the host), a
+     * hairline under it. */
     lv_obj_t *row = lv_obj_create(parent);
-    lv_obj_set_size(row, lv_pct(100), 32);
-    lv_obj_set_style_bg_color(row, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, lv_pct(100), ROW_H);
     lv_obj_set_style_border_color(row, THEME_COLOR_BORDER, 0);
     lv_obj_set_style_border_width(row, 1, 0);
     lv_obj_set_style_border_side(row, LV_BORDER_SIDE_BOTTOM, 0);
-    lv_obj_set_style_radius(row, 0, 0);
-    lv_obj_set_style_pad_all(row, 4, 0);
     lv_obj_set_style_pad_hor(row, 8, 0);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
 
     char id_buf[16];
     _format_id(e->can_id, e->extended, id_buf, sizeof(id_buf));
 
-    lv_obj_t *id_lbl = lv_label_create(row);
-    lv_label_set_text(id_lbl, id_buf);
-    lv_obj_set_style_text_font(id_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(id_lbl, THEME_COLOR_ACCENT_BLUE, 0);
-    lv_obj_set_width(id_lbl, lv_pct(18));
-    lv_obj_align(id_lbl, LV_ALIGN_LEFT_MID, 0, 0);
-
-    lv_obj_t *hz_lbl = lv_label_create(row);
-    lv_label_set_text(hz_lbl, "-");
-    lv_obj_set_style_text_font(hz_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(hz_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_set_style_text_align(hz_lbl, LV_TEXT_ALIGN_RIGHT, 0);
-    lv_obj_set_width(hz_lbl, lv_pct(14));
-    lv_obj_align(hz_lbl, LV_ALIGN_LEFT_MID, lv_pct(18), 0);
-
-    lv_obj_t *dlc_lbl = lv_label_create(row);
-    lv_label_set_text(dlc_lbl, "-");
-    lv_obj_set_style_text_font(dlc_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(dlc_lbl, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_set_style_text_align(dlc_lbl, LV_TEXT_ALIGN_RIGHT, 0);
-    lv_obj_set_width(dlc_lbl, lv_pct(10));
-    lv_obj_align(dlc_lbl, LV_ALIGN_LEFT_MID, lv_pct(32), 0);
-
-    lv_obj_t *bytes_lbl = lv_label_create(row);
-    lv_label_set_text(bytes_lbl, "(empty)");
-    lv_obj_set_style_text_font(bytes_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(bytes_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_t *id_lbl    = _cell(row, id_buf, 0, 18, LV_TEXT_ALIGN_LEFT,
+                                THEME_COLOR_TEXT_PRIMARY);
+    lv_obj_t *hz_lbl    = _cell(row, "-", 18, 14, LV_TEXT_ALIGN_RIGHT,
+                                THEME_COLOR_TEXT_PRIMARY);
+    lv_obj_t *dlc_lbl   = _cell(row, "-", 32, 10, LV_TEXT_ALIGN_RIGHT,
+                                THEME_COLOR_TEXT_MUTED);
+    lv_obj_t *bytes_lbl = _cell(row, "(empty)", 44, 56, LV_TEXT_ALIGN_LEFT,
+                                THEME_COLOR_TEXT_PRIMARY);
     lv_label_set_long_mode(bytes_lbl, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(bytes_lbl, lv_pct(56));
-    lv_obj_align(bytes_lbl, LV_ALIGN_LEFT_MID, lv_pct(42), 0);
 
     s_rows[s_row_count].can_id    = e->can_id;
     s_rows[s_row_count].extended  = e->extended;
@@ -157,44 +154,44 @@ static void _clear_rows(void)
     s_empty_lbl = NULL;
 }
 
-/* Add the four column-header labels (ID/Hz/DLC/Bytes) into a header bar.
- * Shared by the full-screen and embedded layouts. */
-static void _add_column_headers(lv_obj_t *col_hdr)
+/* Build the table into @p parent: a caps column-header strip over a
+ * scrolling list that flex-grows into the rest of the parent's height
+ * (which must be definite). Shared by the full-screen and embedded
+ * layouts, so both draw the same table. */
+static void _build_table(lv_obj_t *parent)
 {
+    lv_obj_set_flex_flow(parent, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(parent, 0, 0);
+
+    lv_obj_t *col_hdr = lv_obj_create(parent);
+    lv_obj_remove_style_all(col_hdr);
+    lv_obj_set_size(col_hdr, lv_pct(100), 28);
+    lv_obj_set_style_pad_hor(col_hdr, 8, 0);
+    lv_obj_set_style_border_color(col_hdr, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(col_hdr, 1, 0);
+    lv_obj_set_style_border_side(col_hdr, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_clear_flag(col_hdr, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+    /* Plain names for the four columns: ID, frames per second, DLC, data. */
     struct { const char *txt; lv_coord_t pct_offset; lv_coord_t pct_w;
              lv_text_align_t align; } cols[] = {
-        { "ID",    0,  18, LV_TEXT_ALIGN_LEFT  },
-        { "Hz",    18, 14, LV_TEXT_ALIGN_RIGHT },
-        { "DLC",   32, 10, LV_TEXT_ALIGN_RIGHT },
-        { "Bytes", 42, 56, LV_TEXT_ALIGN_LEFT  },
+        { "ID",      0,  18, LV_TEXT_ALIGN_LEFT  },
+        { "Per sec", 18, 14, LV_TEXT_ALIGN_RIGHT },
+        { "Bytes",   32, 10, LV_TEXT_ALIGN_RIGHT },
+        { "Data",    44, 56, LV_TEXT_ALIGN_LEFT  },
     };
     for (size_t i = 0; i < sizeof(cols) / sizeof(cols[0]); i++) {
-        lv_obj_t *l = lv_label_create(col_hdr);
-        lv_label_set_text(l, cols[i].txt);
-        lv_obj_set_style_text_font(l, THEME_FONT_TINY, 0);
-        lv_obj_set_style_text_color(l, THEME_COLOR_TEXT_MUTED, 0);
-        lv_obj_set_style_text_letter_space(l, 1, 0);
+        lv_obj_t *l = uk_label(col_hdr, cols[i].txt, UK_FONT_LABEL, UK_TONE_MUTED);
         lv_obj_set_width(l, lv_pct(cols[i].pct_w));
         lv_obj_set_style_text_align(l, cols[i].align, 0);
         lv_obj_align(l, LV_ALIGN_LEFT_MID, lv_pct(cols[i].pct_offset), 0);
     }
-}
 
-/* Apply the scroll-list styling shared by both layouts. Caller sets size. */
-static void _style_list_container(lv_obj_t *c)
-{
-    lv_obj_set_style_bg_color(c, THEME_COLOR_BG, 0);
-    lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(c, 0, 0);
-    lv_obj_set_style_radius(c, 0, 0);
-    lv_obj_set_style_pad_all(c, 0, 0);
-    lv_obj_set_flex_flow(c, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_scroll_dir(c, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(c, LV_SCROLLBAR_MODE_AUTO);
-    lv_obj_set_style_bg_color(c, THEME_COLOR_SCROLLBAR, LV_PART_SCROLLBAR);
-    lv_obj_set_style_bg_opa(c, LV_OPA_50, LV_PART_SCROLLBAR);
-    lv_obj_set_style_radius(c, 2, LV_PART_SCROLLBAR);
-    lv_obj_set_style_width(c, 4, LV_PART_SCROLLBAR);
+    s_list_container = uk_scroll(parent);
+    lv_obj_set_height(s_list_container, 0);
+    lv_obj_set_flex_grow(s_list_container, 1);
+    lv_obj_set_style_pad_row(s_list_container, 0, 0);
+    lv_obj_set_scrollbar_mode(s_list_container, LV_SCROLLBAR_MODE_AUTO);
 }
 
 /* ── Refresh ─────────────────────────────────────────────────────────────── */
@@ -217,18 +214,20 @@ static void _refresh(lv_timer_t *t)
 
     /* Empty-state placeholder: shown when no IDs have been seen yet so the
      * user understands the screen isn't broken — just no traffic. Hide it
-     * the moment any frame arrives. */
+     * the moment any frame arrives. The list is a flex column, so it is
+     * centred by width and padding rather than lv_obj_align. */
     if (tracked == 0) {
         if (!s_empty_lbl) {
-            s_empty_lbl = lv_label_create(s_list_container);
-            lv_label_set_text(s_empty_lbl,
+            s_empty_lbl = uk_label(s_list_container,
                 "No CAN traffic yet.\n"
-                "Confirm wiring, ignition, and bitrate (Device Settings).");
+                "Check the wiring, that the ignition is on, and the bus speed.",
+                UK_FONT_BODY, UK_TONE_MUTED);
+            lv_obj_set_width(s_empty_lbl, lv_pct(100));
+            lv_label_set_long_mode(s_empty_lbl, LV_LABEL_LONG_WRAP);
             lv_obj_set_style_text_align(s_empty_lbl, LV_TEXT_ALIGN_CENTER, 0);
-            lv_obj_set_style_text_color(s_empty_lbl,
-                                          THEME_COLOR_TEXT_MUTED, 0);
-            lv_obj_set_style_text_font(s_empty_lbl, THEME_FONT_SMALL, 0);
-            lv_obj_align(s_empty_lbl, LV_ALIGN_CENTER, 0, 0);
+            lv_obj_set_style_text_line_space(s_empty_lbl, 4, 0);
+            lv_obj_set_style_pad_top(s_empty_lbl, 40, 0);
+            lv_obj_set_style_pad_hor(s_empty_lbl, 16, 0);
         }
         return;
     } else if (s_empty_lbl) {
@@ -286,79 +285,22 @@ static void _create(void)
     s_hz_tick_counter = 0;
     s_empty_lbl       = NULL;
 
-    s_screen = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(s_screen, THEME_COLOR_BG, 0);
-    lv_obj_set_style_bg_opa(s_screen, LV_OPA_COVER, 0);
-    lv_obj_clear_flag(s_screen, LV_OBJ_FLAG_SCROLLABLE);
+    s_screen = uk_screen();
 
-    /* Header — Back / Title / Reset */
-    lv_obj_t *header = lv_obj_create(s_screen);
-    lv_obj_set_size(header, SCREEN_W, 44);
-    lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_bg_color(header, THEME_COLOR_SURFACE, 0);
-    lv_obj_set_style_bg_opa(header, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(header, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_border_side(header, LV_BORDER_SIDE_BOTTOM, 0);
-    lv_obj_set_style_border_width(header, 1, 0);
-    lv_obj_set_style_radius(header, 0, 0);
-    lv_obj_set_style_pad_hor(header, 10, 0);
-    lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
+    /* Brand bar — title, Clear list, Back. The clear button sits in the
+     * bar's status strip (child 2 of uk_bar), the only slot left of Back;
+     * the kit has no uk_bar_action() yet. */
+    lv_obj_t *bar = uk_bar(s_screen, "Live CAN IDs", UK_BAR_BACK, _back_btn_cb, NULL);
+    lv_obj_t *strip = lv_obj_get_child(bar, 2);
+    lv_obj_t *reset_btn = uk_btn(strip ? strip : bar, UK_ICON_RESET, "Clear list",
+                                 UK_BTN_NEUTRAL, _reset_btn_cb, NULL);
+    lv_obj_set_height(reset_btn, 36);
+    lv_obj_set_ext_click_area(reset_btn, 6);
 
-    lv_obj_t *back_btn = lv_btn_create(header);
-    lv_obj_set_size(back_btn, 80, 30);
-    lv_obj_align(back_btn, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_bg_color(back_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_border_color(back_btn, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_border_width(back_btn, 1, 0);
-    lv_obj_set_style_radius(back_btn, THEME_RADIUS_SMALL, 0);
-    lv_obj_set_style_shadow_width(back_btn, 0, 0);
-    lv_obj_add_event_cb(back_btn, _back_btn_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *back_lbl = lv_label_create(back_btn);
-    lv_label_set_text(back_lbl, LV_SYMBOL_LEFT " Back");
-    lv_obj_set_style_text_font(back_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(back_lbl, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_center(back_lbl);
-
-    lv_obj_t *title = lv_label_create(header);
-    lv_label_set_text(title, "CAN ID Live");
-    lv_obj_set_style_text_font(title, THEME_FONT_LARGE, 0);
-    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
-
-    lv_obj_t *reset_btn = lv_btn_create(header);
-    lv_obj_set_size(reset_btn, 90, 30);
-    lv_obj_align(reset_btn, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_bg_color(reset_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_border_color(reset_btn, THEME_COLOR_STATUS_ERROR, 0);
-    lv_obj_set_style_border_width(reset_btn, 1, 0);
-    lv_obj_set_style_radius(reset_btn, THEME_RADIUS_SMALL, 0);
-    lv_obj_set_style_shadow_width(reset_btn, 0, 0);
-    lv_obj_add_event_cb(reset_btn, _reset_btn_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *reset_lbl = lv_label_create(reset_btn);
-    lv_label_set_text(reset_lbl, "Reset");
-    lv_obj_set_style_text_font(reset_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(reset_lbl, THEME_COLOR_STATUS_ERROR, 0);
-    lv_obj_center(reset_lbl);
-
-    /* Column headers */
-    lv_obj_t *col_hdr = lv_obj_create(s_screen);
-    lv_obj_set_size(col_hdr, SCREEN_W, 28);
-    lv_obj_align(col_hdr, LV_ALIGN_TOP_MID, 0, 44);
-    lv_obj_set_style_bg_color(col_hdr, THEME_COLOR_SURFACE, 0);
-    lv_obj_set_style_bg_opa(col_hdr, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(col_hdr, 0, 0);
-    lv_obj_set_style_radius(col_hdr, 0, 0);
-    lv_obj_set_style_pad_all(col_hdr, 4, 0);
-    lv_obj_set_style_pad_hor(col_hdr, 8, 0);
-    lv_obj_clear_flag(col_hdr, LV_OBJ_FLAG_SCROLLABLE);
-
-    _add_column_headers(col_hdr);
-
-    /* Scrollable list */
-    s_list_container = lv_obj_create(s_screen);
-    lv_obj_set_size(s_list_container, SCREEN_W, SCREEN_H - 44 - 28);
-    lv_obj_align(s_list_container, LV_ALIGN_TOP_MID, 0, 44 + 28);
-    _style_list_container(s_list_container);
+    /* The table on one card filling the body */
+    lv_obj_t *card = uk_card(uk_body(s_screen));
+    lv_obj_set_size(card, lv_pct(100), lv_pct(100));
+    _build_table(card);
 
     /* Initial paint */
     _refresh(NULL);
@@ -420,28 +362,9 @@ void can_list_ui_embed(lv_obj_t *parent)
     s_hz_tick_counter = 0;
     s_empty_lbl       = NULL;
 
-    /* Lay the table out top-to-bottom inside the caller's container. */
-    lv_obj_set_flex_flow(parent, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(parent, 0, 0);
-
-    /* Column headers */
-    lv_obj_t *col_hdr = lv_obj_create(parent);
-    lv_obj_set_size(col_hdr, lv_pct(100), 26);
-    lv_obj_set_style_bg_color(col_hdr, THEME_COLOR_SURFACE, 0);
-    lv_obj_set_style_bg_opa(col_hdr, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(col_hdr, 0, 0);
-    lv_obj_set_style_radius(col_hdr, 0, 0);
-    lv_obj_set_style_pad_all(col_hdr, 4, 0);
-    lv_obj_set_style_pad_hor(col_hdr, 8, 0);
-    lv_obj_clear_flag(col_hdr, LV_OBJ_FLAG_SCROLLABLE);
-    _add_column_headers(col_hdr);
-
-    /* Scrollable list — flex-grow to fill the remaining height of parent
-     * (which must have a definite height set by the caller). */
-    s_list_container = lv_obj_create(parent);
-    lv_obj_set_width(s_list_container, lv_pct(100));
-    lv_obj_set_flex_grow(s_list_container, 1);
-    _style_list_container(s_list_container);
+    /* The same table the full screen draws, laid out top-to-bottom inside
+     * the caller's container (which owns the frame around it). */
+    _build_table(parent);
 
     /* Initial paint + live refresh timer (same cadence as the full screen). */
     _refresh(NULL);

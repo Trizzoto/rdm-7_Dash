@@ -10,18 +10,15 @@
  * confirm" state with a different color; tapping any other control or
  * waiting 3 s cancels. On confirm, Mode 04 fires.
  *
- * UI structure (640 × 400 card):
+ * UI structure — a kit popup (640 x 400 card, 18 px padding, so the
+ * content area is 604 x 364; y below is inside that padding):
  *   ┌──────────────────────────────────────┐
- *   │ Trouble Codes                  Close │ header
- *   ├──────────────────────────────────────┤
- *   │ [Stored] [Pending] [Permanent]       │ tab bar
- *   ├──────────────────────────────────────┤
- *   │  P0420  Catalyst Efficiency...       │ scrollable list
- *   │  P0301  Cylinder 1 Misfire           │
- *   ├──────────────────────────────────────┤
- *   │  status line                         │
- *   ├──────────────────────────────────────┤
- *   │  [Refresh]      [Clear Codes]        │ footer
+ *   │ TROUBLE CODES                    [X] │ uk_popup title + close
+ *   │ [Stored] [Pending] [Permanent]       │ y 56, tabs (on = UK_BTN_ON)
+ *   │  P0420  Catalyst Efficiency...       │ y 104, scrollable list of
+ *   │  P0301  Cylinder 1 Misfire           │        neutral rows
+ *   │  status line                         │ y 300
+ *   │  [Read again]         [Clear codes]  │ y 324, footer buttons
  *   └──────────────────────────────────────┘
  */
 #include "dtc_reader.h"
@@ -30,6 +27,7 @@
 #include "obd2_dtc_db.h"
 #include "dtc_monitor.h"
 #include "theme.h"
+#include "kit/ui_kit.h"
 
 #include <stdarg.h>
 #include <stdint.h>
@@ -38,11 +36,16 @@
 
 #define MODAL_W   640
 #define MODAL_H   400
-#define HEADER_H   34
-#define TABBAR_H   30
-#define STATUS_H   22
-#define FOOTER_H   42
-#define ROW_H      26
+#define INNER_W   (MODAL_W - 36)    /* card padding is 18 each side */
+#define INNER_H   (MODAL_H - 36)
+#define TABS_Y    UK_POPUP_BODY_Y
+#define TAB_W     120
+#define TAB_H     36
+#define LIST_Y    (TABS_Y + TAB_H + 12)
+#define FOOTER_Y  (INNER_H - UK_BTN_H)
+#define STATUS_Y  (FOOTER_Y - 24)
+#define LIST_H    (STATUS_Y - 8 - LIST_Y)
+#define ROW_H      34
 
 #define CLEAR_CONFIRM_MS 3000   /* clear-button confirmation window */
 
@@ -65,8 +68,9 @@ typedef struct {
     obd2_dtc_t  codes[OBD2_MAX_DTCS];
 } bucket_state_t;
 
+/* The kit popup's card. uk_popup's backdrop is a sibling that goes with it
+ * when this is deleted, so this one pointer is the whole modal. */
 static lv_obj_t       *s_overlay     = NULL;
-static lv_obj_t       *s_card        = NULL;
 static lv_obj_t       *s_tabs[TAB_COUNT] = {0};
 static lv_obj_t       *s_list        = NULL;
 static lv_obj_t       *s_status      = NULL;
@@ -101,7 +105,7 @@ static void _row_click_cb(lv_event_t *e);
  * Mode 02 queries for the standard set of "snapshot" PIDs (RPM, speed,
  * coolant temp, load, throttle, MAP, MAF, fuel level, run time). Each
  * comes back individually; the panel updates row-by-row as data
- * arrives. Some ECUs reject many PIDs with NRC — those show "—". */
+ * arrives. Some ECUs reject many PIDs with NRC — those show "-". */
 
 #define FF_MAX_ROWS 12
 
@@ -158,9 +162,8 @@ void dtc_reader_close(void) {
     /* Tear down freeze-frame sub-modal if it's open — same safety pattern
      * as the existing dump overlay handling. */
     _ff_close();
-    lv_obj_del(s_overlay);
+    if (lv_obj_is_valid(s_overlay)) lv_obj_del(s_overlay);   /* takes the backdrop too */
     s_overlay     = NULL;
-    s_card        = NULL;
     s_list        = NULL;
     s_status      = NULL;
     s_refresh_btn = NULL;
@@ -177,140 +180,42 @@ void dtc_reader_close(void) {
 void dtc_reader_open(void) {
     if (s_overlay) return;
 
-    /* Full-screen dimmer overlay, sits on lv_layer_top so it appears
-     * above the dashboard and any Device Settings underneath. */
-    s_overlay = lv_obj_create(lv_layer_top());
-    lv_obj_remove_style_all(s_overlay);
-    lv_obj_set_size(s_overlay, lv_pct(100), lv_pct(100));
-    lv_obj_set_style_bg_color(s_overlay, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(s_overlay, LV_OPA_60, 0);
-    lv_obj_clear_flag(s_overlay, LV_OBJ_FLAG_SCROLLABLE);
+    /* Kit popup on lv_layer_top, above the dashboard and any settings
+     * underneath; its X calls _close_btn_cb. */
+    s_overlay = uk_popup(MODAL_W, MODAL_H, "Trouble codes", _close_btn_cb);
 
-    /* Card */
-    s_card = lv_obj_create(s_overlay);
-    lv_obj_set_size(s_card, MODAL_W, MODAL_H);
-    lv_obj_center(s_card);
-    lv_obj_set_style_bg_color(s_card, THEME_COLOR_SURFACE, 0);
-    lv_obj_set_style_radius(s_card, THEME_RADIUS_LARGE, 0);
-    lv_obj_set_style_border_width(s_card, 1, 0);
-    lv_obj_set_style_border_color(s_card, THEME_COLOR_BORDER_MED, 0);
-    lv_obj_set_style_pad_all(s_card, 0, 0);
-    lv_obj_clear_flag(s_card, LV_OBJ_FLAG_SCROLLABLE);
-
-    /* ── Header ── */
-    lv_obj_t *header = lv_obj_create(s_card);
-    lv_obj_remove_style_all(header);
-    lv_obj_set_size(header, MODAL_W, HEADER_H);
-    lv_obj_align(header, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_bg_color(header, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(header, LV_OPA_COVER, 0);
-    lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *title = lv_label_create(header);
-    lv_label_set_text(title, "Trouble Codes");
-    lv_obj_set_style_text_font(title, THEME_FONT_LARGE, 0);
-    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_align(title, LV_ALIGN_LEFT_MID, 16, 0);
-
-    lv_obj_t *close_btn = lv_btn_create(header);
-    lv_obj_set_size(close_btn, 60, 28);
-    lv_obj_align(close_btn, LV_ALIGN_RIGHT_MID, -12, 0);
-    lv_obj_set_style_bg_color(close_btn, THEME_COLOR_BTN_DIM, 0);
-    lv_obj_set_style_radius(close_btn, THEME_RADIUS_SMALL, 0);
-    lv_obj_set_style_shadow_width(close_btn, 0, 0);
-    lv_obj_t *close_lbl = lv_label_create(close_btn);
-    lv_label_set_text(close_lbl, "Close");
-    lv_obj_center(close_lbl);
-    lv_obj_set_style_text_font(close_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(close_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_add_event_cb(close_btn, _close_btn_cb, LV_EVENT_CLICKED, NULL);
-
-    /* ── Tab bar ── */
-    lv_obj_t *tabbar = lv_obj_create(s_card);
-    lv_obj_remove_style_all(tabbar);
-    lv_obj_set_size(tabbar, MODAL_W, TABBAR_H);
-    lv_obj_align(tabbar, LV_ALIGN_TOP_LEFT, 0, HEADER_H);
-    lv_obj_set_style_bg_color(tabbar, THEME_COLOR_INPUT_BG, 0);
-    lv_obj_set_style_bg_opa(tabbar, LV_OPA_COVER, 0);
-    lv_obj_clear_flag(tabbar, LV_OBJ_FLAG_SCROLLABLE);
-
-    int tab_w = 100;
-    int tab_x = 12;
+    /* ── Tabs ── the showing bucket reads as "on". */
     for (int i = 0; i < TAB_COUNT; i++) {
-        s_tabs[i] = lv_btn_create(tabbar);
-        lv_obj_set_size(s_tabs[i], tab_w, 24);
-        lv_obj_align(s_tabs[i], LV_ALIGN_LEFT_MID, tab_x, 0);
-        lv_obj_set_style_bg_color(s_tabs[i],
-            (i == s_current_tab) ? THEME_COLOR_ACCENT_BLUE
-                                  : THEME_COLOR_BTN_DIM, 0);
-        lv_obj_set_style_radius(s_tabs[i], THEME_RADIUS_SMALL, 0);
-        lv_obj_set_style_shadow_width(s_tabs[i], 0, 0);
-        lv_obj_t *tlbl = lv_label_create(s_tabs[i]);
-        lv_label_set_text(tlbl, TAB_NAME[i]);
-        lv_obj_center(tlbl);
-        lv_obj_set_style_text_font(tlbl, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(tlbl,
-            (i == s_current_tab) ? THEME_COLOR_TEXT_ON_ACCENT
-                                  : THEME_COLOR_TEXT_PRIMARY, 0);
-        lv_obj_add_event_cb(s_tabs[i], _tab_cb, LV_EVENT_CLICKED,
-                            (void *)(intptr_t)i);
-        tab_x += tab_w + 6;
+        s_tabs[i] = uk_btn(s_overlay, UK_ICON_NONE, TAB_NAME[i],
+                           (i == s_current_tab) ? UK_BTN_ON : UK_BTN_NEUTRAL,
+                           _tab_cb, (void *)(intptr_t)i);
+        lv_obj_set_size(s_tabs[i], TAB_W, TAB_H);
+        lv_obj_align(s_tabs[i], LV_ALIGN_TOP_LEFT, i * (TAB_W + 8), TABS_Y);
     }
 
     /* ── List body ── */
-    int list_y = HEADER_H + TABBAR_H;
-    int list_h = MODAL_H - HEADER_H - TABBAR_H - STATUS_H - FOOTER_H;
-    s_list = lv_obj_create(s_card);
-    lv_obj_set_size(s_list, MODAL_W, list_h);
-    lv_obj_align(s_list, LV_ALIGN_TOP_LEFT, 0, list_y);
-    lv_obj_set_style_bg_color(s_list, THEME_COLOR_SURFACE, 0);
-    lv_obj_set_style_border_width(s_list, 0, 0);
-    lv_obj_set_style_pad_all(s_list, 4, 0);
-    lv_obj_set_style_pad_row(s_list, 1, 0);
+    s_list = lv_obj_create(s_overlay);
+    lv_obj_remove_style_all(s_list);
+    lv_obj_set_size(s_list, INNER_W, LIST_H);
+    lv_obj_align(s_list, LV_ALIGN_TOP_LEFT, 0, LIST_Y);
+    lv_obj_set_style_pad_row(s_list, 4, 0);
     lv_obj_set_flex_flow(s_list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_scrollbar_mode(s_list, LV_SCROLLBAR_MODE_OFF);
 
     /* ── Status line ── */
-    s_status = lv_label_create(s_card);
-    lv_label_set_text(s_status, "Reading stored codes...");
-    lv_obj_set_style_text_font(s_status, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(s_status, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_align(s_status, LV_ALIGN_TOP_LEFT, 12, list_y + list_h + 4);
+    s_status = uk_label(s_overlay, "Reading stored codes...", UK_FONT_SMALL, UK_TONE_MUTED);
+    lv_obj_align(s_status, LV_ALIGN_TOP_LEFT, 0, STATUS_Y);
 
     /* ── Footer ── */
-    lv_obj_t *footer = lv_obj_create(s_card);
-    lv_obj_remove_style_all(footer);
-    lv_obj_set_size(footer, MODAL_W, FOOTER_H);
-    lv_obj_align(footer, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-    lv_obj_set_style_bg_color(footer, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(footer, LV_OPA_COVER, 0);
-    lv_obj_clear_flag(footer, LV_OBJ_FLAG_SCROLLABLE);
+    s_refresh_btn = uk_btn(s_overlay, UK_ICON_RESET, "Read again", UK_BTN_NEUTRAL,
+                           _refresh_btn_cb, NULL);
+    lv_obj_align(s_refresh_btn, LV_ALIGN_TOP_LEFT, 0, FOOTER_Y);
 
-    s_refresh_btn = lv_btn_create(footer);
-    lv_obj_set_size(s_refresh_btn, 100, 30);
-    lv_obj_align(s_refresh_btn, LV_ALIGN_LEFT_MID, 12, 0);
-    lv_obj_set_style_bg_color(s_refresh_btn, THEME_COLOR_BTN_DIM, 0);
-    lv_obj_set_style_radius(s_refresh_btn, THEME_RADIUS_SMALL, 0);
-    lv_obj_set_style_shadow_width(s_refresh_btn, 0, 0);
-    lv_obj_t *rlbl = lv_label_create(s_refresh_btn);
-    lv_label_set_text(rlbl, "Refresh");
-    lv_obj_center(rlbl);
-    lv_obj_set_style_text_font(rlbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(rlbl, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_add_event_cb(s_refresh_btn, _refresh_btn_cb, LV_EVENT_CLICKED, NULL);
-
-    s_clear_btn = lv_btn_create(footer);
-    lv_obj_set_size(s_clear_btn, 130, 30);
-    lv_obj_align(s_clear_btn, LV_ALIGN_RIGHT_MID, -12, 0);
-    lv_obj_set_style_bg_color(s_clear_btn, THEME_COLOR_BTN_CANCEL, 0);
-    lv_obj_set_style_radius(s_clear_btn, THEME_RADIUS_SMALL, 0);
-    lv_obj_set_style_shadow_width(s_clear_btn, 0, 0);
-    s_clear_lbl = lv_label_create(s_clear_btn);
-    lv_label_set_text(s_clear_lbl, "Clear Codes");
-    lv_obj_center(s_clear_lbl);
-    lv_obj_set_style_text_font(s_clear_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(s_clear_lbl, THEME_COLOR_TEXT_ON_ACCENT, 0);
-    lv_obj_add_event_cb(s_clear_btn, _clear_btn_cb, LV_EVENT_CLICKED, NULL);
+    s_clear_btn = uk_btn(s_overlay, UK_ICON_TRASH, "Clear codes", UK_BTN_DANGER,
+                         _clear_btn_cb, NULL);
+    lv_obj_set_width(s_clear_btn, 200);
+    lv_obj_align(s_clear_btn, LV_ALIGN_TOP_RIGHT, 0, FOOTER_Y);
+    s_clear_lbl = uk_btn_label(s_clear_btn);
 
     /* Fire the initial fetch for the visible tab. */
     _fetch_tab(s_current_tab);
@@ -329,17 +234,11 @@ static void _tab_cb(lv_event_t *e) {
     if (tab == s_current_tab) return;
 
     s_current_tab = tab;
-    /* Re-color all tab buttons. */
+    /* Move the "on" look to the chosen tab. */
     for (int i = 0; i < TAB_COUNT; i++) {
         if (!s_tabs[i] || !lv_obj_is_valid(s_tabs[i])) continue;
-        bool sel = (i == s_current_tab);
-        lv_obj_set_style_bg_color(s_tabs[i],
-            sel ? THEME_COLOR_ACCENT_BLUE : THEME_COLOR_BTN_DIM, 0);
-        lv_obj_t *lbl = lv_obj_get_child(s_tabs[i], 0);
-        if (lbl) {
-            lv_obj_set_style_text_color(lbl,
-                sel ? THEME_COLOR_TEXT_ON_ACCENT : THEME_COLOR_TEXT_PRIMARY, 0);
-        }
+        uk_btn_set_kind(s_tabs[i],
+                        (i == s_current_tab) ? UK_BTN_ON : UK_BTN_NEUTRAL);
     }
 
     /* Cancel any pending clear-confirm — switching tabs is "doing
@@ -402,11 +301,11 @@ static void _clear_button_set_state(bool armed) {
     if (!s_clear_btn || !lv_obj_is_valid(s_clear_btn)) return;
     if (s_clear_lbl && lv_obj_is_valid(s_clear_lbl)) {
         lv_label_set_text(s_clear_lbl,
-                          armed ? "Confirm Clear?" : "Clear Codes");
+                          armed ? "Tap again to clear" : "Clear codes");
     }
-    /* Color: armed = even more red to nudge the user to think. */
-    lv_obj_set_style_bg_color(s_clear_btn,
-        armed ? THEME_COLOR_BTN_CLOSE : THEME_COLOR_BTN_CANCEL, 0);
+    /* Armed = solid red fill, so the second tap is clearly the one that
+     * does it; resting = the kit's soft danger look. */
+    uk_btn_set_kind(s_clear_btn, armed ? UK_BTN_PRIMARY : UK_BTN_DANGER);
     if (!armed && s_clear_timer) {
         lv_timer_del(s_clear_timer);
         s_clear_timer = NULL;
@@ -517,52 +416,40 @@ static void _render_list(void) {
     bucket_state_t *b = &s_buckets[s_current_tab];
 
     if (b->in_flight) {
-        lv_obj_t *lbl = lv_label_create(s_list);
-        lv_label_set_text(lbl, "...");
-        lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(lbl, THEME_COLOR_TEXT_MUTED, 0);
+        uk_label(s_list, "Reading...", UK_FONT_SMALL, UK_TONE_MUTED);
         return;
     }
     if (!b->loaded) return;
     if (b->count == 0) {
-        lv_obj_t *lbl = lv_label_create(s_list);
-        lv_label_set_text(lbl,
+        uk_label(s_list,
             b->last_ok
-                ? "No trouble codes in this bucket."
-                : "No response from ECU (engine off, or not supported).");
-        lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(lbl, THEME_COLOR_TEXT_MUTED, 0);
-        lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 8, 8);
+                ? "No trouble codes in this list."
+                : "No answer from the car (engine off, or not supported).",
+            UK_FONT_SMALL, UK_TONE_MUTED);
         return;
     }
 
     for (uint8_t i = 0; i < b->count; i++) {
+        /* A neutral row: raised fill, button radius. */
         lv_obj_t *row = lv_obj_create(s_list);
+        lv_obj_remove_style_all(row);
         lv_obj_set_size(row, lv_pct(100), ROW_H);
-        lv_obj_set_style_bg_color(row, (i & 1) ? THEME_COLOR_INPUT_BG
-                                                : THEME_COLOR_SURFACE, 0);
+        lv_obj_set_style_bg_color(row, THEME_COLOR_CONTROL_BG, 0);
         lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_width(row, 0, 0);
-        lv_obj_set_style_pad_all(row, 0, 0);
-        lv_obj_set_style_pad_left(row, 8, 0);
-        lv_obj_set_style_pad_right(row, 8, 0);
+        lv_obj_set_style_radius(row, UK_R_BTN, 0);
+        lv_obj_set_style_pad_hor(row, 10, 0);
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
 
-        /* Code column — fixed width, accent color so it pops. */
-        lv_obj_t *code_lbl = lv_label_create(row);
-        lv_label_set_text(code_lbl, b->codes[i].code);
-        lv_obj_set_style_text_font(code_lbl, THEME_FONT_BODY, 0);
-        lv_obj_set_style_text_color(code_lbl, THEME_COLOR_ACCENT_BLUE, 0);
+        /* Code column — fixed width, condensed caps so it reads as the key. */
+        lv_obj_t *code_lbl = uk_label(row, b->codes[i].code, UK_FONT_LABEL, UK_TONE_TEXT);
         lv_obj_align(code_lbl, LV_ALIGN_LEFT_MID, 0, 0);
 
         /* Description column — looked up from offline DB. */
         const char *desc = obd2_dtc_lookup(b->codes[i].code);
-        lv_obj_t *desc_lbl = lv_label_create(row);
-        lv_label_set_text(desc_lbl, desc ? desc : "(no description in DB)");
-        lv_obj_set_style_text_font(desc_lbl, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(desc_lbl,
-            desc ? THEME_COLOR_TEXT_PRIMARY : THEME_COLOR_TEXT_MUTED, 0);
-        lv_obj_set_width(desc_lbl, MODAL_W - 90);
+        lv_obj_t *desc_lbl = uk_label(row, desc ? desc : "(no description on file)",
+                                      UK_FONT_SMALL,
+                                      desc ? UK_TONE_TEXT : UK_TONE_MUTED);
+        lv_obj_set_width(desc_lbl, INNER_W - 20 - 70);
         lv_label_set_long_mode(desc_lbl, LV_LABEL_LONG_DOT);
         lv_obj_align(desc_lbl, LV_ALIGN_LEFT_MID, 70, 0);
 
@@ -578,10 +465,9 @@ static void _render_list(void) {
              * handler — saves a per-row malloc. */
             lv_obj_add_event_cb(row, _row_click_cb, LV_EVENT_CLICKED,
                                  (void *)(intptr_t)i);
-            /* Subtle hover/press feedback */
-            lv_obj_set_style_bg_color(row, THEME_COLOR_ACCENT_BLUE,
+            /* Press feedback: the kit's second neutral step. */
+            lv_obj_set_style_bg_color(row, THEME_COLOR_BTN_DIM_PRESSED,
                                       LV_STATE_PRESSED);
-            lv_obj_set_style_bg_opa(row, LV_OPA_30, LV_STATE_PRESSED);
         }
     }
 }
@@ -611,7 +497,7 @@ static void _set_status_fmt(const char *fmt, ...) {
 
 /* ── Freeze-frame sub-modal ──────────────────────────────────────────
  *
- * Lightweight overlay (400 x 360) shown above the DTC reader card.
+ * A 420 x 390 kit popup shown above the DTC reader card.
  * Fires the FF_PIDS sequence one at a time and updates each row as
  * data arrives. Each PID slot starts as "..." and resolves to either
  * a decoded value or "-" (the ECU didn't have a freeze frame for it).
@@ -687,74 +573,34 @@ static void _ff_open(const char *code) {
     strncpy((char *)s_ff_dtc_for_modal, code,
             sizeof(s_ff_dtc_for_modal) - 1);
 
-    /* Overlay sits on lv_layer_top, slightly more opaque dimmer so it
-     * visually reads as "on top of" the DTC reader card. */
-    s_ff_overlay = lv_obj_create(lv_layer_top());
-    lv_obj_remove_style_all(s_ff_overlay);
-    lv_obj_set_size(s_ff_overlay, lv_pct(100), lv_pct(100));
-    lv_obj_set_style_bg_color(s_ff_overlay, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(s_ff_overlay, LV_OPA_80, 0);
-    lv_obj_clear_flag(s_ff_overlay, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *card = lv_obj_create(s_ff_overlay);
-    lv_obj_set_size(card, 420, 360);
-    lv_obj_center(card);
-    lv_obj_set_style_bg_color(card, THEME_COLOR_SURFACE, 0);
-    lv_obj_set_style_radius(card, THEME_RADIUS_LARGE, 0);
-    lv_obj_set_style_border_width(card, 1, 0);
-    lv_obj_set_style_border_color(card, THEME_COLOR_BORDER_MED, 0);
-    lv_obj_set_style_pad_all(card, 14, 0);
-    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-
-    /* Title — "Freeze Frame: P0420". */
-    lv_obj_t *title = lv_label_create(card);
+    /* A second kit popup. Created after the reader's, so its backdrop sits
+     * over the reader card and it reads as "on top of" it; the X calls
+     * _ff_close_cb. s_ff_overlay is the card (backdrop goes with it). */
     char title_buf[48];
-    snprintf(title_buf, sizeof(title_buf), "Freeze Frame: %s", code);
-    lv_label_set_text(title, title_buf);
-    lv_obj_set_style_text_font(title, THEME_FONT_LARGE, 0);
-    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
+    snprintf(title_buf, sizeof(title_buf), "Freeze frame %s", code);
+    s_ff_overlay = uk_popup(420, 390, title_buf, _ff_close_cb);
 
     /* Hint */
-    lv_obj_t *hint = lv_label_create(card);
-    lv_label_set_text(hint,
-        "Live values at the moment this code set.\n"
-        "'-' = ECU has no freeze-frame data for this PID.");
-    lv_obj_set_style_text_font(hint, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(hint, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_align(hint, LV_ALIGN_TOP_LEFT, 0, 28);
+    lv_obj_t *hint = uk_label(s_ff_overlay,
+        "Readings from the moment this code was set. "
+        "A dash means the car kept no reading for it.",
+        UK_FONT_SMALL, UK_TONE_MUTED);
+    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(hint, 420 - 36);
+    lv_obj_align(hint, LV_ALIGN_TOP_LEFT, 0, UK_POPUP_BODY_Y);
 
     /* Two-column layout: labels on left, values on right. */
-    int row_y0 = 70;
+    int row_y0 = UK_POPUP_BODY_Y + 44;
     int row_h  = 22;
     for (size_t i = 0; i < FF_PID_COUNT; i++) {
-        lv_obj_t *lbl = lv_label_create(card);
-        lv_label_set_text(lbl, FF_PIDS[i].label);
-        lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(lbl, THEME_COLOR_TEXT_HINT, 0);
+        lv_obj_t *lbl = uk_label(s_ff_overlay, FF_PIDS[i].label,
+                                 UK_FONT_SMALL, UK_TONE_MUTED);
         lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 0, row_y0 + (int)i * row_h);
 
-        s_ff_value_lbls[i] = lv_label_create(card);
-        lv_label_set_text(s_ff_value_lbls[i], "...");
-        lv_obj_set_style_text_font(s_ff_value_lbls[i], THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(s_ff_value_lbls[i], THEME_COLOR_TEXT_HINT, 0);
+        s_ff_value_lbls[i] = uk_label(s_ff_overlay, "...", UK_FONT_SMALL, UK_TONE_HINT);
         lv_obj_align(s_ff_value_lbls[i], LV_ALIGN_TOP_LEFT,
                      180, row_y0 + (int)i * row_h);
     }
-
-    /* Close button. */
-    lv_obj_t *close = lv_btn_create(card);
-    lv_obj_set_size(close, 90, 30);
-    lv_obj_align(close, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
-    lv_obj_set_style_bg_color(close, THEME_COLOR_BTN_DIM, 0);
-    lv_obj_set_style_radius(close, THEME_RADIUS_SMALL, 0);
-    lv_obj_set_style_shadow_width(close, 0, 0);
-    lv_obj_t *close_lbl = lv_label_create(close);
-    lv_label_set_text(close_lbl, "Close");
-    lv_obj_center(close_lbl);
-    lv_obj_set_style_text_font(close_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(close_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_add_event_cb(close, _ff_close_cb, LV_EVENT_CLICKED, NULL);
 
     /* Kick off the sequence. */
     s_ff_running = true;

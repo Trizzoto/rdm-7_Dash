@@ -478,7 +478,7 @@ void update_warning_ui_immediate(uint8_t warning_idx) {
 	warning_data_t *wd = _lookup_warning_data(warning_idx);
 	bool state = wd ? _warn_eff_state(wd) : false;
 	lv_color_t active = wd ? _warn_eff_active_color(wd) : THEME_COLOR_RED;
-	lv_color_t inactive = wd ? _warn_eff_inactive_color(wd) : THEME_COLOR_INACTIVE;
+	lv_color_t inactive = wd ? _warn_eff_inactive_color(wd) : WIDGET_COLOR_INACTIVE;
 	uint8_t active_opa = wd ? wd->active_opa : 255;
 	uint8_t inactive_opa = wd ? wd->inactive_opa : 180;
 
@@ -567,7 +567,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 
 	// Create the configuration screen
 	lv_obj_t *config_screen = lv_obj_create(NULL);
-	lv_obj_set_style_bg_color(config_screen, THEME_COLOR_BG, 0);
+	lv_obj_set_style_bg_color(config_screen, WIDGET_COLOR_BG, 0);
 	lv_obj_set_style_bg_opa(config_screen, LV_OPA_COVER, 0);
 	lv_obj_clear_flag(config_screen, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -593,7 +593,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_set_y(main_border, 117); // Lowered by 50px (was 67)
 	lv_obj_clear_flag(main_border, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_set_style_radius(main_border, 7, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(main_border, THEME_COLOR_INACTIVE,
+	lv_obj_set_style_bg_color(main_border, WIDGET_COLOR_INACTIVE,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(main_border, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(main_border, 0,
@@ -607,7 +607,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_set_align(input_border, LV_ALIGN_CENTER);
 	lv_obj_clear_flag(input_border, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_set_style_radius(input_border, 7, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(input_border, THEME_COLOR_INPUT_BG,
+	lv_obj_set_style_bg_color(input_border, WIDGET_COLOR_INPUT_BG,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(input_border, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(input_border, 0,
@@ -644,7 +644,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_set_y(preview_label, -112); // Same y-position as in Screen3
 	lv_obj_set_align(preview_label, LV_ALIGN_CENTER);
 	lv_label_set_text(preview_label, wd_cfg ? wd_cfg->label : "Alert");
-	lv_obj_set_style_text_color(preview_label, THEME_COLOR_TEXT_PRIMARY,
+	lv_obj_set_style_text_color(preview_label, WIDGET_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(preview_label, 255,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -666,7 +666,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_t *title = lv_label_create(config_screen);
 	lv_label_set_text_fmt(title, "Alert %d Configuration", warning_idx + 1);
 	lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
-	lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
+	lv_obj_set_style_text_color(title, WIDGET_COLOR_TEXT_PRIMARY, 0);
 
 	// Create a container for inputs
 	lv_obj_t *inputs_container = lv_obj_create(config_screen);
@@ -684,7 +684,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_set_style_text_align(label_text_label, LV_TEXT_ALIGN_LEFT, 0);
 	lv_obj_align(label_text_label, LV_ALIGN_CENTER, -312,
 				 -47); // Was 73, now -47
-	lv_obj_set_style_text_color(label_text_label, THEME_COLOR_TEXT_MUTED, 0);
+	lv_obj_set_style_text_color(label_text_label, WIDGET_COLOR_TEXT_MUTED, 0);
 
 	input_objects[3] = lv_textarea_create(inputs_container);
 	lv_obj_add_style(input_objects[3], &common_style, LV_PART_MAIN);
@@ -702,7 +702,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_set_width(can_id_label, 110);
 	lv_obj_set_style_text_align(can_id_label, LV_TEXT_ALIGN_LEFT, 0);
 	lv_obj_align(can_id_label, LV_ALIGN_CENTER, -312, -7); // Was -47, now -7
-	lv_obj_set_style_text_color(can_id_label, THEME_COLOR_TEXT_MUTED, 0);
+	lv_obj_set_style_text_color(can_id_label, WIDGET_COLOR_TEXT_MUTED, 0);
 
 	input_objects[0] = lv_textarea_create(inputs_container);
 	lv_obj_add_style(input_objects[0], &common_style, LV_PART_MAIN);
@@ -722,7 +722,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_set_width(bit_pos_label, 110);
 	lv_obj_set_style_text_align(bit_pos_label, LV_TEXT_ALIGN_LEFT, 0);
 	lv_obj_align(bit_pos_label, LV_ALIGN_CENTER, -312, 33); // Was -7, now 33
-	lv_obj_set_style_text_color(bit_pos_label, THEME_COLOR_TEXT_MUTED, 0);
+	lv_obj_set_style_text_color(bit_pos_label, WIDGET_COLOR_TEXT_MUTED, 0);
 
 	input_objects[1] = lv_dropdown_create(inputs_container);
 	lv_obj_add_style(input_objects[1], &common_style, LV_PART_MAIN);
@@ -742,7 +742,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_set_width(color_label, 110);
 	lv_obj_set_style_text_align(color_label, LV_TEXT_ALIGN_LEFT, 0);
 	lv_obj_align(color_label, LV_ALIGN_CENTER, -312, 73);
-	lv_obj_set_style_text_color(color_label, THEME_COLOR_TEXT_MUTED, 0);
+	lv_obj_set_style_text_color(color_label, WIDGET_COLOR_TEXT_MUTED, 0);
 
 	input_objects[4] = lv_dropdown_create(inputs_container);
 	lv_obj_add_style(input_objects[4], &common_style, LV_PART_MAIN);
@@ -773,7 +773,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_label_set_text(toggle_mode_label, "Toggle Mode:");
 	lv_obj_set_width(toggle_mode_label, 110);
 	lv_obj_set_style_text_align(toggle_mode_label, LV_TEXT_ALIGN_LEFT, 0);
-	lv_obj_set_style_text_color(toggle_mode_label, THEME_COLOR_TEXT_MUTED, 0);
+	lv_obj_set_style_text_color(toggle_mode_label, WIDGET_COLOR_TEXT_MUTED, 0);
 	lv_obj_align(toggle_mode_label, LV_ALIGN_CENTER, -312, 113);
 
 	input_objects[5] = lv_dropdown_create(inputs_container);
@@ -789,7 +789,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_label_set_text(invert_toggle_label, "Invert Toggle:");
 	lv_obj_set_width(invert_toggle_label, 110);
 	lv_obj_set_style_text_align(invert_toggle_label, LV_TEXT_ALIGN_LEFT, 0);
-	lv_obj_set_style_text_color(invert_toggle_label, THEME_COLOR_TEXT_MUTED, 0);
+	lv_obj_set_style_text_color(invert_toggle_label, WIDGET_COLOR_TEXT_MUTED, 0);
 	lv_obj_align(invert_toggle_label, LV_ALIGN_CENTER, -312, 153);
 
 	lv_obj_t *invert_toggle_switch = lv_switch_create(inputs_container);
@@ -821,7 +821,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_clear_flag(preconfig_container, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_set_style_radius(preconfig_container, 7,
 							LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(preconfig_container, THEME_COLOR_INPUT_BG,
+	lv_obj_set_style_bg_color(preconfig_container, WIDGET_COLOR_INPUT_BG,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(preconfig_container, 255,
 							LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -833,7 +833,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	// Heading for preconfig container
 	lv_obj_t *preconfig_heading = lv_label_create(preconfig_container);
 	lv_label_set_text(preconfig_heading, "Pre-configurations");
-	lv_obj_set_style_text_color(preconfig_heading, THEME_COLOR_TEXT_PRIMARY, 0);
+	lv_obj_set_style_text_color(preconfig_heading, WIDGET_COLOR_TEXT_PRIMARY, 0);
 	lv_obj_set_style_text_font(preconfig_heading, THEME_FONT_BODY, 0);
 	lv_obj_align(preconfig_heading, LV_ALIGN_TOP_MID, 0, 0);
 
@@ -843,7 +843,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_set_width(preconfig_ecu_label, 70);
 	lv_obj_set_style_text_align(preconfig_ecu_label, LV_TEXT_ALIGN_LEFT, 0);
 	lv_obj_align(preconfig_ecu_label, LV_ALIGN_TOP_LEFT, 0, 30);
-	lv_obj_set_style_text_color(preconfig_ecu_label, THEME_COLOR_TEXT_MUTED, 0);
+	lv_obj_set_style_text_color(preconfig_ecu_label, WIDGET_COLOR_TEXT_MUTED, 0);
 
 	lv_obj_t *preconfig_ecu_dd = lv_dropdown_create(preconfig_container);
 	lv_obj_add_style(preconfig_ecu_dd, &common_style, LV_PART_MAIN);
@@ -857,7 +857,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_set_width(preconfig_version_label, 70);
 	lv_obj_set_style_text_align(preconfig_version_label, LV_TEXT_ALIGN_LEFT, 0);
 	lv_obj_align(preconfig_version_label, LV_ALIGN_TOP_LEFT, 0, 70);
-	lv_obj_set_style_text_color(preconfig_version_label, THEME_COLOR_TEXT_MUTED,
+	lv_obj_set_style_text_color(preconfig_version_label, WIDGET_COLOR_TEXT_MUTED,
 								0);
 
 	lv_obj_t *preconfig_version_dd = lv_dropdown_create(preconfig_container);
@@ -872,7 +872,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_set_width(preconfig_warning_label, 70);
 	lv_obj_set_style_text_align(preconfig_warning_label, LV_TEXT_ALIGN_LEFT, 0);
 	lv_obj_align(preconfig_warning_label, LV_ALIGN_TOP_LEFT, 0, 110);
-	lv_obj_set_style_text_color(preconfig_warning_label, THEME_COLOR_TEXT_MUTED,
+	lv_obj_set_style_text_color(preconfig_warning_label, WIDGET_COLOR_TEXT_MUTED,
 								0);
 
 	lv_obj_t *preconfig_warning_dd = lv_dropdown_create(preconfig_container);
@@ -1078,7 +1078,7 @@ void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
 		lv_obj_clear_flag(warning_circles[i], LV_OBJ_FLAG_SCROLLABLE);
 		lv_obj_set_style_radius(warning_circles[i], wd_style ? wd_style->radius : 100,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_color_t init_color = wd_style ? wd_style->inactive_color : THEME_COLOR_INACTIVE;
+		lv_color_t init_color = wd_style ? wd_style->inactive_color : WIDGET_COLOR_INACTIVE;
 		uint8_t init_opa = wd_style ? wd_style->inactive_opa : 180;
 		lv_obj_set_style_bg_color(warning_circles[i], init_color,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -1121,7 +1121,7 @@ void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
 		snprintf(label_text, sizeof(label_text), "Alert\n%d", i + 1);
 		lv_label_set_text(warning_labels[i], label_text);
 	}
-	lv_obj_set_style_text_color(warning_labels[i], wd_style ? wd_style->label_color : THEME_COLOR_TEXT_PRIMARY,
+	lv_obj_set_style_text_color(warning_labels[i], wd_style ? wd_style->label_color : WIDGET_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(warning_labels[i], 255,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -1312,7 +1312,7 @@ static void _warning_to_json(widget_t *w, cJSON *out) {
 		if (wd->channel_id[0] != '\0')
 			cJSON_AddStringToObject(cfg, "channel", wd->channel_id);
 		/* Appearance overrides — only serialize non-default values */
-		if (wd->inactive_color.full != THEME_COLOR_INACTIVE.full)
+		if (wd->inactive_color.full != WIDGET_COLOR_INACTIVE.full)
 			cJSON_AddNumberToObject(cfg, "inactive_color", (int)wd->inactive_color.full);
 		if (wd->border_width != 0)
 			cJSON_AddNumberToObject(cfg, "border_width", wd->border_width);
@@ -1322,7 +1322,7 @@ static void _warning_to_json(widget_t *w, cJSON *out) {
 			cJSON_AddNumberToObject(cfg, "radius", wd->radius);
 		if (!wd->show_label)
 			cJSON_AddBoolToObject(cfg, "show_label", false);
-		if (wd->label_color.full != THEME_COLOR_TEXT_PRIMARY.full)
+		if (wd->label_color.full != WIDGET_COLOR_TEXT_PRIMARY.full)
 			cJSON_AddNumberToObject(cfg, "label_color", (int)wd->label_color.full);
 		if (wd->label_font[0] != '\0')
 			cJSON_AddStringToObject(cfg, "label_font", wd->label_font);
@@ -1902,12 +1902,12 @@ widget_t *widget_warning_create_instance(uint8_t slot) {
 	wd->invert_toggle = false;
 	wd->current_state = false;
 	wd->signal_index = -1;
-	wd->inactive_color = THEME_COLOR_INACTIVE;
+	wd->inactive_color = WIDGET_COLOR_INACTIVE;
 	wd->border_width = 0;
 	wd->border_color = lv_color_hex(0x000000);
 	wd->radius = 100;
 	wd->show_label = true;
-	wd->label_color = THEME_COLOR_TEXT_PRIMARY;
+	wd->label_color = WIDGET_COLOR_TEXT_PRIMARY;
 	wd->label_font[0] = '\0';           /* empty = THEME_FONT_TINY */
 	wd->label_y_offset = 11;            /* standard: caption sits below the lamp */
 	wd->label_text_align = 1;           /* Center */

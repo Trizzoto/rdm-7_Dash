@@ -1,6 +1,8 @@
 #include "settings_panel.h"
+#include "kit/ui_kit.h"
 
-/* Row layout constants */
+/* Row layout constants — rows keep these heights so callers' tab heights
+ * (config_modal.c) still fit the same number of rows. */
 #define ROW_H       34
 #define ROW_PAD_V    3
 #define ROW_PAD_H    8
@@ -13,13 +15,12 @@
 static lv_obj_t *make_row(settings_section_t *sec)
 {
     lv_obj_t *row = lv_obj_create(sec);
+    lv_obj_remove_style_all(row);
     lv_obj_set_size(row, lv_pct(100), ROW_H);
-    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(row, 0, 0);
     lv_obj_set_style_pad_all(row, ROW_PAD_V, 0);
     lv_obj_set_style_pad_left(row, ROW_PAD_H, 0);
     lv_obj_set_style_pad_right(row, ROW_PAD_H, 0);
-    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     return row;
@@ -27,25 +28,9 @@ static lv_obj_t *make_row(settings_section_t *sec)
 
 static void make_label(lv_obj_t *row, const char *text)
 {
-    lv_obj_t *lbl = lv_label_create(row);
-    lv_label_set_text(lbl, text);
-    lv_obj_set_style_text_color(lbl, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
+    lv_obj_t *lbl = uk_label(row, text, UK_FONT_SMALL, UK_TONE_MUTED);
     lv_obj_set_width(lbl, LABEL_W);
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);
-}
-
-/** Dark recessed input — matches web UI: dark bg, light text */
-static void style_ctrl(lv_obj_t *ctrl)
-{
-    lv_obj_set_style_bg_color(ctrl, THEME_COLOR_INPUT_BG, 0);
-    lv_obj_set_style_bg_opa(ctrl, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(ctrl, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_border_width(ctrl, 1, 0);
-    lv_obj_set_style_text_color(ctrl, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_set_style_text_font(ctrl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_radius(ctrl, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_pad_all(ctrl, 4, 0);
 }
 
 /* =========================================================================
@@ -63,15 +48,14 @@ settings_panel_t *settings_panel_create(lv_obj_t *parent,
     lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(panel, THEME_COLOR_BORDER, 0);
     lv_obj_set_style_border_width(panel, 1, 0);
-    lv_obj_set_style_radius(panel, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_radius(panel, UK_R_TILE, 0);
+    lv_obj_set_style_shadow_width(panel, 0, 0);
     lv_obj_set_style_pad_all(panel, THEME_PAD_NORMAL, 0);
     lv_obj_set_style_pad_row(panel, 6, 0);
     lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_scroll_dir(panel, LV_DIR_VER);
-    lv_obj_set_style_bg_color(panel, THEME_COLOR_SCROLLBAR, LV_PART_SCROLLBAR | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_opa(panel, 180, LV_PART_SCROLLBAR | LV_STATE_DEFAULT);
-    lv_obj_set_style_width(panel, 6, LV_PART_SCROLLBAR | LV_STATE_DEFAULT);
+    uk_style_scrollbar(panel);
     return panel;
 }
 
@@ -79,34 +63,22 @@ settings_panel_t *settings_panel_create(lv_obj_t *parent,
  * Section
  * ========================================================================= */
 
+/* A section is a kit card with a muted caps heading. @p accent used to paint
+ * the heading and a bar down the left edge; the kit tells sections apart by
+ * position and heading instead, so it is accepted and ignored. */
 settings_section_t *settings_add_section(settings_panel_t *panel,
                                          const char *title,
                                          lv_color_t accent)
 {
-    lv_obj_t *card = lv_obj_create(panel);
-    lv_obj_set_size(card, lv_pct(100), LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_color(card, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
-    /* Accent bar on left edge only */
-    lv_obj_set_style_border_side(card, LV_BORDER_SIDE_LEFT, 0);
-    lv_obj_set_style_border_color(card, accent, 0);
-    lv_obj_set_style_border_width(card, 3, 0);
-    lv_obj_set_style_radius(card, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_shadow_width(card, 0, 0);
-    lv_obj_set_style_pad_all(card, THEME_PAD_NORMAL, 0);
-    lv_obj_set_style_pad_left(card, 10, 0);
-    lv_obj_set_style_pad_bottom(card, 6, 0);
-    lv_obj_set_style_pad_row(card, 3, 0);
-    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    (void)accent;
+    lv_obj_t *card = uk_card(panel);
+    lv_obj_set_style_pad_row(card, 3, 0);   /* rows carry their own padding */
     lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(card, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 
     if (title && title[0]) {
-        lv_obj_t *hdr = lv_label_create(card);
-        lv_label_set_text(hdr, title);
-        lv_obj_set_style_text_color(hdr, accent, 0);
-        lv_obj_set_style_text_font(hdr, THEME_FONT_TINY, 0);
-        lv_obj_set_style_text_letter_space(hdr, 1, 0);
+        lv_obj_t *hdr = uk_section(card, title);
+        lv_obj_set_style_pad_top(hdr, 0, 0);
         lv_obj_set_style_pad_bottom(hdr, 4, 0);
     }
     return card;
@@ -128,7 +100,7 @@ settings_tabs_t *settings_add_tabs(settings_panel_t *panel,
     lv_obj_set_style_border_width(tabs, 0, 0);
 
     lv_obj_t *btns = lv_tabview_get_tab_btns(tabs);
-    lv_obj_set_style_text_font(btns, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_font(btns, uk_font(UK_FONT_SMALL), 0);
     lv_obj_set_style_bg_color(btns, THEME_COLOR_SURFACE, 0);
     lv_obj_set_style_bg_opa(btns, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(btns, 1, 0);
@@ -147,7 +119,7 @@ settings_tabs_t *settings_add_tabs(settings_panel_t *panel,
                              LV_PART_ITEMS | LV_STATE_CHECKED);
     lv_obj_set_style_border_side(btns, LV_BORDER_SIDE_BOTTOM,
                                   LV_PART_ITEMS | LV_STATE_CHECKED);
-    lv_obj_set_style_border_color(btns, THEME_COLOR_ACCENT_BLUE,
+    lv_obj_set_style_border_color(btns, THEME_COLOR_ACCENT,
                                    LV_PART_ITEMS | LV_STATE_CHECKED);
     lv_obj_set_style_border_width(btns, 2,
                                    LV_PART_ITEMS | LV_STATE_CHECKED);
@@ -180,13 +152,12 @@ lv_obj_t *settings_add_text_input(settings_section_t *sec,
     lv_textarea_set_placeholder_text(ta, placeholder ? placeholder : "");
     lv_obj_set_flex_grow(ta, 1);
     lv_obj_set_height(ta, ROW_H - ROW_PAD_V * 2 - 2);
-    style_ctrl(ta);
+    uk_style_textarea(ta);
+    lv_obj_set_style_text_font(ta, uk_font(UK_FONT_SMALL), 0);
     lv_obj_set_style_pad_left(ta, THEME_PAD_SMALL, 0);
     lv_obj_set_style_pad_right(ta, THEME_PAD_SMALL, 0);
     lv_obj_set_style_pad_top(ta, THEME_PAD_TINY, 0);
     lv_obj_set_style_pad_bottom(ta, THEME_PAD_TINY, 0);
-    lv_obj_set_style_border_color(ta, THEME_COLOR_ACCENT_BLUE, LV_STATE_FOCUSED);
-    lv_obj_set_style_border_width(ta, 2, LV_STATE_FOCUSED);
     if (initial_text) lv_textarea_set_text(ta, initial_text);
     return ta;
 }
@@ -215,7 +186,9 @@ lv_obj_t *settings_add_dropdown(settings_section_t *sec,
     } else {
         lv_obj_set_flex_grow(dd, 1);
     }
-    style_ctrl(dd);
+    uk_style_dropdown(dd);
+    lv_obj_set_style_text_font(dd, uk_font(UK_FONT_SMALL), 0);
+    lv_obj_set_style_pad_ver(dd, 4, 0);   /* fits the 26 px control height */
     lv_obj_set_style_text_color(dd, THEME_COLOR_TEXT_MUTED,
                                  LV_PART_INDICATOR | LV_STATE_DEFAULT);
     return dd;
@@ -230,6 +203,7 @@ lv_obj_t *settings_add_switch(settings_section_t *sec,
 
     lv_obj_t *sw = lv_switch_create(row);
     lv_obj_set_size(sw, 50, 25);
+    uk_style_switch(sw);
     if (checked) lv_obj_add_state(sw, LV_STATE_CHECKED);
     return sw;
 }
@@ -243,19 +217,22 @@ lv_obj_t *settings_add_roller(settings_section_t *sec,
     lv_obj_set_size(row, lv_pct(100), LV_SIZE_CONTENT);
     make_label(row, label);
 
+    /* No kit restyle for rollers: theme tokens, with the selected line in
+     * the soft accent every other picker uses for a selection. */
     lv_obj_t *roller = lv_roller_create(row);
     if (options) lv_roller_set_options(roller, options, LV_ROLLER_MODE_NORMAL);
     lv_roller_set_visible_row_count(roller, visible_rows > 0 ? visible_rows : 3);
-    lv_obj_set_style_text_font(roller, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_font(roller, uk_font(UK_FONT_SMALL), 0);
     lv_obj_set_style_bg_color(roller, THEME_COLOR_INPUT_BG, 0);
     lv_obj_set_style_text_color(roller, THEME_COLOR_TEXT_PRIMARY, 0);
     lv_obj_set_style_border_color(roller, THEME_COLOR_BORDER, 0);
     lv_obj_set_style_border_width(roller, 1, 0);
-    lv_obj_set_style_bg_color(roller, THEME_COLOR_ACCENT_BLUE,
+    lv_obj_set_style_radius(roller, UK_R_BTN, 0);
+    lv_obj_set_style_bg_color(roller, THEME_COLOR_ACCENT_DIM,
                               LV_PART_SELECTED | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(roller, LV_OPA_COVER,
                              LV_PART_SELECTED | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(roller, THEME_COLOR_TEXT_ON_ACCENT,
+    lv_obj_set_style_text_color(roller, ui_pal->accent_ink,
                                  LV_PART_SELECTED | LV_STATE_DEFAULT);
     lv_obj_set_flex_grow(roller, 1);
     return roller;
@@ -276,34 +253,23 @@ lv_obj_t *settings_add_info_row(settings_section_t *sec,
     lv_obj_t *row = make_row(sec);
     make_label(row, key);
 
-    lv_obj_t *val = lv_label_create(row);
-    lv_label_set_text(val, value_text ? value_text : "");
-    lv_obj_set_style_text_color(val, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_set_style_text_font(val, THEME_FONT_SMALL, 0);
+    lv_obj_t *val = uk_label(row, value_text ? value_text : "", UK_FONT_SMALL, UK_TONE_TEXT);
     lv_obj_set_flex_grow(val, 1);
     lv_obj_set_style_text_align(val, LV_TEXT_ALIGN_RIGHT, 0);
     return val;
 }
 
+/* A full-width neutral kit button. @p bg_color used to fill it; kit buttons
+ * take their colour from their kind, and none of these is the screen's one
+ * primary action, so it is accepted and ignored. The caller adds its own
+ * LV_EVENT_CLICKED handler to the returned button, as before. */
 lv_obj_t *settings_add_button(settings_section_t *sec,
                                const char *text,
                                lv_color_t bg_color,
                                lv_coord_t h)
 {
-    lv_obj_t *btn = lv_btn_create(sec);
+    (void)bg_color;
+    lv_obj_t *btn = uk_btn(sec, UK_ICON_NONE, text, UK_BTN_NEUTRAL, NULL, NULL);
     lv_obj_set_size(btn, lv_pct(100), h > 0 ? h : 36);
-    lv_obj_set_style_bg_color(btn, bg_color, 0);
-    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_border_width(btn, 1, 0);
-    lv_obj_set_style_border_color(btn, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_shadow_width(btn, 0, 0);
-    lv_obj_set_style_bg_opa(btn, LV_OPA_80, LV_STATE_PRESSED);
-
-    lv_obj_t *lbl = lv_label_create(btn);
-    lv_label_set_text(lbl, text);
-    lv_obj_set_style_text_color(lbl, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
-    lv_obj_center(lbl);
     return btn;
 }

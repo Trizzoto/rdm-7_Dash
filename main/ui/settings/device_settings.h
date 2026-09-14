@@ -10,6 +10,25 @@ void device_settings_with_return_screen(lv_obj_t* return_screen);
 void set_display_brightness(int percent);
 void init_display_brightness(void);
 
+/* Night dimming from the dock: drop to the dimmer's dim level, and back to
+ * whatever it was before. */
+bool display_is_dimmed(void);
+void display_toggle_dim(void);
+
+/* ── Menu pages (ADR-0075) ─────────────────────────────────────────────
+ * The launcher (main_menu.c) opens these. A page is a full kit screen whose
+ * Back returns to the launcher; a popup opens over whatever menu screen is
+ * showing. */
+typedef enum { DS_PAGE_CAR, DS_PAGE_DASH, DS_PAGE_CONNECT } ds_page_t;
+typedef enum { DS_POPUP_SCREEN, DS_POPUP_RECORDING } ds_popup_t;
+
+void device_settings_open_page(ds_page_t page);
+void device_settings_open_popup(ds_popup_t popup);
+
+/** Make @p screen the settings session's screen: starts the live-status
+ *  timers and tears them (and any open popup) down when it is deleted. */
+void device_settings_attach(lv_obj_t *screen);
+
 // Brightness dimmer switch — signal-based configurable input
 typedef struct {
     char     signal_name[32];    // Signal name (e.g., "INDICATOR_LEFT", "Headlights")
