@@ -139,6 +139,10 @@ Changes that have landed on `master` since the last tagged version.
     Haltech's `FUEL COMP`. It used to become a custom channel, which Flex
     never read. Dashes that already applied the MaxxECU preset keep their
     custom channel; re-apply, or give Ethanol % the same source.
+  - **Flex falls back to petrol when the Ethanol % channel goes away.** It
+    holds the last blend through a sensor dropout, as before, but removing or
+    unbinding the channel used to leave that blend in place indefinitely while
+    the editor said nothing was set up. Found on the bench dash.
 - **The setup wizard hid most of the channels applying an ECU created.** The
   dash's channel step listed the 135-row catalogue against a 144-row cap and
   put custom channels last, but applying an ECU makes a custom channel for

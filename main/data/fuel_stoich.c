@@ -33,7 +33,8 @@ static lv_timer_t *s_timer = NULL;
 
 /* FLEX state — LVGL task only. The last good reading is held across brief
  * staleness so a sensor blip or a slow CAN start does not flash the readout
- * back to petrol and forward again. */
+ * back to petrol and forward again. It is NOT held once there is no sensor to
+ * wait for (the Ethanol % channel removed or unbound): see _flex_tick. */
 static bool  s_flex_have = false;
 static float s_flex_pct  = NAN;
 
@@ -57,23 +58,44 @@ static void _apply(float afr) {
 	channel_manager_notify_conversion_changed("λ", "AFR");
 }
 
-/* Read the ethanol channel, if it is bound and fresh. */
-static bool _read_ethanol(float *out) {
+typedef enum {
+	ETH_NO_SOURCE,   /* no Ethanol % channel, or nothing bound to it */
+	ETH_STALE,       /* bound, but no fresh reading right now */
+	ETH_FRESH,
+} eth_read_t;
+
+/* Read the ethanol channel. Telling "no source" from "stale" matters: a stale
+ * sensor is worth waiting for, a deleted channel is not. */
+static eth_read_t _read_ethanol(float *out) {
 	channel_t *c = channel_manager_get("ethanol_pct");
-	if (!c || c->signal_index < 0) return false;
+	if (!c || c->signal_index < 0) return ETH_NO_SOURCE;
 	signal_t *s = signal_get_by_index((uint16_t)c->signal_index);
-	if (!s || s->is_stale || !isfinite(s->current_value)) return false;
+	if (!s) return ETH_NO_SOURCE;
+	if (s->is_stale || !isfinite(s->current_value)) return ETH_STALE;
 	*out = s->current_value;
-	return true;
+	return ETH_FRESH;
+}
+
+/* Fold one read into the held FLEX state. */
+static void _flex_take(eth_read_t r, float pct) {
+	if (r == ETH_FRESH) {
+		s_flex_have = true;
+		s_flex_pct  = pct;
+	} else if (r == ETH_NO_SOURCE) {
+		/* Found on the bench: delete the Ethanol % channel mid-drive and the
+		 * dash kept the last blend indefinitely while the editor, correctly,
+		 * said nothing was set up. With no sensor left there is nothing to
+		 * hold for — fall back to petrol, the same as never having had one. */
+		s_flex_have = false;
+		s_flex_pct  = NAN;
+	}
+	/* ETH_STALE: keep whatever was held. */
 }
 
 static void _flex_tick(void) {
-	float pct;
-	if (_read_ethanol(&pct)) {
-		s_flex_have = true;
-		s_flex_pct  = pct;
-	}
-	/* No reading yet this boot -> petrol, which is also what the dash showed
+	float pct = NAN;
+	_flex_take(_read_ethanol(&pct), pct);
+	/* No reading yet this boot (or no sensor any more) -> petrol, which is also what the dash showed
 	 * before a fuel could be chosen at all. */
 	float target = s_flex_have ? fuel_stoich_for_ethanol(s_flex_pct)
 	                           : FUEL_AFR_PETROL;
@@ -92,8 +114,8 @@ static void _apply_mode(void) {
 		/* Leaving a fixed fuel for FLEX: take a reading now rather than showing
 		 * the old fixed ratio for up to a second. Hysteresis does not apply to
 		 * the switch itself — it guards against noise, not against a choice. */
-		float pct;
-		if (_read_ethanol(&pct)) { s_flex_have = true; s_flex_pct = pct; }
+		float pct = NAN;
+		_flex_take(_read_ethanol(&pct), pct);
 		_apply(s_flex_have ? fuel_stoich_for_ethanol(s_flex_pct) : FUEL_AFR_PETROL);
 	} else {
 		_apply(fuel_stoich_for_mode(s_mode));
