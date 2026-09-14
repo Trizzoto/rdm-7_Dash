@@ -857,6 +857,36 @@ bool config_store_load_obd2_autosetup_pending(void)
     return v != 0;
 }
 
+/* The standing OBD2 offer: the raw PID bytes the car answered on its last
+ * check (ADR-0074). n == 0 erases it. At most OBD2_SCAN_MAX_PIDS bytes. */
+esp_err_t config_store_save_obd2_offer(const uint8_t *pids, uint8_t n)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NS_OBD2_AUTO, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    if (n && pids) {
+        err = nvs_set_blob(h, "offer", pids, n);
+    } else {
+        err = nvs_erase_key(h, "offer");
+        if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
+    }
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
+uint8_t config_store_load_obd2_offer(uint8_t *out, size_t cap)
+{
+    if (!out || !cap) return 0;
+    nvs_handle_t h;
+    if (nvs_open(NS_OBD2_AUTO, NVS_READONLY, &h) != ESP_OK) return 0;
+    size_t len = cap;
+    esp_err_t err = nvs_get_blob(h, "offer", out, &len);
+    nvs_close(h);
+    if (err != ESP_OK) return 0;
+    return (uint8_t)(len > 255 ? 255 : len);
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
  *  WIRE INPUT MODE (GPIO 43/44 repurposed from UART1)
  * ═══════════════════════════════════════════════════════════════════════ */

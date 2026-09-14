@@ -1057,6 +1057,61 @@ static void _wiz_clear_vehicle_channel_bindings(void) {
     }
 }
 
+/* Retire the decodes a previous ECU preset installed.
+ *
+ * Applying a preset UPSERTS its signals into the registry and the layout's
+ * signals[] — it never removes any. Clearing the car's channel bindings
+ * (above) left every decode the old ECU wrote in place, and each layout load
+ * re-registers them. Seen on the dash, 2026-09-14: after Haltech -> Ford
+ * Falcon FG, thirty Haltech decodes were still live and survived a reboot
+ * (THROTTLE and MAP on 0x360, IGNITION 0x362, OIL_PRESSURE 0x361, ...). Any
+ * channel later bound by name — by the new preset's channel resolution, a
+ * source pick, or OBD2 — landed on the old ECU's bit layout, which on a
+ * different car's bus is a confident wrong number. Worse for OBD2: a slot
+ * with a frame id counts as owned by a CAN broadcast, so its PID was never
+ * polled and the Falcon's intake temp read 0x3E0 instead.
+ *
+ * Only decodes that are still exactly what that preset wrote (name AND frame
+ * id) are retired, so a signal the user re-aimed by hand is left alone. The
+ * registry slot is made idle in place (subscribers kept) rather than
+ * deleted; the layout entry goes, so the next load doesn't bring it back. The
+ * new preset's own apply, which runs after this, re-installs anything it
+ * shares. Returns how many were retired. */
+static int _wiz_retire_ecu_decodes(const char *make, const char *version,
+                                   ecu_layout_writer_t *lw) {
+    if (!make || !make[0] || !version || !version[0]) return 0;
+    int retired = 0;
+    for (int i = 0; i < preconfig_items_count; i++) {
+        const preconfig_item_t *it = &preconfig_items[i];
+        if (!it->ecu || !it->version || !it->label || !it->can_id) continue;
+        if (it->obd2_pid) continue;
+        if (strcmp(it->ecu, make) != 0 || strcmp(it->version, version) != 0) continue;
+
+        char sname[32];
+        _wiz_derive_signal_name(it->label, sname, sizeof(sname));
+        if (!sname[0]) continue;
+        _wiz_canonicalize_signal_name(sname, sizeof(sname));
+        uint32_t cid = (uint32_t)strtol(it->can_id, NULL, 16);
+
+        int16_t idx = signal_find_by_name(sname);
+        signal_t *s = (idx >= 0) ? signal_get_by_index((uint16_t)idx) : NULL;
+        if (!s || (signal_source_t)s->source != SIGNAL_SOURCE_CAN || s->can_id != cid)
+            continue;
+        char unit[sizeof(s->unit)];
+        memcpy(unit, s->unit, sizeof(unit));   /* not its own buffer as source */
+        unit[sizeof(unit) - 1] = '\0';
+        signal_register_with_source(sname, 0, 0, 0, 1.0f, 0.0f, false, 1,
+                                    unit, SIGNAL_SOURCE_CAN);
+        signal_set_mux(idx, 0, 0, 0);
+        ecu_layout_writer_remove(lw, sname);
+        retired++;
+    }
+    if (retired)
+        ESP_LOGI(TAG, "resetup: retired %d decode(s) left by %s %s",
+                 retired, make, version);
+    return retired;
+}
+
 /* Ensure a channel exists for a freshly-registered preset signal and bind it.
  *
  * Honours the wizard's "100% of a preset's signals become channels" contract:
@@ -1188,6 +1243,22 @@ int first_run_wizard_apply_ecu(const char *ecu, const char *version,
     if (!lw) {
         ESP_LOGW(TAG, "layout writer open failed for '%s' — persisting "
                  "via channels.json only", active_layout);
+    }
+
+    /* A new car's ECU: the previous one's decodes go first (see
+     * _wiz_retire_ecu_decodes). Re-applying the same ECU needs nothing
+     * retired — its upserts below overwrite its own entries. */
+    if (replace) {
+        char pm[32] = {0}, pv[32] = {0};
+        if (config_store_load_ecu(pm, sizeof(pm), pv, sizeof(pv)) == ESP_OK &&
+            pm[0] && (strcmp(pm, ecu) != 0 || strcmp(pv, version) != 0))
+            _wiz_retire_ecu_decodes(pm, pv, lw);
+        /* The layout, not just NVS, has to carry the car's ECU: each layout
+         * load copies its "ecu" over the NVS one, and this path used to write
+         * only NVS — so the wizard's (and Studio import's) choice was
+         * forgotten at the next boot (seen on the dash, 2026-09-14). */
+        ecu_layout_writer_set_ecu(lw, ecu, version);
+        layout_manager_set_ecu_context(ecu, version);
     }
 
     int applied = 0;
@@ -1352,6 +1423,57 @@ static void _ecu_btn_skip_cb(lv_event_t *e) {
     /* ...and nothing is owed any more to the car that setup was for. */
     obd2_autosetup_cancel();
     _show_step_channels();
+}
+
+/* The name a person knows the preset by — "Ford Falcon FG", not the
+ * catalogue's make and version pair "Ford  FG" — from ECU_PRESETS, falling
+ * back to make + version for a preconfig set (a DBC import) with no entry. */
+static void _ecu_display_name(const char *make, const char *version,
+                              char *out, size_t sz) {
+    const ecu_preset_t *p = ecu_preset_find(make, version);
+    if (p && p->display && p->display[0]) snprintf(out, sz, "%s", p->display);
+    else snprintf(out, sz, "%s %s", make ? make : "", version ? version : "");
+}
+
+/* The no-match card's two buttons, so the OBD2 check can re-weight them. */
+static lv_obj_t *s_ecu_pick_btn = NULL;
+static lv_obj_t *s_ecu_obd2_btn = NULL;
+static lv_obj_t *s_ecu_obd2_lbl = NULL;
+
+/* The check behind "No ECU detected" came back. If the car answers OBD2,
+ * OBD2 is the answer to put first: the button turns primary and says what
+ * was found, and "Pick an ECU manually" steps back. If it doesn't, the
+ * button just loses its "(checking...)" and the card is as it was. */
+static void _ecu_obd2_check_cb(const obd2_autosetup_result_t *r, void *user) {
+    (void)user;
+    if (!r || r->will_retry) return;     /* a later attempt will report */
+    /* Only while those buttons still belong to the card on screen: the card
+     * is nulled when the step goes, and a freed pointer can be handed to a
+     * new object that lv_obj_is_valid() would happily vouch for. */
+    if (!s_ecu_result_card || !lv_obj_is_valid(s_ecu_result_card) ||
+        !s_ecu_obd2_btn || lv_obj_get_parent(s_ecu_obd2_btn) != s_ecu_result_card ||
+        !s_ecu_obd2_lbl || lv_obj_get_parent(s_ecu_obd2_lbl) != s_ecu_obd2_btn) return;
+    if (!r->answered) {
+        lv_label_set_text(s_ecu_obd2_lbl, "My car uses OBD2");
+        return;
+    }
+    char b[64];
+    snprintf(b, sizeof(b), "Use OBD2  -  your car answers %u readings",
+             (unsigned)r->readings);
+    lv_label_set_text(s_ecu_obd2_lbl, b);
+    lv_obj_set_style_text_color(s_ecu_obd2_lbl, THEME_COLOR_TEXT_ON_ACCENT, 0);
+    lv_obj_set_style_bg_color(s_ecu_obd2_btn, THEME_COLOR_ACCENT_BLUE, 0);
+    lv_obj_set_style_border_width(s_ecu_obd2_btn, 0, 0);
+    if (s_ecu_pick_btn && lv_obj_get_parent(s_ecu_pick_btn) == s_ecu_result_card) {
+        lv_obj_set_style_bg_color(s_ecu_pick_btn, THEME_COLOR_BG, 0);
+        lv_obj_set_style_border_color(s_ecu_pick_btn, THEME_COLOR_BORDER, 0);
+        lv_obj_set_style_border_width(s_ecu_pick_btn, 1, 0);
+        lv_obj_t *pl = lv_obj_get_child(s_ecu_pick_btn, 0);
+        if (pl) lv_obj_set_style_text_color(pl, THEME_COLOR_TEXT_PRIMARY, 0);
+        /* Primary goes on top. */
+        lv_obj_align(s_ecu_obd2_btn, LV_ALIGN_TOP_LEFT, 0, 84);
+        lv_obj_align(s_ecu_pick_btn, LV_ALIGN_TOP_LEFT, 0, 132);
+    }
 }
 
 /* "My car uses OBD2" — from the no-match card or the picker sheet. */
@@ -1539,7 +1661,9 @@ static void _ecu_btn_pick_cb(lv_event_t *e) {
     {
         lv_obj_t *row = lv_obj_create(list);
         lv_obj_remove_style_all(row);
-        lv_obj_set_size(row, CH_ROW_W - 8, 52);
+        /* The sheet's full width. Rows were CH_ROW_W — the channels list's
+         * 336 px, borrowed — so names wrapped in half a card (seen on glass). */
+        lv_obj_set_size(row, lv_pct(100), 52);
         lv_obj_set_style_bg_color(row, THEME_COLOR_BG, 0);
         lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
         lv_obj_set_style_border_color(row, THEME_COLOR_ACCENT_BLUE, 0);
@@ -1560,7 +1684,7 @@ static void _ecu_btn_pick_cb(lv_event_t *e) {
         lv_obj_t *hint = lv_label_create(row);
         lv_label_set_text(hint, "Factory ECU with no preset - read through the diagnostic port");
         lv_label_set_long_mode(hint, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(hint, CH_ROW_W - 60);
+        lv_obj_set_width(hint, CH_CARD_W - 32 - 80);
         lv_obj_align(hint, LV_ALIGN_BOTTOM_LEFT, 0, -7);
         lv_obj_set_style_text_font(hint, THEME_FONT_TINY, 0);
         lv_obj_set_style_text_color(hint, THEME_COLOR_TEXT_MUTED, 0);
@@ -1575,7 +1699,7 @@ static void _ecu_btn_pick_cb(lv_event_t *e) {
     for (uint8_t i = 0; i < s_pick_count; i++) {
         lv_obj_t *row = lv_obj_create(list);
         lv_obj_remove_style_all(row);
-        lv_obj_set_size(row, CH_ROW_W - 8, 44);
+        lv_obj_set_size(row, lv_pct(100), 44);
         lv_obj_set_style_bg_color(row, THEME_COLOR_BG, 0);
         lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
         lv_obj_set_style_border_color(row, THEME_COLOR_BORDER, 0);
@@ -1589,12 +1713,11 @@ static void _ecu_btn_pick_cb(lv_event_t *e) {
                             LV_EVENT_CLICKED, (void *)(intptr_t)i);
 
         char buf[64];
-        snprintf(buf, sizeof(buf), "%s  %s",
-                 s_pick_ecus[i], s_pick_versions[i]);
+        _ecu_display_name(s_pick_ecus[i], s_pick_versions[i], buf, sizeof(buf));
         lv_obj_t *lbl = lv_label_create(row);
         lv_label_set_text(lbl, buf);
         lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(lbl, CH_ROW_W - 140);
+        lv_obj_set_width(lbl, CH_CARD_W - 32 - 170);
         lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 0, 0);
         lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
         lv_obj_set_style_text_color(lbl, THEME_COLOR_TEXT_PRIMARY, 0);
@@ -1688,7 +1811,7 @@ static void _render_ecu_result(void) {
         lv_obj_set_style_text_color(head, THEME_COLOR_TEXT_MUTED, 0);
 
         char title_buf[64];
-        snprintf(title_buf, sizeof(title_buf), "%s  %s", m->ecu, m->version);
+        _ecu_display_name(m->ecu, m->version, title_buf, sizeof(title_buf));
         lv_obj_t *t = lv_label_create(s_ecu_result_card);
         lv_label_set_text(t, title_buf);
         lv_label_set_long_mode(t, LV_LABEL_LONG_DOT);
@@ -1795,6 +1918,7 @@ static void _render_ecu_result(void) {
         lv_obj_set_width(sub, BTN_W - 32);
 
         lv_obj_t *pick_btn = lv_btn_create(s_ecu_result_card);
+        s_ecu_pick_btn = pick_btn;
         lv_obj_set_size(pick_btn, BTN_W - 32, BTN_H);
         lv_obj_align(pick_btn, LV_ALIGN_TOP_LEFT, 0, 84);
         lv_obj_set_style_bg_color(pick_btn, THEME_COLOR_ACCENT_BLUE, 0);
@@ -1818,11 +1942,16 @@ static void _render_ecu_result(void) {
         lv_obj_set_style_radius(obd_btn, THEME_RADIUS_NORMAL, 0);
         lv_obj_set_style_shadow_width(obd_btn, 0, 0);
         lv_obj_t *olbl = lv_label_create(obd_btn);
-        lv_label_set_text(olbl, "My car uses OBD2");
+        lv_label_set_text(olbl, "My car uses OBD2   (checking...)");
         lv_obj_center(olbl);
         lv_obj_set_style_text_font(olbl, THEME_FONT_SMALL, 0);
         lv_obj_set_style_text_color(olbl, THEME_COLOR_TEXT_PRIMARY, 0);
         lv_obj_add_event_cb(obd_btn, _ecu_btn_obd2_cb, LV_EVENT_CLICKED, NULL);
+        s_ecu_obd2_btn = obd_btn;
+        s_ecu_obd2_lbl = olbl;
+        /* Don't make them guess: ask the car whether it answers OBD2 while
+         * the card is up, and say so on the button (ADR-0074). */
+        obd2_autosetup_check(_ecu_obd2_check_cb, NULL);
     }
 
     /* Skip — always available, regardless of detection result. */
@@ -2011,6 +2140,23 @@ static void _show_step_obd2(void) {
      * as skipping the ECU does, and stop remembering a previous car's ECU. */
     can_set_promiscuous_mode(false);
     _wiz_clear_vehicle_channel_bindings();
+    {
+        /* ...and the previous ECU's decodes with them, or OBD2 binds onto
+         * them by name (see _wiz_retire_ecu_decodes). */
+        char pm[32] = {0}, pv[32] = {0};
+        if (config_store_load_ecu(pm, sizeof(pm), pv, sizeof(pv)) == ESP_OK && pm[0]) {
+            char active[LAYOUT_MAX_NAME] = "default";
+            if (layout_manager_get_active(active, sizeof(active)) != ESP_OK || !active[0])
+                strncpy(active, "default", sizeof(active) - 1);
+            ecu_layout_writer_t *lw = ecu_layout_writer_open(active);
+            _wiz_retire_ecu_decodes(pm, pv, lw);
+            /* No preset now — and the layout must say so too, or its old
+             * "ecu" is copied back over NVS at the next load. */
+            ecu_layout_writer_set_ecu(lw, "", "");
+            if (lw) ecu_layout_writer_commit(lw);
+        }
+        layout_manager_set_ecu_context("", "");
+    }
     config_store_save_ecu("", "");
     config_store_save_ecu_base_id(0);
 
@@ -3342,7 +3488,8 @@ static void _refresh_hero_stats(void) {
     }
     /* A background OBD2 setup (a Falcon's preset, ADR-0073) is news worth
      * the hero line: channels are about to appear that aren't there yet. */
-    const char *tail = obd2_autosetup_running() ? "adding OBD2 readings..."
+    const char *tail = obd2_autosetup_checking() ? "checking for OBD2..."
+                     : obd2_autosetup_running() ? "adding OBD2 readings..."
                      : obd2_autosetup_pending() ? "OBD2 waits for the car"
                      : "tap any channel";
     char stat_buf[112];
@@ -3829,11 +3976,32 @@ static void _obd2_scan_done_cb(const obd2_scan_result_t *r, void *user) {
     s_obd2_match_count = r ? channel_obd2_matches(r->pids, r->count,
                                                   s_obd2_matches,
                                                   CH_OBD2_MATCH_MAX) : 0;
+    /* What can be added first, what is already set up after it. In the
+     * resolver's order the five channels an ECU already feeds (RPM, coolant,
+     * speed...) came first and pushed every row that could be added below
+     * the fold — the list is there to answer "what could OBD2 give me that I
+     * don't have", so that is the top of it (seen on the dash, 2026-09-14).
+     * Stable, so each half keeps the resolver's order. */
+    {
+        static EXT_RAM_BSS_ATTR obd2_channel_match_t tmp[CH_OBD2_MATCH_MAX];
+        size_t k = 0;
+        for (size_t i = 0; i < s_obd2_match_count; i++)
+            if (!s_obd2_matches[i].bound) tmp[k++] = s_obd2_matches[i];
+        for (size_t i = 0; i < s_obd2_match_count; i++)
+            if (s_obd2_matches[i].bound) tmp[k++] = s_obd2_matches[i];
+        memcpy(s_obd2_matches, tmp, s_obd2_match_count * sizeof(tmp[0]));
+    }
     memset(s_obd2_pick, 0, sizeof(s_obd2_pick));
     for (size_t i = 0; i < s_obd2_match_count; i++)
         s_obd2_pick[i] = !s_obd2_matches[i].bound;   /* pre-tick the gaps */
 
     uint8_t fresh = _obd2_fresh_count();
+    /* Readings, not scan scaffolding: the supported-PID blocks (0x20, 0x40,
+     * ...) are in the answer too, which made this sheet say 67 where the ECU
+     * step, counting readings, said 61 for the same car. */
+    unsigned readings = 0;
+    for (uint8_t i = 0; r && i < r->count; i++)
+        if ((r->pids[i] & 0x1F) != 0) readings++;
     if (s_obd2_status_lbl && lv_obj_is_valid(s_obd2_status_lbl)) {
         char msg[200];
         if (!r || r->count == 0) {
@@ -3843,11 +4011,11 @@ static void _obd2_scan_done_cb(const obd2_scan_result_t *r, void *user) {
         } else if (fresh == 0) {
             snprintf(msg, sizeof(msg),
                      "Your car answered %u readings, and everything it offers\n"
-                     "is already set up.", (unsigned)r->count);
+                     "is already set up.", readings);
         } else {
             snprintf(msg, sizeof(msg),
                      "Your car answered %u readings. %u can be added:",
-                     (unsigned)r->count, (unsigned)fresh);
+                     readings, (unsigned)fresh);
         }
         lv_label_set_text(s_obd2_status_lbl, msg);
         lv_obj_set_style_text_color(s_obd2_status_lbl,
@@ -3991,7 +4159,12 @@ static void _obd2_open_scan_modal(void) {
     lv_obj_add_event_cb(s_obd2_add_btn, _obd2_add_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_add_flag(s_obd2_add_btn, LV_OBJ_FLAG_HIDDEN);
 
-    _obd2_begin_scan();
+    /* A standing offer is an answer the car already gave (a CHECK after the
+     * ECU preset went on, ADR-0074): show it rather than ask again. Rescan
+     * is one tap away if the car has changed since. */
+    obd2_scan_result_t offer;
+    if (obd2_autosetup_offer_scan(&offer)) _obd2_scan_done_cb(&offer, NULL);
+    else                                   _obd2_begin_scan();
 }
 
 static void _obd2_chip_cb(lv_event_t *e) {
@@ -4029,6 +4202,26 @@ static void _obd2_chip_update(void) {
         lv_obj_center(lbl);
         lv_obj_set_style_text_font(lbl, THEME_FONT_TINY, 0);
         lv_obj_set_user_data(s_obd2_chip, lbl);
+    }
+
+    /* "Your car also answers OBD2": when the check after the ECU preset
+     * found readings for channels nothing feeds, the chip counts them, so
+     * the offer is on the screen where the car's channels are reviewed
+     * instead of behind a scan nobody knew to run (ADR-0074). */
+    {
+        lv_obj_t *lbl = (lv_obj_t *)lv_obj_get_user_data(s_obd2_chip);
+        size_t n = obd2_autosetup_offer(NULL, CH_OBD2_MATCH_MAX, NULL);
+        if (lbl && lv_obj_is_valid(lbl)) {
+            char b[32];
+            if (n) snprintf(b, sizeof(b), LV_SYMBOL_PLUS " OBD2 can add %u", (unsigned)n);
+            lv_label_set_text(lbl, n ? b : "Scan for OBD2");
+        }
+        lv_obj_set_style_bg_color(s_obd2_chip,
+            n ? THEME_COLOR_GREEN : THEME_COLOR_ACCENT_BLUE, 0);
+        /* White on that green was unreadable on the panel. */
+        if (lbl && lv_obj_is_valid(lbl))
+            lv_obj_set_style_text_color(lbl,
+                n ? THEME_COLOR_BG : THEME_COLOR_TEXT_ON_ACCENT, 0);
     }
 
     /* Sit in the header row, just left of the "Pick a channel…" text
@@ -4081,6 +4274,7 @@ static void _channels_obd2_autosetup_cb(const obd2_autosetup_result_t *r, void *
         _render_detail_pane();
     }
     _refresh_hero_stats();
+    _obd2_chip_update();       /* a CHECK may have just made an offer */
     _channels_refresh_cb(NULL);
 }
 
@@ -4257,7 +4451,8 @@ static void _show_step_channels(void) {
     /* Listen for a background OBD2 setup (a Falcon preset just applied, or
      * the OBD2 screen left mid-scan) — cheap, and replaces the OBD2 screen's
      * listener, whose screen is gone. */
-    if (obd2_autosetup_running() || obd2_autosetup_pending())
+    if (obd2_autosetup_running() || obd2_autosetup_pending() ||
+        obd2_autosetup_checking())
         obd2_autosetup_listen(_channels_obd2_autosetup_cb, NULL);
 
     if (s_apply_to_widget_mode) {
@@ -5204,6 +5399,10 @@ void first_run_wizard_open_channels(void) {
     s_apply_target_widget  = NULL;
     ESP_LOGI(TAG, "Channels editor opened (standalone)");
     _build_channels_overlay();
+}
+
+bool first_run_wizard_is_open(void) {
+    return s_overlay && lv_obj_is_valid(s_overlay);
 }
 
 void first_run_wizard_open_obd2_scan(void) {

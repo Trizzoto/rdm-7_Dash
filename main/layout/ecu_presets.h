@@ -229,6 +229,19 @@ esp_err_t ecu_layout_writer_commit(ecu_layout_writer_t *w);
 /* Free the writer WITHOUT saving (error/cancel path). */
 void ecu_layout_writer_abort(ecu_layout_writer_t *w);
 
+/* Drop a signal entry from the layout's signals[] by name (in memory; saved
+ * on commit). No-op when absent or when w is NULL. For retiring the decodes a
+ * previous ECU preset wrote, which upsert-only application otherwise leaves
+ * behind for every later layout load to re-register. */
+void ecu_layout_writer_remove(ecu_layout_writer_t *w, const char *signal_name);
+
+/* Record the car's ECU in the layout ("ecu"/"ecu_version"; saved on commit).
+ * Empty make removes both. The layout is where that fact survives a reboot:
+ * every layout load copies it over the NVS copy (layout_manager), so an ECU
+ * saved only to NVS is forgotten at the next boot. */
+void ecu_layout_writer_set_ecu(ecu_layout_writer_t *w, const char *make,
+                               const char *version);
+
 /* Find a preset by make+version strings. Returns NULL if not found. */
 const ecu_preset_t *ecu_preset_find(const char *make, const char *version);
 

@@ -245,6 +245,8 @@ void _handle_fuel_set_empty(int id, cJSON *params);
 void _handle_fuel_set_full(int id, cJSON *params);
 
 void _handle_screenshot(int id, cJSON *params);
+void _handle_touch(int id, cJSON *params);
+void _handle_obd2_sim(int id, cJSON *params);
 
 void _handle_upload_start(int id, cJSON *params);
 void _handle_upload_finish(int id, cJSON *params);
@@ -321,6 +323,8 @@ static const cmd_entry_t s_dispatch_table[] = {
     { "wifi.config.set",    _handle_wifi_config_set },
     /* Screenshot */
     { "screenshot",         _handle_screenshot },
+    { "touch",              _handle_touch },
+    { "obd2.sim",           _handle_obd2_sim },
     /* Chunked uploads */
     { "upload.start",       _handle_upload_start },
     { "upload.finish",      _handle_upload_finish },

@@ -8,6 +8,8 @@
 #include "serial_protocol.h"
 
 #include "cJSON.h"
+#include "system/remote_touch.h"
+#include "can/obd2.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "display_capture.h"
@@ -33,6 +35,53 @@ static const char *TAG = "serial_cmd";
  * no chunked-download RPC. The size is still checked before sending, because
  * a busy screen encodes larger and "silently sends nothing" is the exact
  * failure this is replacing. */
+/* LVGL mutex (defined in main.c) */
+extern bool rdm_lvgl_lock(int timeout_ms);
+extern void rdm_lvgl_unlock(void);
+
+/* ── touch ───────────────────────────────────────────────────────────────
+ * The USB twin of POST /api/touch: {"enabled"?:bool, "x","y", "state":
+ * "down"|"move"|"up"}. Over WiFi this is how Studio's CONTROL mode drives the
+ * glass; a dash with no network had no way to be tapped at all, so the
+ * screens only the touchscreen reaches (the setup wizard) could be looked at
+ * over a cable — the screenshot RPC — but not used. Replies {enabled}. */
+void _handle_touch(int id, cJSON *params)
+{
+    cJSON *en = params ? cJSON_GetObjectItemCaseSensitive(params, "enabled") : NULL;
+    if (cJSON_IsBool(en)) remote_touch_set_enabled(cJSON_IsTrue(en));
+
+    cJSON *x_js = params ? cJSON_GetObjectItemCaseSensitive(params, "x") : NULL;
+    cJSON *y_js = params ? cJSON_GetObjectItemCaseSensitive(params, "y") : NULL;
+    cJSON *s_js = params ? cJSON_GetObjectItemCaseSensitive(params, "state") : NULL;
+    if (cJSON_IsNumber(x_js) && cJSON_IsNumber(y_js) && cJSON_IsString(s_js)) {
+        const char *s = s_js->valuestring;
+        bool pressed = (strcmp(s, "down") == 0) || (strcmp(s, "move") == 0);
+        remote_touch_set((int16_t)x_js->valueint, (int16_t)y_js->valueint, pressed);
+    }
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddBoolToObject(r, "enabled", remote_touch_is_enabled());
+    _send_response(id, r, NULL);
+}
+
+/* ── obd2.sim ────────────────────────────────────────────────────────────
+ * The USB twin of /api/obd2/sim: {"on"?:bool}. Without "on" it only reports.
+ * The bench virtual ECU answers discovery and polling, so OBD2 setup can be
+ * proven with no car — and, now, with no network either. */
+void _handle_obd2_sim(int id, cJSON *params)
+{
+    cJSON *on = params ? cJSON_GetObjectItemCaseSensitive(params, "on") : NULL;
+    if (!rdm_lvgl_lock(1200)) {
+        _send_error(id, "LVGL busy");
+        return;
+    }
+    if (cJSON_IsBool(on)) obd2_sim_set_enabled(cJSON_IsTrue(on));
+    bool sim_on = obd2_sim_enabled();
+    rdm_lvgl_unlock();
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddBoolToObject(r, "sim", sim_on);
+    _send_response(id, r, NULL);
+}
+
 void _handle_screenshot(int id, cJSON *params)
 {
     (void)params;

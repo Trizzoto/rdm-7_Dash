@@ -545,6 +545,25 @@ void obd2_set_enabled(const uint32_t *pids, uint8_t count)
 
 /* ── Signal registration ───────────────────────────────────────────────── */
 
+/* A signal of this name is already registered. If it is a real CAN decode
+ * (it has a frame id), leave it: that broadcast owns the reading, and the
+ * conflict guard in obd2_start already keeps its PID off the poll list.
+ *
+ * A CAN-tagged slot with NO frame id decodes nothing. It is what an ECU
+ * preset leaves behind once its bindings are cleared — the setup wizard's
+ * "My car uses OBD2" path does exactly that — and OBD2 responses are written
+ * into it by name, so the reading works while the slot still says CAN. Every
+ * surface that asks where a channel comes from then answered "CAN 0x0" for a
+ * value arriving over OBD2 (seen on the dash, 2026-09-14). Retag it. */
+static void _claim_idle_slot(const char *name)
+{
+    int16_t idx = signal_find_by_name(name);
+    if (idx < 0) return;
+    signal_t *s = signal_get_by_index((uint16_t)idx);
+    if (s && s->source == SIGNAL_SOURCE_CAN && s->can_id == 0)
+        s->source = SIGNAL_SOURCE_OBD2;
+}
+
 static void _register_pid_signal(const obd2_pid_def_t *def)
 {
     if (!def) return;
@@ -557,7 +576,10 @@ static void _register_pid_signal(const obd2_pid_def_t *def)
         for (uint8_t i = 0; i < def->sub_field_count; i++) {
             const obd2_subfield_t *sf = &def->sub_fields[i];
             if (!sf->signal_name) continue;
-            if (signal_find_by_name(sf->signal_name) >= 0) continue;
+            if (signal_find_by_name(sf->signal_name) >= 0) {
+                _claim_idle_slot(sf->signal_name);
+                continue;
+            }
             int16_t idx = signal_register_with_source(sf->signal_name,
                                           /*can_id=*/0,
                                           /*bit_start=*/0,
@@ -578,7 +600,10 @@ static void _register_pid_signal(const obd2_pid_def_t *def)
 
     /* Legacy single-value PID. */
     if (!def->signal_name) return;
-    if (signal_find_by_name(def->signal_name) >= 0) return;
+    if (signal_find_by_name(def->signal_name) >= 0) {
+        _claim_idle_slot(def->signal_name);
+        return;
+    }
 
     int16_t idx = signal_register_with_source(def->signal_name,
                                   /*can_id=*/0,

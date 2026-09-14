@@ -2272,6 +2272,21 @@
             font-size: 12px; line-height: 1.5; color: var(--text-muted);
         }
         .ch2-list-empty b { color: var(--text); font-weight: 600; }
+        /* "Your car also answers OBD2" — an offer, not a warning: the list's
+         * own border language with the accent on the edge (ADR-0074). */
+        .ch2-offer {
+            display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
+            margin: 10px 8px 2px; padding: 12px 14px;
+            border: 1px solid var(--border); border-left: 3px solid var(--accent);
+            border-radius: 6px; background: var(--bg);
+            font-size: 12px; line-height: 1.5; color: var(--text-muted);
+        }
+        #chShared.ch2-page .ch2-offer { margin-left: 20px; margin-right: 20px; }
+        .ch2-offer b { color: var(--text); font-weight: 600; }
+        .ch2-offer-txt { flex: 1 1 320px; min-width: 0; }
+        .ch2-offer-acts { display: flex; gap: 8px; flex-shrink: 0; }
+        .ch2-offer-acts .btn { padding: 5px 12px; font-size: 12px; }
+        .ch2-offer.quiet { border-left-color: var(--border); padding: 8px 14px; }
 
         /* Empty state — when no channels active yet */
         .ch2-empty {
@@ -20625,6 +20640,9 @@
                  * (ADR-0073). Say so, or its timing and oil pressure channels
                  * appear a few seconds later with no explanation — or not at
                  * all until the ignition is on. */
+                /* Any other preset: the dash checks whether the car also
+                 * answers OBD2; the Channels page shows the answer. */
+                setTimeout(_chFetchObdOffer, 6000);
                 if (res.obd2_autosetup) {
                     showToast(`${(preset && preset.display) || (make + ' ' + version)} applied. The dash is also adding the readings this car only gives over OBD2 — keep the ignition on.`, 'success');
                 }
@@ -23104,6 +23122,88 @@
                                      : st ? st : '—';
                 }
             } catch (e) { /* as above */ }
+            _chFetchObdOffer();
+        }
+
+        /* ── "Your car also answers OBD2" (ADR-0074) ─────────────────────
+         *
+         * After an ECU preset goes on, the dash quietly asks whether the car
+         * answers OBD2 too. When it does and some readings would fill
+         * channels the ECU leaves empty, the dash keeps that as an offer.
+         * Before this the only way to find out was to know to run a scan.
+         *
+         * The list comes from the dash, already resolved against its channel
+         * set, so it only ever names channels nothing feeds; adding goes
+         * through the same /api/obd2/adopt the scan dialog uses, which also
+         * retires the offer. */
+        let _chObdOffer = null;     /* {checking, pending, readings, channels[]} */
+        let _chObdOfferTimer = null;
+
+        async function _chFetchObdOffer() {
+            if (!_chOnline) { _chObdOffer = null; return; }
+            try {
+                const r = await fetch('/api/obd2/offer');
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                const j = await r.json();
+                const had = JSON.stringify(_chObdOffer);
+                _chObdOffer = j;
+                if (JSON.stringify(j) !== had) _refreshChannelsList();
+                /* A check still running: come back for its answer. */
+                if (_chObdOfferTimer) clearTimeout(_chObdOfferTimer);
+                _chObdOfferTimer = (j.checking || (j.pending && !(j.channels || []).length))
+                    ? setTimeout(_chFetchObdOffer, 8000) : null;
+            } catch (e) {
+                /* An older dash has no such endpoint — no offer, no noise. */
+                _chObdOffer = null;
+            }
+        }
+
+        function _chObdOfferBanner() {
+            const o = _chObdOffer;
+            if (!o || !_chOnline) return '';
+            const rows = o.channels || [];
+            if (!rows.length) {
+                return o.checking
+                    ? `<div class="ch2-offer quiet">Checking whether your car also answers OBD2&hellip;</div>`
+                    : '';
+            }
+            const names = rows.slice(0, 4).map(c => _textEscape(c.label)).join(', ')
+                + (rows.length > 4 ? ` and ${rows.length - 4} more` : '');
+            return `<div class="ch2-offer">
+                <div class="ch2-offer-txt"><b>Your car also answers OBD2.</b>
+                    ${rows.length} channel${rows.length === 1 ? '' : 's'} nothing feeds yet could come from it:
+                    ${names}.</div>
+                <div class="ch2-offer-acts">
+                    <button class="btn btn-primary" onclick="_chObdOfferReview()">Review and add&hellip;</button>
+                    <button class="btn btn-secondary" onclick="_chObdOfferDismiss()">Not now</button>
+                </div>
+            </div>`;
+        }
+
+        /* The scan dialog, opened on the answer the car already gave. */
+        function _chObdOfferReview() {
+            const o = _chObdOffer;
+            const m = document.getElementById('chObdScanModal');
+            if (!o || !m) return;
+            _obdScanRows = (o.channels || []).map(c => Object.assign({ active: false, bound: false }, c));
+            _obdScanPidCount = o.readings | 0;
+            _obdScanPick.clear();
+            _obdScanRows.forEach(c => _obdScanPick.add(c.id));
+            _obdScanning = false;
+            _obdScanDone = true;
+            m.style.display = 'flex';
+            _renderObdScan();
+        }
+
+        async function _chObdOfferDismiss() {
+            _chObdOffer = null;
+            _refreshChannelsList();
+            try {
+                await fetch('/api/obd2/offer', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ dismiss: true }),
+                });
+            } catch (e) { /* offline — the banner is gone here either way */ }
         }
 
         function _chStripSignals(liveN, total) {
@@ -24513,7 +24613,7 @@
 
             /* The car first, then the catalogue (ADR-0071). */
             const { mine, rest } = _chSplitByCar(filtered);
-            let html = pendingBanner;
+            let html = pendingBanner + (q ? '' : _chObdOfferBanner());
             if (mine.length || !q) {
                 html += _chSectionHead('On this car', mine.length, '');
                 html += mine.length
@@ -26705,6 +26805,9 @@
                 if (!r.ok) throw new Error('HTTP ' + r.status);
                 const j = await r.json();
                 _obdScanRows = Array.isArray(j.channels) ? j.channels : [];
+                /* What can be added first; "already set up" after (ADR-0074).
+                 * Array.sort is stable, so each half keeps the dash's order. */
+                _obdScanRows.sort((a, b) => (!!a.bound) - (!!b.bound));
                 _obdScanPidCount = j.count | 0;
                 /* Pre-tick everything the car answers that isn't already
                  * sourced — the common answer is "yes, all of it", and a
@@ -26736,7 +26839,12 @@
                 showToast('Added ' + n + ' channel' + (n === 1 ? '' : 's') + ' from OBD2', 'success');
                 if (j.warning) showToast(j.warning, 'warning');
                 closeObdScan();
+                /* Choosing from the list settles OBD2 for this car — the dash
+                 * retires its offer on adopt (ADR-0074), so drop the banner
+                 * now and ask again rather than show a stale one. */
+                _chObdOffer = null;
                 await _chLoad();
+                _chFetchObdOffer();
             } catch (e) {
                 showToast('Could not add: ' + (e.message || e), 'error');
                 _renderObdScan();

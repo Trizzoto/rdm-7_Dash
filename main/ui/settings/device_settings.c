@@ -3333,13 +3333,24 @@ static void _build_vehicle_grid(lv_obj_t *content) {
         "READ", _dtc_btn_cb);
 
     /* OBD2 readings — where OBD2 is set up now that the setup wizard no
-     * longer asks every customer about it (ADR-0073). Opens the scan
-     * straight away. Says WAITING while a background setup (a Falcon preset
-     * applied with the ignition off) is still owed to the car. */
+     * longer asks every customer about it (ADR-0073). Opens the scan, or the
+     * standing offer when the check after an ECU preset found readings for
+     * channels nothing feeds (ADR-0074) — which the stat counts, so "your car
+     * also answers OBD2" is visible from here without opening anything.
+     * WAITING while a Falcon's setup is still owed to a car that is off. */
+    char obd2_scan_txt[32];
+    size_t obd2_offer_n = obd2_autosetup_offer(NULL, CH_OBD2_MATCH_MAX, NULL);
+    if (obd2_autosetup_pending())
+        snprintf(obd2_scan_txt, sizeof(obd2_scan_txt), "WAITING FOR CAR");
+    else if (obd2_offer_n)
+        snprintf(obd2_scan_txt, sizeof(obd2_scan_txt), "%u TO ADD", (unsigned)obd2_offer_n);
+    else if (obd2_autosetup_checking())
+        snprintf(obd2_scan_txt, sizeof(obd2_scan_txt), "CHECKING");
+    else
+        snprintf(obd2_scan_txt, sizeof(obd2_scan_txt), "SCAN");
     _make_setup_card(grid, LV_SYMBOL_REFRESH, "OBD2 readings",
         "Ask the car what it reports, and add it as channels.",
-        obd2_autosetup_pending() ? "WAITING FOR CAR" : "SCAN",
-        _obd2_scan_card_cb);
+        obd2_scan_txt, _obd2_scan_card_cb);
 
     /* OBD2 PIDs card — the by-hand tool, named as such: picking exact PIDs
      * and adding ones the standard list doesn't know (ADR-0037). */

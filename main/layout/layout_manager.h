@@ -151,6 +151,12 @@ esp_err_t layout_manager_set_active(const char *name);
  */
 esp_err_t layout_manager_get_active(char *name_out, size_t len);
 
+/* Set the active layout's ECU context (the "ecu"/"ecu_version" it saves
+ * with) without a reload — for a caller that has just written those fields
+ * into the file itself. Empty make clears it. Without this the in-memory copy
+ * stayed on the old ECU and the next ordinary save put it back. */
+void layout_manager_set_ecu_context(const char *make, const char *version);
+
 /**
  * @brief Return true if at least one layout file exists in the layouts dir.
  */

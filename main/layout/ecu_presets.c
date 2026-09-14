@@ -1426,6 +1426,31 @@ void ecu_layout_writer_abort(ecu_layout_writer_t *w) {
     free(w);
 }
 
+void ecu_layout_writer_set_ecu(ecu_layout_writer_t *w, const char *make,
+                               const char *version) {
+    if (!w || !w->root) return;
+    cJSON_DeleteItemFromObject(w->root, "ecu");
+    cJSON_DeleteItemFromObject(w->root, "ecu_version");
+    if (make && make[0]) {
+        cJSON_AddStringToObject(w->root, "ecu", make);
+        cJSON_AddStringToObject(w->root, "ecu_version", version ? version : "");
+    }
+}
+
+void ecu_layout_writer_remove(ecu_layout_writer_t *w, const char *signal_name) {
+    if (!w || !w->signals || !signal_name || !signal_name[0]) return;
+    int i = 0;
+    cJSON *sig;
+    cJSON_ArrayForEach(sig, w->signals) {
+        cJSON *jname = cJSON_GetObjectItemCaseSensitive(sig, "name");
+        if (cJSON_IsString(jname) && strcmp(jname->valuestring, signal_name) == 0) {
+            cJSON_DeleteItemFromArray(w->signals, i);
+            return;
+        }
+        i++;
+    }
+}
+
 esp_err_t ecu_preset_apply_slot_to_layout(const char *layout_name,
                                           const ecu_preset_t *preset,
                                           ecu_signal_slot_t slot) {

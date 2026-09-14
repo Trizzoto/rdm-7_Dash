@@ -958,6 +958,76 @@ static esp_err_t _scan_handler(httpd_req_t *req) {
     return web_server_send_json(req, resp);
 }
 
+/* GET /api/obd2/offer — "your car also answers OBD2" (ADR-0074).
+ *   { checking, pending, readings, channels:[{id,label,units,signal_name,
+ *     service,pid}, ...] }
+ * `channels` are the readings the car answered on the check that ran after
+ * its ECU preset, resolved against the channel set NOW — only channels
+ * nothing feeds yet — so Studio can say "these N could come from OBD2" and
+ * add them through /api/obd2/adopt without scanning again. Empty when there
+ * is no offer. `checking` / `pending` say a check or a Falcon's setup is
+ * still under way, so a page can come back for the answer.
+ *
+ * POST /api/obd2/offer {"dismiss":true} — "Not now": forget the offer. */
+static esp_err_t _offer_get_handler(httpd_req_t *req) {
+    obd2_channel_match_t *rows = calloc(CH_OBD2_MATCH_MAX, sizeof(*rows));
+    if (!rows) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM"); return ESP_FAIL; }
+    if (!rdm_lvgl_lock(1200)) {
+        free(rows);
+        return web_server_send_busy(req);
+    }
+    uint8_t readings = 0;
+    size_t n = obd2_autosetup_offer(rows, CH_OBD2_MATCH_MAX, &readings);
+    bool checking = obd2_autosetup_checking();
+    bool pending  = obd2_autosetup_pending();
+    rdm_lvgl_unlock();
+
+    cJSON *resp = cJSON_CreateObject();
+    cJSON_AddBoolToObject  (resp, "checking", checking);
+    cJSON_AddBoolToObject  (resp, "pending",  pending);
+    cJSON_AddNumberToObject(resp, "readings", readings);
+    cJSON *arr = cJSON_AddArrayToObject(resp, "channels");
+    for (size_t i = 0; i < n; i++) {
+        cJSON *o = cJSON_CreateObject();
+        cJSON_AddStringToObject(o, "id",          rows[i].channel_id);
+        cJSON_AddStringToObject(o, "label",       rows[i].label);
+        cJSON_AddStringToObject(o, "units",       rows[i].units);
+        cJSON_AddStringToObject(o, "signal_name", rows[i].signal_name);
+        cJSON_AddNumberToObject(o, "service",     rows[i].service);
+        cJSON_AddNumberToObject(o, "pid",         rows[i].pid);
+        cJSON_AddItemToArray(arr, o);
+    }
+    free(rows);
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    return web_server_send_json(req, resp);
+}
+
+static esp_err_t _offer_post_handler(httpd_req_t *req) {
+    char body[96];
+    if (web_server_recv_body(req, body, sizeof(body)) != ESP_OK) return ESP_FAIL;
+    cJSON *root = cJSON_Parse(body);
+    bool dismiss = root && cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(root, "dismiss"));
+    cJSON_Delete(root);
+    if (!dismiss) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Expected {\"dismiss\":true}");
+        return ESP_FAIL;
+    }
+    if (!rdm_lvgl_lock(2000)) return web_server_send_busy(req);
+    obd2_autosetup_dismiss_offer();
+    rdm_lvgl_unlock();
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+static const httpd_uri_t offer_get_uri = {
+    .uri = "/api/obd2/offer", .method = HTTP_GET,
+    .handler = _offer_get_handler, .user_ctx = NULL};
+
+static const httpd_uri_t offer_post_uri = {
+    .uri = "/api/obd2/offer", .method = HTTP_POST,
+    .handler = _offer_post_handler, .user_ctx = NULL};
+
 static const httpd_uri_t scan_uri = {
     .uri = "/api/obd2/scan", .method = HTTP_POST,
     .handler = _scan_handler, .user_ctx = NULL};
@@ -978,4 +1048,6 @@ void web_server_obd2_register(httpd_handle_t server) {
     REGISTER_URI(server, &sim_get_uri);
     REGISTER_URI(server, &scan_uri);
     REGISTER_URI(server, &adopt_uri);
+    REGISTER_URI(server, &offer_get_uri);
+    REGISTER_URI(server, &offer_post_uri);
 }

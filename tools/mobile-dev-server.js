@@ -349,6 +349,7 @@ const DEV_OBD2_MAP = [
 /* What the pretend car answers — a believable subset plus a few PIDs with
  * no channel mapping, so the "N answered in total" line differs from the
  * offered count exactly as it does on a real car. */
+let devOfferDismissed = false;
 const DEV_OBD2_ANSWERS = [0x04, 0x05, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x1F, 0x21, 0x2F, 0x42, 0x45];
 
 /* Seed channels carry a real `decode`, and the CAN-sourced ones are aimed at
@@ -835,6 +836,22 @@ const server = http.createServer((req, res) => {
           };
         }),
       }), 1500);   /* a real scan is not instant — exercise the spinner */
+    }
+    /* The standing offer (ADR-0074): what the pretend car answered on the
+     * check after its preset, less anything already set up. Present from the
+     * start so the Channels banner can be reviewed; "Not now" clears it until
+     * the server restarts. */
+    if (url === '/api/obd2/offer' && req.method === 'GET') {
+      const channels = devOfferDismissed ? [] : DEV_OBD2_MAP
+        .filter(m => DEV_OBD2_ANSWERS.includes(m.pid))
+        .filter(m => { const c = channelStore.find(x => x.id === m.id); return !(c && c.signal); })
+        .map(m => ({ id: m.id, label: m.label, units: m.units,
+                     signal_name: m.sig, service: 1, pid: m.pid }));
+      return sendJson(res, { checking: false, pending: false,
+                             readings: channels.length ? DEV_OBD2_ANSWERS.length : 0, channels });
+    }
+    if (url === '/api/obd2/offer' && req.method === 'POST') {
+      return readBody(req, () => { devOfferDismissed = true; sendJson(res, { ok: true }); });
     }
     if (url === '/api/obd2/adopt' && req.method === 'POST') {
       return readBody(req, (body) => {

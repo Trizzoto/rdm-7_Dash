@@ -84,6 +84,12 @@ static uint32_t s_layout_version = 0;
 static char s_layout_ecu[32] = "";
 static char s_layout_ecu_version[32] = "";
 
+void layout_manager_set_ecu_context(const char *make, const char *version) {
+	snprintf(s_layout_ecu, sizeof(s_layout_ecu), "%s", make ? make : "");
+	snprintf(s_layout_ecu_version, sizeof(s_layout_ecu_version), "%s",
+			 (make && make[0] && version) ? version : "");
+}
+
 /* Layout-level night-mode CAN trigger (optional).
  * If a layout binds night mode to a CAN signal, these hold the binding
  * until the dashboard reads them and subscribes to the signal. Empty

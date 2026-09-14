@@ -114,6 +114,10 @@ esp_err_t config_store_load_first_run_done(bool *done);
  * data/obd2_autosetup.h). Defaults to false on any read failure. */
 esp_err_t config_store_save_obd2_autosetup_pending(bool pending);
 bool      config_store_load_obd2_autosetup_pending(void);
+/* The standing OBD2 offer's raw answering PIDs (n == 0 erases); load returns
+ * how many bytes were read, 0 when there is none. */
+esp_err_t config_store_save_obd2_offer(const uint8_t *pids, uint8_t n);
+uint8_t   config_store_load_obd2_offer(uint8_t *out, size_t cap);
 
 /* ── Wire input mode ────────────────────────────────────────────────────
    When enabled, GPIO 43/44 are used as indicator wire inputs and

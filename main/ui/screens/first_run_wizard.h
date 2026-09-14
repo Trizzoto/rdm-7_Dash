@@ -19,6 +19,9 @@ extern "C" {
 /* Create and show the wizard overlay. Safe to call from the LVGL task only. */
 void show_first_run_wizard(void);
 
+/* The wizard (or its standalone channels editor) is on screen. LVGL task. */
+bool first_run_wizard_is_open(void);
+
 /* Open just the Channels editor (the wizard's split-pane Step 3) as a
  * standalone modal — no CAN scan / ECU detect / Wi-Fi steps. Launched
  * from Device Settings → "Channels". LVGL task only. */

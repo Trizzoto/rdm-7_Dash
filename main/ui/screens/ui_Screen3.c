@@ -18,6 +18,7 @@
 #include "ui/menu/edit_mode.h"
 #include "ui/menu/menu_screen.h"
 #include "ui/screens/splash_screen.h"
+#include "ui/screens/first_run_wizard.h"
 #include "ui/theme.h"
 #include "ui/ui.h"
 #include "layout/layout_manager.h"
@@ -584,6 +585,17 @@ static void _bus_silent_tick_cb(lv_timer_t *t) {
     if (cnt != s_last_rx_count) {
         s_last_rx_count = cnt;
         s_last_rx_change_ms = now_ms;
+    }
+
+    /* The setup wizard sits over the dashboard on this same screen, and its
+     * CAN step already says "No CAN traffic detected". The badge foregrounds
+     * itself on every show, so it landed ON TOP of the wizard card, covering
+     * the step's own help text. Stay out of the way while the wizard is up;
+     * the silence clock keeps running, so it reappears as soon as it closes. */
+    if (first_run_wizard_is_open()) {
+        if (!lv_obj_has_flag(s_bus_silent_badge, LV_OBJ_FLAG_HIDDEN))
+            lv_obj_add_flag(s_bus_silent_badge, LV_OBJ_FLAG_HIDDEN);
+        return;
     }
     /* On first tick, seed timestamp so we don't immediately show silence */
     if (s_last_rx_change_ms == 0) s_last_rx_change_ms = now_ms;

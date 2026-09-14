@@ -9,6 +9,22 @@ This file starts tracking from **1.1.11** (the first release-tracked build, 2026
 Changes that have landed on `master` since the last tagged version.
 
 ### Changed
+- **"Your car also answers OBD2" — and what it could add.** (ADR-0074) After
+  any ECU preset other than a Falcon's, the dash quietly checks whether the
+  car answers OBD2 too. If it does, it lists the channels nothing feeds yet
+  that OBD2 could fill, and offers them — nothing is added until you say so.
+  - Wizard channels step: "checking for OBD2…", then **+ OBD2 can add N**,
+    which opens the list already filled in, addable readings first.
+  - "No ECU detected": when the car answers OBD2 the card says so — **Use
+    OBD2 — your car answers 61 readings** — and puts that option first.
+  - Device Settings → OBD2 readings shows **N TO ADD**.
+  - Studio's Channels page shows the same offer with **Review and add…** and
+    **Not now**. API: `GET /api/obd2/offer`, `POST /api/obd2/offer
+    {"dismiss":true}`.
+  - The ECU list uses the whole sheet and the presets' own names ("Ford Falcon
+    FG", not "Ford  FG").
+  - USB: new serial RPCs `touch` and `obd2.sim`, so a dash with no network can
+    be tapped and bench-tested over its cable.
 - **The setup wizard no longer asks everyone about OBD2.** (ADR-0073) It is
   four steps now — CAN, ECU, channels, connect. OBD2 was step 2 of 5 for every
   customer, though it only matters to two kinds of car:
@@ -80,6 +96,20 @@ Changes that have landed on `master` since the last tagged version.
     binary by under 2 KB despite gaining a whole new surface.
 
 ### Fixed
+- **Changing a car's ECU left the old ECU's decodes live.** Applying a preset
+  only ever added signals, so after Haltech → Ford Falcon 30 Haltech decodes
+  (throttle and MAP on 0x360, ignition on 0x362, oil pressure on 0x361…)
+  stayed registered and came back on every boot. A channel bound by name then
+  read the old ECU's bit layout — a wrong number on the new car's bus — and
+  OBD2 would not poll it. A new ECU now retires exactly what the previous
+  preset wrote. (ADR-0074)
+- **The dash forgot its ECU at every boot** when it was chosen in the setup
+  wizard or imported from Studio: it was saved where the next layout load
+  overwrote it. It is now stored with the layout. (ADR-0074)
+- An OBD2 reading could show its source as "CAN 0x0".
+- The dashboard's NO CAN BUS badge covered the setup wizard's CAN step text.
+- The OBD2 scan list put "already set up" rows first, pushing what can be
+  added off the screen, and counted scan scaffolding as readings.
 - **AFR on E85 read petrol numbers, and Calculate could read 216.** (ADR-0072)
   λ → AFR always used 14.7, so an E85 car at stoich showed 14.7 where the tune
   says 9.8. Each dash now has a **Fuel** setting — Petrol (the default, so
