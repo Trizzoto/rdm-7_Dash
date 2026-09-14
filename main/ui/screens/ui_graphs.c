@@ -24,6 +24,7 @@
 #include "data/channel_manager.h"
 #include "data/unit_convert.h"
 #include "esp_heap_caps.h"
+#include "esp_attr.h"
 #include "system/screen_config.h"
 
 #include <math.h>
@@ -58,7 +59,11 @@ static const struct { const char *name, *a, *b; } k_pairs[] = {
 };
 
 /* The picks outlive the screen (until restart). */
-static char    s_pick[G_MAX][32];
+/* Every static array in the menu code lives in PSRAM (EXT_RAM_BSS_ATTR):
+ * internal RAM is what esp_wifi_init needs at boot, and a few KB of menu
+ * tables in it was enough to make WiFi start fail with ESP_ERR_NO_MEM and
+ * the dash boot-loop (ADR-0076). */
+static EXT_RAM_BSS_ATTR char s_pick[G_MAX][32];
 static uint8_t s_npick = 0;
 static bool    s_defaults_done = false;
 
@@ -72,7 +77,7 @@ typedef struct {
     lv_obj_t *range_lbl;
 } g_series_t;
 
-static g_series_t  s_ser[G_MAX];
+static EXT_RAM_BSS_ATTR g_series_t s_ser[G_MAX];
 static uint16_t    s_head = 0;        /* next write slot */
 static uint16_t    s_count = 0;       /* samples held */
 static uint8_t     s_win = 10;
@@ -278,12 +283,12 @@ static void _update_ranges(int n)
 #define PLOT_H  (GRAPH_CARD_H - 2)
 
 static uint16_t     *s_fb = NULL;
-static lv_img_dsc_t  s_fb_dsc;
-static lv_obj_t     *s_ylabels[5];
-static lv_obj_t     *s_tlabels[6];
+static EXT_RAM_BSS_ATTR lv_img_dsc_t s_fb_dsc;
+static EXT_RAM_BSS_ATTR lv_obj_t *s_ylabels[5];
+static EXT_RAM_BSS_ATTR lv_obj_t *s_tlabels[6];
 
-static int16_t s_dirty_top[PLOT_W];   /* rows written per column, last frame */
-static int16_t s_dirty_bot[PLOT_W];   /* top > bot = clean */
+static EXT_RAM_BSS_ATTR int16_t s_dirty_top[PLOT_W];   /* rows written per column, last frame */
+static EXT_RAM_BSS_ATTR int16_t s_dirty_bot[PLOT_W];   /* top > bot = clean */
 static bool    s_fb_clean = false;    /* false = clear it all next frame */
 
 /* What a frame changed, per vertical strip of the plot. Only these bands are
@@ -292,8 +297,8 @@ static bool    s_fb_clean = false;    /* false = clear it all next frame */
  * strip's height. 12 strips stays well inside LVGL's 32 dirty areas. */
 #define STRIPS   12
 #define STRIP_W  ((PLOT_W + STRIPS - 1) / STRIPS)
-static int16_t s_strip_top[STRIPS];
-static int16_t s_strip_bot[STRIPS];
+static EXT_RAM_BSS_ATTR int16_t s_strip_top[STRIPS];
+static EXT_RAM_BSS_ATTR int16_t s_strip_bot[STRIPS];
 static bool    s_full_invalidate = true;
 
 static inline void _strip_mark(int x, int top, int bot)

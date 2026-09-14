@@ -5,6 +5,7 @@
 
 #include "system/display_capture.h"
 #include "esp_heap_caps.h"
+#include "esp_attr.h"
 #include "esp_log.h"
 
 #include <stdio.h>
@@ -29,7 +30,8 @@ typedef struct {
     bool          used;
 } thumb_t;
 
-static thumb_t    s_thumbs[MAX_THUMBS];
+/* PSRAM, like the pictures: internal RAM is kept for WiFi (ADR-0076). */
+static EXT_RAM_BSS_ATTR thumb_t s_thumbs[MAX_THUMBS];
 static uint32_t   s_loaded_ms = 0;
 static lv_timer_t *s_save_timer = NULL;
 

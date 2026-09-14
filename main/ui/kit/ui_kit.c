@@ -10,6 +10,7 @@
 #include "kit/ui_kit.h"
 
 #include "esp_log.h"
+#include "esp_attr.h"
 #include <ctype.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -24,25 +25,25 @@ LV_IMG_DECLARE(ui_img_RDM_Light);
 extern const uint8_t barlow_ui_ttf_start[] asm("_binary_barlow_ui_ttf_start");
 extern const uint8_t barlow_ui_ttf_end[]   asm("_binary_barlow_ui_ttf_end");
 
-static const lv_font_t *s_fonts[UK_FONT__COUNT];
+static EXT_RAM_BSS_ATTR const lv_font_t *s_fonts[UK_FONT__COUNT];
 static bool s_inited = false;
 
 /* ── Styles ───────────────────────────────────────────────────────────── */
 #define TONES 7
-static lv_style_t s_screen, s_bar, s_body, s_grid, s_scroll;
-static lv_style_t s_tile, s_tile_pr, s_tile_hero, s_tile_danger;
-static lv_style_t s_card, s_section, s_row, s_caps;
-static lv_style_t s_btn, s_btn_dis, s_btn_k[UK_BTN__COUNT], s_btn_k_pr[UK_BTN__COUNT];
-static lv_style_t s_icon_t[TONES], s_text_t[TONES];
-static lv_style_t s_backdrop, s_popup, s_toast, s_dot;
-static lv_style_t s_sl_main, s_sl_ind, s_sl_knob;
-static lv_style_t s_sw_main, s_sw_ind, s_sw_knob;
-static lv_style_t s_dd_main, s_dd_list, s_dd_sel;
-static lv_style_t s_ta_main, s_ta_focus, s_ta_cursor, s_ta_ph;
-static lv_style_t s_mb_main, s_mb_btn, s_mb_btn_pr;
-static lv_style_t s_kb_main, s_kb_key, s_kb_key_pr, s_kb_key_ck;
-static lv_style_t s_list_main, s_list_btn;
-static lv_style_t s_scrollbar;
+static EXT_RAM_BSS_ATTR lv_style_t s_screen, s_bar, s_body, s_grid, s_scroll;
+static EXT_RAM_BSS_ATTR lv_style_t s_tile, s_tile_pr, s_tile_hero, s_tile_danger;
+static EXT_RAM_BSS_ATTR lv_style_t s_card, s_section, s_row, s_caps;
+static EXT_RAM_BSS_ATTR lv_style_t s_btn, s_btn_dis, s_btn_k[UK_BTN__COUNT], s_btn_k_pr[UK_BTN__COUNT];
+static EXT_RAM_BSS_ATTR lv_style_t s_icon_t[TONES], s_text_t[TONES];
+static EXT_RAM_BSS_ATTR lv_style_t s_backdrop, s_popup, s_toast, s_dot;
+static EXT_RAM_BSS_ATTR lv_style_t s_sl_main, s_sl_ind, s_sl_knob;
+static EXT_RAM_BSS_ATTR lv_style_t s_sw_main, s_sw_ind, s_sw_knob;
+static EXT_RAM_BSS_ATTR lv_style_t s_dd_main, s_dd_list, s_dd_sel;
+static EXT_RAM_BSS_ATTR lv_style_t s_ta_main, s_ta_focus, s_ta_cursor, s_ta_ph;
+static EXT_RAM_BSS_ATTR lv_style_t s_mb_main, s_mb_btn, s_mb_btn_pr;
+static EXT_RAM_BSS_ATTR lv_style_t s_kb_main, s_kb_key, s_kb_key_pr, s_kb_key_ck;
+static EXT_RAM_BSS_ATTR lv_style_t s_list_main, s_list_btn;
+static EXT_RAM_BSS_ATTR lv_style_t s_scrollbar;
 
 static lv_style_t *const s_all[] = {
     &s_screen, &s_bar, &s_body, &s_grid, &s_scroll,

@@ -13,6 +13,7 @@
 #include "system/rdm_lv_async.h"
 #include "esp_log.h"
 #include "lvgl.h"
+#include "esp_attr.h"
 #include "ui/callbacks/ui_callbacks.h"
 #include "ui/dashboard.h"
 #include "ui/menu/edit_mode.h"
@@ -101,7 +102,7 @@ void keyboard_ready_event_cb(lv_event_t *e) {
 
 static lv_obj_t   *s_dock        = NULL;
 static lv_obj_t   *s_dock_name   = NULL;
-static lv_obj_t   *s_dock_pips   = NULL;
+static lv_obj_t   *s_drawer      = NULL;   /* the layout drawer, when open */
 static lv_obj_t   *s_dock_slider = NULL;
 static lv_obj_t   *s_dock_dim    = NULL;
 static lv_obj_t   *s_dock_rec    = NULL;
@@ -131,7 +132,10 @@ static void _dock_tick_cb(lv_timer_t *t) {
 	_dock_refresh();
 }
 
+static void _drawer_close(void);
+
 static void chrome_hide(void) {
+	_drawer_close();
 	if (s_dock && lv_obj_is_valid(s_dock))
 		lv_obj_add_flag(s_dock, LV_OBJ_FLAG_HIDDEN);
 	if (s_dock_tick) {
@@ -156,6 +160,10 @@ static void menu_button_hide_timer_cb(lv_timer_t *timer) {
 static void _chrome_rearm(void) {
 	if (menu_button_hide_timer)
 		lv_timer_del(menu_button_hide_timer);
+	menu_button_hide_timer = NULL;
+	/* The drawer stays until it is closed: someone choosing a layout isn't
+	 * idle, and a sheet vanishing mid-scroll would be worse than a dock. */
+	if (s_drawer) return;
 	menu_button_hide_timer =
 		lv_timer_create(menu_button_hide_timer_cb, CHROME_AUTO_HIDE_MS, NULL);
 	lv_timer_set_repeat_count(menu_button_hide_timer, 1);
@@ -209,6 +217,11 @@ static void _chrome_show_cb(void *arg) {
 void screen3_touch_event_cb(lv_event_t *e) {
 	if (lv_event_get_code(e) != LV_EVENT_SHORT_CLICKED) return;
 	if (edit_mode_is_armed()) return;
+	if (s_drawer) {
+		_drawer_close();
+		lv_async_call(_chrome_show_cb, NULL);
+		return;
+	}
 	/* The glass shows the dashboard alone right now (the dock appears after
 	 * this): the moment to picture it for the Layouts page. Skipped when
 	 * anything is drawn over it. */
@@ -316,7 +329,123 @@ static void _dock_deleted_cb(lv_event_t *e) {
 		lv_timer_del(s_dock_tick);
 		s_dock_tick = NULL;
 	}
-	s_dock = s_dock_name = s_dock_pips = s_dock_slider = s_dock_dim = s_dock_rec = NULL;
+	s_dock = s_dock_name = s_dock_slider = s_dock_dim = s_dock_rec = NULL;
+}
+
+/* ── Layout drawer ────────────────────────────────────────────────────────
+ * The name pill opens a sheet along the bottom with every layout as a picture
+ * card (the Layouts page's cards), scrolled so the one in use is in view. Tap
+ * one to drive with it; tap the dashboard above or the X to put it away. */
+
+/* PSRAM: internal RAM is kept for WiFi at boot (ADR-0076). */
+static EXT_RAM_BSS_ATTR char s_drawer_names[LAYOUT_MAX_COUNT][LAYOUT_MAX_NAME];
+static int  s_drawer_count = 0;
+
+static void _drawer_deleted_cb(lv_event_t *e) {
+	if (lv_event_get_target(e) == s_drawer) s_drawer = NULL;
+}
+
+/* Deferred: it is usually called from inside the drawer's own click. */
+static void _drawer_close(void) {
+	if (s_drawer && lv_obj_is_valid(s_drawer)) rdm_obj_del_async(s_drawer);
+	s_drawer = NULL;
+}
+
+static void _drawer_x_cb(lv_event_t *e) {
+	(void)e;
+	_drawer_close();
+	lv_async_call(_chrome_show_cb, NULL);
+}
+
+static void _drawer_pick_cb(lv_event_t *e) {
+	int idx = (int)(intptr_t)lv_event_get_user_data(e);
+	if (idx < 0 || idx >= s_drawer_count) return;
+	_drawer_close();
+	if (strcmp(s_drawer_names[idx], s_active_layout) == 0) {
+		lv_async_call(_chrome_show_cb, NULL);   /* already on it: back to the dock */
+		return;
+	}
+	ui_Screen3_switch_layout(s_drawer_names[idx]);
+}
+
+static void _drawer_open_cb(lv_event_t *e) {
+	(void)e;
+	if (s_drawer || !ui_Screen3) return;
+	if (menu_button_hide_timer) {
+		lv_timer_del(menu_button_hide_timer);
+		menu_button_hide_timer = NULL;
+	}
+	if (s_dock && lv_obj_is_valid(s_dock)) lv_obj_add_flag(s_dock, LV_OBJ_FLAG_HIDDEN);
+
+	const lv_coord_t H = 276;
+	s_drawer = lv_obj_create(ui_Screen3);
+	lv_obj_remove_style_all(s_drawer);
+	/* Taller than it shows, pushed down, so only the top corners are round. */
+	lv_obj_set_size(s_drawer, LV_HOR_RES, H + 16);
+	lv_obj_align(s_drawer, LV_ALIGN_BOTTOM_MID, 0, 16);
+	lv_obj_set_style_bg_color(s_drawer, THEME_COLOR_SURFACE, 0);
+	lv_obj_set_style_bg_opa(s_drawer, LV_OPA_COVER, 0);
+	lv_obj_set_style_border_color(s_drawer, THEME_COLOR_BORDER_MED, 0);
+	lv_obj_set_style_border_width(s_drawer, 1, 0);
+	lv_obj_set_style_radius(s_drawer, 16, 0);
+	lv_obj_set_style_pad_top(s_drawer, 12, 0);
+	lv_obj_set_style_pad_hor(s_drawer, 12, 0);
+	lv_obj_set_style_pad_bottom(s_drawer, 16 + 12, 0);
+	lv_obj_set_style_pad_row(s_drawer, 10, 0);
+	lv_obj_set_flex_flow(s_drawer, LV_FLEX_FLOW_COLUMN);
+	lv_obj_add_flag(s_drawer, LV_OBJ_FLAG_CLICKABLE);
+	lv_obj_clear_flag(s_drawer, LV_OBJ_FLAG_SCROLLABLE);
+	lv_obj_add_event_cb(s_drawer, _drawer_deleted_cb, LV_EVENT_DELETE, NULL);
+
+	char names[LAYOUT_MAX_COUNT][LAYOUT_MAX_NAME];
+	int n = layout_manager_list(names, LAYOUT_MAX_COUNT);
+	s_drawer_count = 0;
+	for (int i = 0; i < n; i++) {
+		if (names[i][0] == '_') continue;
+		snprintf(s_drawer_names[s_drawer_count++], LAYOUT_MAX_NAME, "%s", names[i]);
+	}
+
+	lv_obj_t *head = lv_obj_create(s_drawer);
+	lv_obj_remove_style_all(head);
+	lv_obj_set_size(head, lv_pct(100), 36);
+	lv_obj_set_flex_flow(head, LV_FLEX_FLOW_ROW);
+	lv_obj_set_flex_align(head, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+	lv_obj_set_style_pad_column(head, 12, 0);
+	lv_obj_clear_flag(head, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+	uk_label(head, "Layouts", UK_FONT_HEAD, UK_TONE_TEXT);
+	char saved[16];
+	snprintf(saved, sizeof(saved), "%d saved", s_drawer_count);
+	lv_obj_t *sv = uk_label(head, saved, UK_FONT_SMALL, UK_TONE_MUTED);
+	lv_obj_set_flex_grow(sv, 1);
+	lv_obj_t *x = uk_btn(head, UK_ICON_CLOSE, NULL, UK_BTN_NEUTRAL, _drawer_x_cb, NULL);
+	lv_obj_set_size(x, 40, 36);
+	lv_obj_set_style_pad_hor(x, 0, 0);
+	lv_obj_set_ext_click_area(x, 10);
+
+	lv_obj_t *row = lv_obj_create(s_drawer);
+	lv_obj_remove_style_all(row);
+	lv_obj_set_width(row, lv_pct(100));
+	lv_obj_set_flex_grow(row, 1);
+	lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+	lv_obj_set_style_pad_column(row, 10, 0);
+	lv_obj_set_scroll_dir(row, LV_DIR_HOR);
+	lv_obj_set_scrollbar_mode(row, LV_SCROLLBAR_MODE_OFF);
+	lv_obj_add_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+
+	lv_obj_t *in_use = NULL;
+	for (int i = 0; i < s_drawer_count; i++) {
+		bool on = strcmp(s_drawer_names[i], s_active_layout) == 0;
+		lv_obj_t *card = main_menu_layout_card(row, s_drawer_names[i], on,
+		                                       _drawer_pick_cb, (void *)(intptr_t)i);
+		if (on) in_use = card;
+	}
+	if (in_use) {
+		lv_obj_update_layout(s_drawer);
+		lv_obj_scroll_to_view(in_use, LV_ANIM_OFF);
+	}
+
+	lv_obj_set_style_opa(s_drawer, LV_OPA_TRANSP, 0);
+	lv_obj_fade_in(s_drawer, 150, 0);
 }
 
 /* A dock segment: the rounded card-coloured group the controls sit in. */
@@ -368,57 +497,94 @@ static void _dock_create(lv_obj_t *scr) {
 	lv_obj_add_flag(s_dock, LV_OBJ_FLAG_HIDDEN);
 	lv_obj_add_event_cb(s_dock, _dock_deleted_cb, LV_EVENT_DELETE, NULL);
 
-	/* ── Layout: ◀ NAME ▶ with a pip per layout in the cycle ── */
-	lv_obj_t *lay = _dock_seg(s_dock, 19);
-	lv_obj_set_style_pad_all(lay, 4, 0);
+	/* ── Layout: [◀] [NAME / 3 of 9] [▶] — three pills. The name pill is
+	 * as wide as the name needs and opens the layout drawer; the arrows step
+	 * through the cycle without opening anything. ── */
+	lv_obj_t *lay = lv_obj_create(s_dock);
+	lv_obj_remove_style_all(lay);
+	lv_obj_set_size(lay, LV_SIZE_CONTENT, lv_pct(100));
+	lv_obj_set_flex_flow(lay, LV_FLEX_FLOW_ROW);
+	lv_obj_set_style_pad_column(lay, 6, 0);
+	lv_obj_clear_flag(lay, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
 	ui_Layout_Prev_Button = uk_btn(lay, UK_ICON_LEFT, NULL, UK_BTN_NEUTRAL, _layout_prev_clicked_cb, NULL);
 	lv_obj_set_size(ui_Layout_Prev_Button, 50, lv_pct(100));
+	lv_obj_set_style_radius(ui_Layout_Prev_Button, 10, 0);
 
-	lv_obj_t *mid = lv_obj_create(lay);
-	lv_obj_remove_style_all(mid);
-	lv_obj_set_height(mid, lv_pct(100));
-	lv_obj_set_flex_grow(mid, 1);
-	lv_obj_set_flex_flow(mid, LV_FLEX_FLOW_COLUMN);
-	lv_obj_set_flex_align(mid, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-	lv_obj_set_style_pad_row(mid, 6, 0);
-	lv_obj_clear_flag(mid, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+	lv_obj_t *pill = lv_obj_create(lay);
+	lv_obj_remove_style_all(pill);
+	lv_obj_set_size(pill, LV_SIZE_CONTENT, lv_pct(100));
+	lv_obj_set_style_min_width(pill, 132, 0);
+	lv_obj_set_style_bg_color(pill, THEME_COLOR_SECTION_BG, 0);
+	lv_obj_set_style_bg_color(pill, THEME_COLOR_BTN_GRAY, LV_STATE_PRESSED);
+	lv_obj_set_style_bg_opa(pill, LV_OPA_COVER, 0);
+	lv_obj_set_style_radius(pill, 10, 0);
+	lv_obj_set_style_pad_hor(pill, 18, 0);
+	lv_obj_set_style_pad_row(pill, 0, 0);
+	lv_obj_set_flex_flow(pill, LV_FLEX_FLOW_COLUMN);
+	lv_obj_set_flex_align(pill, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+	lv_obj_add_flag(pill, LV_OBJ_FLAG_CLICKABLE);
+	lv_obj_clear_flag(pill, LV_OBJ_FLAG_SCROLLABLE);
+	lv_obj_add_event_cb(pill, _drawer_open_cb, LV_EVENT_CLICKED, NULL);
 
 	char active[LAYOUT_MAX_NAME] = {0};
 	layout_manager_get_active(active, sizeof(active));
-	s_dock_name = uk_label(mid, active[0] ? active : "Layout", UK_FONT_TITLE, UK_TONE_TEXT);
-	/* DOT truncation needs a fixed width; content-sized labels just overflow
-	 * under the arrow. */
-	lv_obj_set_width(s_dock_name, lv_pct(100));
-	lv_label_set_long_mode(s_dock_name, LV_LABEL_LONG_DOT);
-	lv_obj_set_style_text_align(s_dock_name, LV_TEXT_ALIGN_CENTER, 0);
-
-	s_dock_pips = lv_obj_create(mid);
-	lv_obj_remove_style_all(s_dock_pips);
-	lv_obj_set_size(s_dock_pips, LV_SIZE_CONTENT, 6);
-	lv_obj_set_flex_flow(s_dock_pips, LV_FLEX_FLOW_ROW);
-	lv_obj_set_style_pad_column(s_dock_pips, 5, 0);
-	lv_obj_clear_flag(s_dock_pips, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-	for (int i = 0; i < s_layout_count && i < 8; i++) {
-		lv_obj_t *pip = lv_obj_create(s_dock_pips);
-		lv_obj_remove_style_all(pip);
-		bool on = (i == s_layout_index);
-		lv_obj_set_size(pip, on ? 16 : 6, 6);
-		lv_obj_set_style_radius(pip, 3, 0);
-		lv_obj_set_style_bg_opa(pip, LV_OPA_COVER, 0);
-		lv_obj_set_style_bg_color(pip, on ? THEME_COLOR_ACCENT : THEME_COLOR_BTN_GRAY, 0);
+	/* Layout names are file names: show "track_night" as "TRACK NIGHT". */
+	char shown[LAYOUT_MAX_NAME];
+	snprintf(shown, sizeof(shown), "%s", active[0] ? active : "Layout");
+	for (char *c = shown; *c; c++) if (*c == '_') *c = ' ';
+	s_dock_name = uk_label(pill, shown, UK_FONT_TITLE, UK_TONE_TEXT);
+	/* Sized to the name: the big face when it fits, a size down when it
+	 * doesn't, and only then cut short — on one line, which LONG_DOT only
+	 * keeps when the label has a fixed height as well as a width. */
+	{
+		/* 180 keeps the widest dock inside the screen: arrows 100 + pill 216 +
+		 * brightness 150 + three buttons 228 + gaps. */
+		const lv_coord_t MAX_W = 180;
+		const char *caps = lv_label_get_text(s_dock_name);
+		lv_point_t sz;
+		lv_txt_get_size(&sz, caps, uk_font(UK_FONT_TITLE), 1, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+		if (sz.x > MAX_W) {
+			lv_obj_set_style_text_font(s_dock_name, uk_font(UK_FONT_HEAD), 0);
+			lv_txt_get_size(&sz, caps, uk_font(UK_FONT_HEAD), 1, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+			if (sz.x > MAX_W) {
+				lv_obj_set_size(s_dock_name, MAX_W, lv_font_get_line_height(uk_font(UK_FONT_HEAD)));
+				lv_label_set_long_mode(s_dock_name, LV_LABEL_LONG_DOT);
+			}
+		}
 	}
+
+	/* Where this layout sits: "3 of 9", the number a size up. */
+	lv_obj_t *count = lv_obj_create(pill);
+	lv_obj_remove_style_all(count);
+	lv_obj_set_size(count, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+	lv_obj_set_flex_flow(count, LV_FLEX_FLOW_ROW);
+	lv_obj_set_flex_align(count, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
+	lv_obj_set_style_pad_column(count, 5, 0);
+	lv_obj_clear_flag(count, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+	char num[8];
+	if (s_layout_index >= 0) snprintf(num, sizeof(num), "%d", s_layout_index + 1);
+	else snprintf(num, sizeof(num), "-");
+	uk_label(count, num, UK_FONT_LABEL, UK_TONE_TEXT);
+	char of[16];
+	snprintf(of, sizeof(of), "of %d", s_layout_count);
+	lv_obj_t *of_lbl = uk_label(count, of, UK_FONT_SMALL, UK_TONE_MUTED);
+	lv_obj_set_style_pad_bottom(of_lbl, 1, 0);
 
 	ui_Layout_Next_Button = uk_btn(lay, UK_ICON_RIGHT, NULL, UK_BTN_NEUTRAL, _layout_next_clicked_cb, NULL);
 	lv_obj_set_size(ui_Layout_Next_Button, 50, lv_pct(100));
+	lv_obj_set_style_radius(ui_Layout_Next_Button, 10, 0);
 	if (s_layout_count < 2) {
-		/* One layout: nothing to step to. Keep the name, drop the arrows. */
+		/* One layout: nothing to step to. The name still opens the drawer. */
 		lv_obj_add_state(ui_Layout_Prev_Button, LV_STATE_DISABLED);
 		lv_obj_add_state(ui_Layout_Next_Button, LV_STATE_DISABLED);
-		lv_obj_add_flag(s_dock_pips, LV_OBJ_FLAG_HIDDEN);
+		lv_obj_add_flag(count, LV_OBJ_FLAG_HIDDEN);
 	}
 
 	/* ── Brightness ── */
-	lv_obj_t *bri = _dock_seg(s_dock, 15);
+	lv_obj_t *bri = _dock_seg(s_dock, 1);
+	lv_obj_set_width(bri, 0);   /* all of the room the name pill leaves */
+	lv_obj_set_style_min_width(bri, 150, 0);
 	lv_obj_set_style_pad_hor(bri, 14, 0);
 	lv_obj_set_style_pad_column(bri, 14, 0);
 	uk_icon(bri, UK_ICON_SUN, UK_ICON_MD, UK_TONE_MUTED);

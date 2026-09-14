@@ -23,6 +23,7 @@
 #include "can/can_manager.h"
 #include "net/wifi_manager.h"
 #include "version.h"
+#include "esp_attr.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -248,7 +249,8 @@ void main_menu_open(lv_obj_t *return_screen)
 /* ── Layouts page ─────────────────────────────────────────────────────── */
 
 /* Names behind the cards, by card index. Valid while the page exists. */
-static char s_card_names[LAYOUT_MAX_COUNT][LAYOUT_MAX_NAME];
+/* PSRAM: internal RAM is kept for WiFi at boot (ADR-0076). */
+static EXT_RAM_BSS_ATTR char s_card_names[LAYOUT_MAX_COUNT][LAYOUT_MAX_NAME];
 static int  s_card_count = 0;
 
 static void _layout_pick_cb(lv_event_t *e)
@@ -268,7 +270,7 @@ static void _layout_pick_cb(lv_event_t *e)
 }
 
 /* Start-up screen: "None" first, then every splash layout. */
-static char s_splash_names[LAYOUT_MAX_COUNT][LAYOUT_MAX_NAME];
+static EXT_RAM_BSS_ATTR char s_splash_names[LAYOUT_MAX_COUNT][LAYOUT_MAX_NAME];
 
 static void _splash_dd_cb(lv_event_t *e)
 {
@@ -314,10 +316,9 @@ static lv_obj_t *_splash_dropdown(lv_obj_t *parent)
     return dd;
 }
 
-/* One layout as a card: its picture, its name, and whether it is in use. */
-static void _layout_card(lv_obj_t *parent, int idx, bool in_use)
+lv_obj_t *main_menu_layout_card(lv_obj_t *parent, const char *name, bool in_use,
+                                lv_event_cb_t cb, void *user_data)
 {
-    const char *name = s_card_names[idx];
 
     lv_obj_t *card = lv_obj_create(parent);
     lv_obj_remove_style_all(card);
@@ -333,7 +334,7 @@ static void _layout_card(lv_obj_t *parent, int idx, bool in_use)
     lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
     lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(card, _layout_pick_cb, LV_EVENT_CLICKED, (void *)(intptr_t)idx);
+    if (cb) lv_obj_add_event_cb(card, cb, LV_EVENT_CLICKED, user_data);
 
     /* The picture sits in a black frame the size of a thumbnail, so a card
      * with no picture yet keeps the same shape as one with. */
@@ -370,8 +371,13 @@ static void _layout_card(lv_obj_t *parent, int idx, bool in_use)
     lv_obj_set_style_pad_column(row, 8, 0);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *nm = uk_label(row, name, UK_FONT_HEAD, UK_TONE_TEXT);
+    char shown[LAYOUT_MAX_NAME];
+    snprintf(shown, sizeof(shown), "%s", name);
+    for (char *c = shown; *c; c++) if (*c == '_') *c = ' ';   /* file name -> words */
+    lv_obj_t *nm = uk_label(row, shown, UK_FONT_HEAD, UK_TONE_TEXT);
     lv_obj_set_flex_grow(nm, 1);
+    /* One line: LONG_DOT needs a fixed height, or it wraps instead. */
+    lv_obj_set_height(nm, lv_font_get_line_height(uk_font(UK_FONT_HEAD)));
     lv_label_set_long_mode(nm, LV_LABEL_LONG_DOT);
 
     if (in_use) {
@@ -387,6 +393,7 @@ static void _layout_card(lv_obj_t *parent, int idx, bool in_use)
         lv_obj_set_style_text_color(pl, THEME_COLOR_TEXT_ON_ACCENT, 0);
         lv_obj_center(pl);
     }
+    return card;
 }
 
 static void _open_layouts_page(void)
@@ -418,7 +425,8 @@ static void _open_layouts_page(void)
             bool in_use = strcmp(names[i], active) == 0;
             if ((pass == 0) != in_use) continue;
             snprintf(s_card_names[s_card_count], LAYOUT_MAX_NAME, "%s", names[i]);
-            _layout_card(list, s_card_count, in_use);
+            main_menu_layout_card(list, s_card_names[s_card_count], in_use,
+                                  _layout_pick_cb, (void *)(intptr_t)s_card_count);
             s_card_count++;
         }
     }

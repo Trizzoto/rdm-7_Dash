@@ -103,6 +103,36 @@ editor" card last; the start-up screen chooser moved into the top bar.
 - `layout_manager_delete` removes the picture with the layout (file only —
   it can run off the LVGL task).
 
+## 4. The dock's layout pills and drawer (same day, follow-up)
+
+The owner, on the dock: the name should size itself, show "a number … like 1
+larger and then of 9", and be its own pill that opens a layout drawer while
+the arrows stay for quick switching.
+
+- The layout group is three pills: **◀**, **name**, **▶**. The name pill is as
+  wide as the name: the 26 px face when it fits in 180 px, the 21 px face
+  when it doesn't, then one line cut with "…". File names show as words
+  (`track_night` → TRACK NIGHT). 180 px is what keeps the widest dock on the
+  screen; the brightness slider takes the rest, never under 150 px.
+- Under the name, **3 of 9**: the position in the switcher cycle, the number
+  a size up. Hidden with one layout.
+- Tapping the name opens the **layout drawer**: a sheet along the bottom with
+  the Layouts page's picture cards (one shared builder,
+  `main_menu_layout_card`), scrolled so the one in use is in view. Tap a card
+  to switch; tap the X or the dashboard above to close. The auto-hide timer
+  doesn't run while it is open.
+
+### Internal RAM is WiFi's
+
+Adding the drawer's name table put the dash into a **boot loop**: `esp_wifi_init`
+failed with `ESP_ERR_NO_MEM` (37,579 B internal DMA free, largest block
+19,456 B) and its `ESP_ERROR_CHECK` aborted, on every layout. This session's
+menu code had put ~8 KB of static arrays in internal DRAM (layout name
+tables, graph erase tables, thumbnail slots, the kit's styles). All of them
+are now `EXT_RAM_BSS_ATTR`; WiFi starts with 45,975 B free. The margin is
+thin, so **any new static array in UI code goes in PSRAM**, and a separate
+task was raised to stop a failed WiFi start from aborting boot.
+
 ## Options considered
 
 - **LVGL chart widget** for graphs: one Y axis per side, no shared-unit

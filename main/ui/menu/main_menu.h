@@ -36,6 +36,12 @@ void main_menu_close_cb(lv_event_t *e);
 /** Back handler for pages: back to the launcher. */
 void main_menu_back_cb(lv_event_t *e);
 
+/** One layout as a picture card (252 px wide): its thumbnail or a
+ *  placeholder, its name, and an "In use" tag. Shared by the Layouts page
+ *  and the dock's layout drawer so both look the same. */
+lv_obj_t *main_menu_layout_card(lv_obj_t *parent, const char *name, bool in_use,
+                                lv_event_cb_t cb, void *user_data);
+
 #ifdef __cplusplus
 }
 #endif
