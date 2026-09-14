@@ -9,6 +9,28 @@ This file starts tracking from **1.1.11** (the first release-tracked build, 2026
 Changes that have landed on `master` since the last tagged version.
 
 ### Changed
+- **The car comes first in its own channel list.** (ADR-0071) The Channels
+  page, the widget's channel picker and the dash's setup wizard now show "On
+  this car" — every channel the dash has, custom ones in their own group — and
+  then "Not set up", the rest of the catalogue. Before, a car's dozen channels
+  were spread across sixteen group headings between greyed catalogue rows, and
+  a channel you built yourself came after all of them.
+  - The Source column prints the frame on a multiplexed id (`0x3E8 · frame 2`)
+    and says "No source yet" only where that is true, instead of "Not set up"
+    on 132 rows.
+  - **Adding your ECU's extra signals** marks the ones the car already has,
+    won't tick them twice, and offers "Tick all N not on this car". With no
+    dash it opens on the ECU your channels already come from.
+  - **Building a multiplexed channel by hand**: when the live probe sees byte 0
+    change, "Use byte 0 as the frame index" turns the gate on, and every frame
+    heard is listed with what your bits read in it — pick the frame by its
+    value. Works in the new-channel form and in a channel's decode editor
+    (where it waits for Save, like typing).
+  - Quick ECU Setup's "Auto" box is now "Only ones the dash can hear", which
+    is what it does, and no longer claims detection comes from "the last Scan
+    Car".
+  - The wizard reports a detected ECU as "Heard 5 of the 21 frames this ECU can
+    send" rather than "(23% confidence)" for a correct match.
 - **One source picker, and a decode editor you can see.** (ADR-0069) The
   Channels surface had three separate ECU → Version → Signal drilldowns reading
   the same catalogue, and the channel drawer hid the CAN decode under "More"
@@ -38,6 +60,14 @@ Changes that have landed on `master` since the last tagged version.
     binary by under 2 KB despite gaining a whole new surface.
 
 ### Fixed
+- **The setup wizard hid most of the channels applying an ECU created.** The
+  dash's channel step listed the 135-row catalogue against a 144-row cap and
+  put custom channels last, but applying an ECU makes a custom channel for
+  every signal without a built-in slot (most of a Haltech's 69), so only about
+  seven could appear. The car's channels now come first; a full list trims the
+  catalogue's tail and says how many rows it left out. (ADR-0071)
+- **After creating a channel, the drawer kept the heading "New channel"** over
+  the new channel's editor.
 - **Every same-named source row claimed "in use".** `/api/channels/source-options`
   marks `is_current` by derived signal *name*, so on a car running one ECU all
   nine makes' "COOLANT TEMP" rows said they were the live source. Tolerable when

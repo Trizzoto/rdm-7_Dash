@@ -118,8 +118,34 @@ const MOCK = {
    * request body/query and an in-memory store so the editor's custom-preset
    * flow ("+ New ECU", "+ Add Signal", "Create Preset") actually persists
    * across requests during browser dev, matching the device's LittleFS. */
-  'GET  /api/ecu/list':         () => ({ ecus: ['MS3-Pro', 'Haltech Elite', 'MaxxECU', 'Ford BA/BF', 'Ford FG'] }),
-  'GET  /api/ecu/current':      () => ({ ecu: 'MS3-Pro', version: '1.5.x' }),
+  /* The ecu_list_handler() shape: {presets[], match_threshold, base_id_max,
+   * auto_mode}. This returned {ecus:[names]}, which no page has read since
+   * the picker became a list of cards, so "Quick ECU Setup" said "Failed to
+   * load presets." in dev and nothing in it could be reviewed. One row per
+   * (make, version) in the baked catalogue; the car's own ECU scores as
+   * detected so the blue dot and "Active" badge have something to mark. */
+  'GET  /api/ecu/list':         () => {
+    const seen = new Map();
+    _bakedPresets().forEach((p) => {
+      const k = p.ecu + '||' + p.version;
+      if (seen.has(k) || p.ecu === 'OBD2' || p.ecu === 'RDM-7') return;
+      const active = p.ecu === DEV_ACTIVE_MAKE && p.version === DEV_ACTIVE_VERSION;
+      const row = { make: p.ecu, version: p.version,
+                    display: p.display || (p.ecu + ' ' + p.version),
+                    match_score: active ? 100 : 0 };
+      /* Link's generic dash stream sits wherever PCLink was told to put it. */
+      if (p.ecu === 'Link ECU') { row.base_id = parseInt(p.can_id, 16) >>> 0; row.id_span = 0; }
+      seen.set(k, row);
+    });
+    return { presets: [...seen.values()], match_threshold: 30,
+             base_id_max: 0x7FF, auto_mode: true };
+  },
+  /* {make, version} — the firmware's own keys (web_server_layout.c). This
+   * answered {ecu:'MS3-Pro'} for months, so the Channels header read
+   * "ECU preset: None" while the source picker, fed by source-options,
+   * said the car ran a Link: two answers to one question in dev only.
+   * Same make as the source-options mock, so the two cannot disagree. */
+  'GET  /api/ecu/current':      () => ({ make: DEV_ACTIVE_MAKE, version: DEV_ACTIVE_VERSION }),
   'POST /api/ecu/set':          () => ({ ok: true }),
   'GET  /api/device/info':      () => ({
     /* mirrors web_server_system.c _device_info_handler — the discovery

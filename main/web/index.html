@@ -1942,6 +1942,33 @@
             margin-top: 6px;
         }
         .ch2-probe-miss { color: var(--text-muted); font-style: italic; }
+        /* Multiplexing, from inside the probe: the one-click "use byte 0",
+         * then one button per frame index heard, each carrying what the bit
+         * window reads in that frame, so a frame is found by its value. */
+        .ch2-probe-adopt,
+        .ch2-probe-frame {
+            background: none; color: var(--text); font-family: inherit;
+            border: 1px solid var(--border); border-radius: var(--radius-sm);
+            cursor: pointer;
+        }
+        .ch2-probe-adopt { margin-top: 6px; padding: 4px 10px; font-size: 11px; font-style: normal; }
+        .ch2-probe-adopt:hover,
+        .ch2-probe-frame:hover { border-color: var(--text-muted); }
+        .ch2-probe-frames {
+            display: flex; flex-wrap: wrap; gap: 4px;
+            margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border);
+        }
+        .ch2-probe-frames .lbl { flex-basis: 100%; font-size: 10px; color: var(--text-muted); margin-bottom: 2px; }
+        .ch2-probe-frame {
+            display: inline-flex; align-items: baseline; gap: 6px;
+            padding: 3px 8px; font-size: 11px; font-weight: 600;
+        }
+        .ch2-probe-frame .v {
+            font-family: 'JetBrains Mono', monospace; font-weight: 400;
+            color: var(--text-muted);
+        }
+        .ch2-probe-frame.on { border-color: var(--accent); background: rgba(255,255,255,0.06); }
+        .ch2-probe-frame.on .v { color: var(--text); }
         /* Decode grid — the CAN ID / bits / scale / signedness cluster, in the
          * drawer and in the mux disclosure. auto-fit rather than a fixed two
          * columns: three across in the widened drawer, two on a narrow one,
@@ -2222,6 +2249,29 @@
             padding: 14px 14px 4px;
         }
         .ch2-group-header:first-child { padding-top: 8px; }
+        /* The list's two halves — "On this car", then "Not set up" (ADR-0071).
+         * Headings on one scroll, not a mode: the column-heading type so they
+         * read as structure, with a count so the car's size is one glance. */
+        .ch2-list-section {
+            display: flex; align-items: baseline; gap: 8px;
+            margin: 18px 8px 0; padding: 12px 6px 2px;
+            border-top: 1px solid var(--border);
+            font-size: 10px; font-weight: 700; letter-spacing: .06em;
+            text-transform: uppercase; color: var(--text);
+        }
+        .ch2-list-section:first-child { margin-top: 2px; border-top: none; }
+        .ch2-list-section .n { color: var(--text-muted); font-weight: 600; }
+        .ch2-list-section .hint {
+            margin-left: auto; font-weight: 400; letter-spacing: 0;
+            text-transform: none; color: var(--text-muted); font-size: 11px;
+        }
+        #chShared.ch2-page .ch2-list-section { margin-left: 20px; margin-right: 20px; padding-left: 0; padding-right: 0; }
+        .ch2-list-empty {
+            margin: 6px 20px 4px; padding: 12px 14px;
+            border: 1px dashed var(--border); border-radius: 6px;
+            font-size: 12px; line-height: 1.5; color: var(--text-muted);
+        }
+        .ch2-list-empty b { color: var(--text); font-weight: 600; }
 
         /* Empty state — when no channels active yet */
         .ch2-empty {
@@ -2739,6 +2789,17 @@
             text-transform: uppercase; letter-spacing: .05em;
         }
         .ch2-srcp-row .inuse { font-size: 11px; color: var(--text-muted); margin-left: 6px; }
+        /* Add mode: a signal the car already has. Settled, not clickable. */
+        .ch2-srcp-row.oncar { cursor: default; }
+        .ch2-srcp-row.oncar:hover { background: none; }
+        .ch2-srcp-row.oncar .nm { color: var(--text-muted); }
+        .ch2-srcp-tickall {
+            margin-left: auto; padding: 3px 10px;
+            background: none; color: var(--text);
+            border: 1px solid var(--border); border-radius: var(--radius-sm);
+            font-size: 11px; font-family: inherit; cursor: pointer;
+        }
+        .ch2-srcp-tickall:hover { border-color: var(--text-muted); }
         .ch2-srcp-row .val {
             font-family: 'JetBrains Mono', monospace; font-size: 12px;
             color: var(--text); flex-shrink: 0;
@@ -5954,19 +6015,22 @@
                 <button class="close-btn" onclick="closeEcuPreset()" style="font-size:18px;">&times;</button>
             </div>
 
-            <!-- Auto/Manual toggle row -->
+            <!-- Filter row. The stored flag is still `auto_mode` (shared with the
+                 dash's own picker), but "Auto" named the wrong thing: ticking it
+                 SHOWED more, unticking it hid presets. The box now says what it
+                 does and is the flag's inverse. -->
             <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px; padding:8px 10px; background:var(--bg); border:1px solid var(--border); border-radius:var(--radius-md); flex:0 0 auto;">
-                <label style="display:flex; align-items:center; gap:6px; font-size:12px; cursor:pointer; user-select:none;">
-                    <input type="checkbox" id="ecuPresetAuto" onchange="onEcuPresetAutoChange(this.checked)" style="cursor:pointer;">
-                    <span>Auto</span>
+                <label style="display:flex; align-items:center; gap:6px; font-size:12px; cursor:pointer; user-select:none; white-space:nowrap;">
+                    <input type="checkbox" id="ecuPresetAuto" onchange="onEcuPresetAutoChange(!this.checked)" style="cursor:pointer;">
+                    <span>Only ones the dash can hear</span>
                 </label>
-                <span id="ecuPresetAutoHint" style="font-size:10px; color:var(--text-muted); line-height:1.35;">Show every preset. Detected ones are marked.</span>
+                <span id="ecuPresetAutoHint" style="font-size:10px; color:var(--text-muted); line-height:1.35;">Showing every preset.</span>
             </div>
 
             <div id="ecuPresetList" style="flex:1; overflow-y:auto; min-height:120px; border:1px solid var(--border); border-radius:var(--radius-md); padding:6px;"></div>
 
             <div style="margin-top:10px; font-size:10px; color:var(--text-muted); line-height:1.45; flex:0 0 auto;">
-                Detected presets have a blue dot &mdash; their broadcast CAN IDs overlap with what the dash saw during the last <b>Scan Car</b>. Run a fresh scan from Device Settings if you've swapped vehicles.
+                A blue dot means the dash is hearing that ECU&rsquo;s CAN frames right now &mdash; it updates as you watch, so switch the car on if nothing is marked.
             </div>
         </div>
     </div>
@@ -20285,7 +20349,7 @@
                 });
 
                 _ecuPresetState = newState;
-                if (auto) auto.checked = !!newState.auto_mode;
+                if (auto) auto.checked = !newState.auto_mode;   /* the box is "only detected" */
 
                 if (structFp !== _ecuPresetStructFp || isFirstLoad) {
                     _ecuPresetStructFp = structFp;
@@ -20337,7 +20401,7 @@
             const list = document.getElementById('ecuPresetList');
             const autoEl = document.getElementById('ecuPresetAuto');
             const hint = document.getElementById('ecuPresetAutoHint');
-            const isAuto = autoEl ? autoEl.checked : true;
+            const isAuto = autoEl ? !autoEl.checked : true;   /* box = "only detected" */
             const threshold = _ecuPresetState.match_threshold || 30;
             let entries = _ecuPresetState.presets.slice();
 
@@ -20359,10 +20423,10 @@
 
             if (hint) {
                 hint.textContent = isAuto
-                    ? 'Show every preset. Detected ones are marked.'
+                    ? 'Showing every preset.'
                     : (entries.length === _ecuPresetState.presets.length
-                        ? 'Manual mode · no presets detected yet, showing all.'
-                        : 'Manual mode · hiding presets the scan didn’t detect.');
+                        ? 'None heard yet, so showing every preset.'
+                        : 'Hiding the ones the dash can’t hear.');
             }
 
             list.innerHTML = entries.length === 0
@@ -23448,7 +23512,9 @@
             });
             _chCache.forEach(c => {
                 if (!_chCanonical.find(d => d.id === c.id)) {
-                    merged.push({...c, is_active: true, group: 99});
+                    /* The channel's own group, as on the Channels page — a
+                     * hardcoded 99 filed every custom channel under "Custom". */
+                    merged.push({...c, is_active: true, group: (c.group != null) ? c.group : 99});
                 }
             });
 
@@ -23461,22 +23527,15 @@
                     || grpName.includes(q);
             });
 
-            const grouped = {};
-            filtered.forEach(c => {
-                const g = c.group || 0;
-                if (!grouped[g]) grouped[g] = [];
-                grouped[g].push(c);
-            });
-            const order = Object.keys(grouped).map(Number).sort((a, b) => a - b);
-            if (!order.length) {
+            if (!filtered.length) {
                 list.innerHTML = '<div class="ch2-picker-empty">No channels match.</div>';
                 return;
             }
-            list.innerHTML = order.map(g => {
-                const items = grouped[g].sort((a, b) => {
-                    if (a.is_active !== b.is_active) return b.is_active - a.is_active;
-                    return (a.label || a.id).localeCompare(b.label || b.id);
-                });
+            /* Same two halves as the Channels page (ADR-0071): binding a
+             * widget, the channel you want is almost always one the car
+             * already has. */
+            const { mine, rest } = _chSplitByCar(filtered);
+            const renderGroups = sections => sections.map(([g, items]) => {
                 return `<div class="ch2-picker-group-h">${_CH_GROUP_SHORT[g] || 'Other'}</div>`
                     + items.map(c => {
                         const unit = c.units_display || c.units_native || '';
@@ -23490,6 +23549,10 @@
                         </div>`;
                     }).join('');
             }).join('');
+            let html = '';
+            if (mine.length) html += _chSectionHead('On this car', mine.length, '') + renderGroups(mine.sections);
+            if (rest.length) html += _chSectionHead('Not set up', rest.length, '') + renderGroups(rest.sections);
+            list.innerHTML = html;
         }
 
         /* Pick a channel from the picker. If the channel isn't yet active,
@@ -24251,17 +24314,10 @@
              * and "the standard list" meant the answer to "where is X?"
              * depended on a mode the user had to know about — and the
              * catalogue rows are the whole point of a channel list you add
-             * from. Configured rows sort to the top of each group (see the
-             * bound-first sort in _renderGroups), so the car still leads
-             * without anything being hidden behind a view. */
+             * from. The car still leads — as the first of two headings on the
+             * same scroll (_chSplitByCar) — without anything being hidden
+             * behind a view. */
             const filtered = merged.filter(matchesQuery);
-
-            const grouped = {};
-            filtered.forEach(c => {
-                const g = c.group || 0;
-                if (!grouped[g]) grouped[g] = [];
-                grouped[g].push(c);
-            });
 
             /* Imports queued while offline are firmware-resolved on replay
              * (canonical vs custom_ is the dash's call), so the list can't
@@ -24277,24 +24333,12 @@
                      + `will be added when it reconnects.</div>`;
             }).join('');
 
-            const order = Object.keys(grouped).map(Number).sort((a, b) => a - b);
-            if (!order.length) {
+            if (!filtered.length) {
                 list.innerHTML = pendingBanner
                     + `<div class="ch2-empty"><div class="ch2-empty-msg">No matches.</div></div>`;
                 return;
             }
-            const _renderGroups = (order, grouped) => order.map(g => {
-                const items = grouped[g].sort((a, b) => {
-                    /* Bound (has-signal) first within a group, then alpha.
-                     * `is_active` is true whenever the channel has a
-                     * firmware record — that includes records without
-                     * any signal bound. The visual cue should reflect
-                     * "has a source", not "firmware knows about it". */
-                    const aBound = !!(a.signal && a.signal.length);
-                    const bBound = !!(b.signal && b.signal.length);
-                    if (aBound !== bBound) return bBound - aBound;
-                    return (a.label || a.id).localeCompare(b.label || b.id);
-                });
+            const _renderGroups = (sections) => sections.map(([g, items]) => {
                 return `<div class="ch2-group-header">${_CH_GROUP_SHORT[g] || 'Other'}</div>`
                     + items.map(c => {
                         const bound = !!(c.signal && c.signal.length);
@@ -24342,7 +24386,65 @@
                     }).join('');
             }).join('');
 
-            list.innerHTML = pendingBanner + _renderGroups(order, grouped);
+            /* The car first, then the catalogue (ADR-0071). */
+            const { mine, rest } = _chSplitByCar(filtered);
+            let html = pendingBanner;
+            if (mine.length || !q) {
+                html += _chSectionHead('On this car', mine.length, '');
+                html += mine.length
+                    ? _renderGroups(mine.sections)
+                    : `<div class="ch2-list-empty">Nothing set up yet. <b>+ Add channels</b> fills this in from your ECU,
+                       or click any channel below to see what it is.</div>`;
+            }
+            if (rest.length) {
+                html += _chSectionHead('Not set up', rest.length, 'click one to see what it is');
+                html += _renderGroups(rest.sections);
+            }
+            list.innerHTML = html;
+        }
+
+        /* ── The channel list's two halves (ADR-0071) ─────────────────────
+         *
+         * "On this car" — every channel with a record on the dash, custom and
+         * built-in alike — then "Not set up": the rest of the catalogue.
+         *
+         * It was one list sorted by group with configured rows floated to the
+         * top of each group. That kept everything visible, which was the
+         * point (39cc91e took away a "this car / standard list" MODE because
+         * the answer to "where is X?" depended on knowing about it). But a car
+         * has a dozen to forty channels out of 135 rows, so the car itself was
+         * spread across sixteen group headings with greyed catalogue rows
+         * between them, and a channel you built yourself filed under Custom
+         * came after all 130 of them. Two headings on one scroll keep the
+         * reason for removing the mode — nothing is behind a view, search
+         * still filters both — and put the car where you look first.
+         *
+         * Shared with the widget's channel picker so the two lists cannot
+         * disagree about where a channel is. */
+        function _chSplitByCar(rows) {
+            const bound = c => !!(c.signal && c.signal.length);
+            const byLabel = (a, b) => (a.label || a.id).localeCompare(b.label || b.id);
+            const groupUp = (list, cmp) => {
+                const g = {};
+                list.forEach(c => { const k = c.group || 0; (g[k] = g[k] || []).push(c); });
+                const sections = Object.keys(g).map(Number).sort((a, b) => a - b)
+                    .map(k => [k, g[k].sort(cmp)]);
+                return { sections, length: list.length };
+            };
+            return {
+                /* A record with no source still belongs to the car — it is
+                 * the one most in need of attention — but reads after the
+                 * working ones in its group. */
+                mine: groupUp(rows.filter(c => c.is_active),
+                              (a, b) => (bound(b) - bound(a)) || byLabel(a, b)),
+                rest: groupUp(rows.filter(c => !c.is_active), byLabel),
+            };
+        }
+
+        function _chSectionHead(title, n, hint) {
+            return `<div class="ch2-list-section">${_textEscape(title)}<span class="n">${n}</span>`
+                 + (hint ? `<span class="hint">${_textEscape(hint)}</span>` : '')
+                 + `</div>`;
         }
 
         /* Strip leading/trailing underscores + lowercase so names that
@@ -24616,6 +24718,10 @@
         /* Byte-0 indices the dash has seen on this ID (bitmap) — the cheap
          * "this ID looks multiplexed" hint, before anything is set up. */
         let _probeMuxSeen = 0;
+        /* The consumer's way to change the frame gate from inside the probe
+         * — "use byte 0 as the index", "decode frame 6" — without the probe
+         * knowing whether it is feeding a draft or a channel's buffer. */
+        let _probeSetMux = null;
 
         function _chNewDefaults() {
             return {
@@ -24732,12 +24838,24 @@
              * these setters deliberately do NOT re-render the form — a full
              * re-render mid-edit fights the cursor. Patch just that text, or
              * the header contradicts the box directly under it while you type. */
-            const sum = document.querySelector('.ch2-mux > summary');
+            const sum = document.querySelector('#chNewMux > summary');
             if (sum) {
                 sum.textContent = 'Multiplexed frame'
                     + (_chNewDraft.mux_bit_length ? ` — on, frame ${_chNewDraft.mux_value}` : '');
             }
-            _probeInvalidate();
+            /* Which index to show is a render choice — the dash already keeps
+             * every index separately — so only the geometry needs a re-poll. */
+            if (key === 'mux_value') _probeRender(); else _probeInvalidate();
+        }
+
+        /* The probe's "use byte 0" / frame buttons, aimed at the draft. */
+        function _chNewApplyMux(f) {
+            if (!_chNewDraft) return;
+            const geom = ('mux_bit_length' in f) || ('mux_bit_start' in f);
+            Object.assign(_chNewDraft, f);
+            _probeSyncMuxInputs('#chNewMux', f, 'Multiplexed frame'
+                + (_chNewDraft.mux_bit_length ? ` — on, frame ${_chNewDraft.mux_value}` : ''));
+            if (geom) _probeInvalidate(); else _probeRender();
         }
 
         /* Accept "0x1F4", "1F4h", "500" — people copy IDs out of DBCs and
@@ -24794,10 +24912,11 @@
 
         /* Attach the probe to a decode source and start polling. Idempotent
          * for the same element: re-attaching just swaps the source. */
-        function _probeAttach(srcFn, elId) {
+        function _probeAttach(srcFn, elId, setMuxFn) {
             _probeDetach(true);          /* keep the focus armed — we re-aim below */
             _probeSrc  = srcFn;
             _probeElId = elId;
+            _probeSetMux = setMuxFn || null;
             _probeRender();
             _probeSchedule(0);           /* first poll immediately, then paced */
         }
@@ -24809,6 +24928,7 @@
             if (_probeTimer) { clearTimeout(_probeTimer); _probeTimer = null; }
             _probeSrc = null;
             _probeElId = '';
+            _probeSetMux = null;
             _probeFrame = null;
             _probeFrames = null;
             _probeMuxSeen = 0;
@@ -24916,17 +25036,18 @@
              * must be the one carrying OUR index — never "whatever arrived
              * last", which is a different quantity at the same bit offset and
              * would render as a confident wrong number. */
-            let src = entry, muxNote = '';
+            let src = entry, muxNote = '', frameRow = '';
             if (d.mux_bit_length) {
                 const want = d.mux_value | 0;
                 const hit = (_probeFrames || []).find(f => Number(f.mux) === want);
+                frameRow = _probeFrameRow(d, want);
                 if (!hit) {
                     const seen = (_probeFrames || []).map(f => f.mux).sort((a, b) => a - b);
                     box.innerHTML =
                         `<div class="ch2-probe-miss">${idHex} is arriving, but no frame with index `
                         + `<b>${want}</b> yet.`
-                        + (seen.length ? `<br>Indices seen on this ID: ${seen.join(', ')}.` : '')
-                        + `</div>`;
+                        + (seen.length && !frameRow ? `<br>Indices seen on this ID: ${seen.join(', ')}.` : '')
+                        + `</div>` + frameRow;
                     return;
                 }
                 src = hit;
@@ -24934,11 +25055,20 @@
             } else if (_probeMuxSeen) {
                 /* The dash has seen several byte-0 values on this ID. That is
                  * the signature of a multiplexed stream, and decoding it as a
-                 * plain one is the mistake this hint exists to prevent. */
+                 * plain one is the mistake this hint exists to prevent.
+                 *
+                 * It used to stop at saying so, which left the fix — open a
+                 * disclosure, know that the index is 8 bits at bit 0, type
+                 * both, then guess a frame — to someone who had just been told
+                 * something they may never have heard of. Byte 0 is the only
+                 * shape this detector can see, so it can also make that change. */
                 const idx = [];
                 for (let i = 0; i < 16; i++) if (_probeMuxSeen & (1 << i)) idx.push(i);
                 muxNote = `<br><span style="color:#e6b800;">Byte 0 varies (${idx.join(', ')}) — `
-                        + `this ID looks multiplexed. The reading below mixes frames until you set an index.</span>`;
+                        + `this ID looks multiplexed. The reading below mixes frames until you set an index.</span>`
+                        + (_probeSetMux
+                            ? ` <button class="ch2-probe-adopt" onclick="_probeMuxAdopt(${idx[0] | 0})">Use byte 0 as the frame index</button>`
+                            : '');
             }
 
             const bytes = [];
@@ -24964,8 +25094,54 @@
                 + (val === null
                     ? `<div class="ch2-probe-miss" style="margin-top:6px;">Bit window runs past this frame (${bytes.length} bytes).</div>`
                     : `<div class="ch2-probe-val">${val.toFixed(dec)} <span style="font-size:13px; color:var(--text-muted);">${_escHTML(d.units || '')}</span></div>`)
-                + `<div style="color:var(--text-ghost); margin-top:4px;">seen ${src.age_ms | 0} ms ago · ${bytes.length} bytes · ${src.count} frames</div>`
-                + (muxNote && !d.mux_bit_length ? `<div style="font-size:10px; margin-top:4px;">${muxNote.replace(/^<br>/, '')}</div>` : '');
+                + `<div style="color:var(--text-muted); margin-top:4px;">seen ${src.age_ms | 0} ms ago · ${bytes.length} bytes · ${src.count} frames</div>`
+                + (muxNote && !d.mux_bit_length ? `<div style="font-size:10px; margin-top:4px;">${muxNote.replace(/^<br>/, '')}</div>` : '')
+                + frameRow;
+        }
+
+        /* Every frame index heard on this id, each showing what the bit window
+         * above reads IN THAT FRAME. Picking a frame by number means knowing
+         * the ECU's frame map; picking it by value ("coolant is about 88 —
+         * that's frame 2") only means knowing your car. Click one to decode it. */
+        function _probeFrameRow(d, want) {
+            const frames = (_probeFrames || []).slice().sort((a, b) => a.mux - b.mux);
+            if (!frames.length || !_probeSetMux) return '';
+            const dec = Math.max(0, Math.min(3, d.decimals | 0));
+            const chips = frames.map(f => {
+                const bytes = [];
+                for (let i = 0; i + 1 < (f.data || '').length; i += 2)
+                    bytes.push(parseInt(f.data.substr(i, 2), 16));
+                const raw = _chDecodeBits(bytes, d.bit_start, d.bit_length, d.is_signed, d.endian === 1);
+                const v = (raw === null) ? '—' : (raw * (d.scale || 1) + (d.offset || 0)).toFixed(dec);
+                const on = Number(f.mux) === want;
+                return `<button class="ch2-probe-frame${on ? ' on' : ''}" onclick="_probeMuxPick(${f.mux | 0})"
+                            title="Decode frame ${f.mux | 0}">${f.mux | 0}<span class="v">${v}</span></button>`;
+            }).join('');
+            return `<div class="ch2-probe-frames"><div class="lbl">Frames on this ID — what your bits read in each</div>${chips}</div>`;
+        }
+
+        function _probeMuxPick(n) {
+            if (_probeSetMux) _probeSetMux({ mux_value: n | 0 });
+        }
+
+        /* The one mux shape the detector can see: an 8-bit index in byte 0. */
+        function _probeMuxAdopt(firstSeen) {
+            if (_probeSetMux) _probeSetMux({ mux_bit_start: 0, mux_bit_length: 8, mux_value: firstSeen | 0 });
+        }
+
+        /* Push a gate change into a form's mux inputs and open its disclosure,
+         * without re-rendering the form (a re-render would drop the probe's
+         * cached frames and flash "not seen" for a poll). */
+        function _probeSyncMuxInputs(detailsSel, fields, summaryText) {
+            const box = document.querySelector(detailsSel);
+            if (!box) return;
+            Object.keys(fields).forEach(k => {
+                const inp = box.querySelector(`input[data-mux="${k}"]`);
+                if (inp) inp.value = fields[k];
+            });
+            box.open = true;
+            const sum = box.querySelector('summary');
+            if (sum) sum.textContent = summaryText;
         }
 
         function _renderChNewForm(wrap) {
@@ -25057,7 +25233,7 @@
                         </div>
                     </div>
 
-                    <details class="ch2-mux" ${d.mux_bit_length ? 'open' : ''}>
+                    <details class="ch2-mux" id="chNewMux" ${d.mux_bit_length ? 'open' : ''}>
                         <summary>Multiplexed frame${d.mux_bit_length ? ` — on, frame ${d.mux_value}` : ''}</summary>
                         <div class="ch2-detail-meta" style="margin:6px 0 10px;">
                             Some ECUs send several different payloads through one CAN ID and tag
@@ -25068,19 +25244,19 @@
                         <div class="ch2-newform-grid">
                             <div class="ch2-num">
                                 <span class="ch2-num-label">Index bits</span>
-                                <input type="number" min="0" max="16" value="${d.mux_bit_length}"
+                                <input type="number" min="0" max="16" value="${d.mux_bit_length}" data-mux="mux_bit_length"
                                        title="0 = not multiplexed. Width of the frame-index field, usually 8."
                                        oninput="_chNewSetMux('mux_bit_length', Number(this.value))">
                             </div>
                             <div class="ch2-num">
                                 <span class="ch2-num-label">Index at bit</span>
-                                <input type="number" min="0" max="63" value="${d.mux_bit_start}"
+                                <input type="number" min="0" max="63" value="${d.mux_bit_start}" data-mux="mux_bit_start"
                                        title="Where the frame index sits. 0 = byte 0, the usual convention."
                                        oninput="_chNewSetMux('mux_bit_start', Number(this.value))">
                             </div>
                             <div class="ch2-num">
                                 <span class="ch2-num-label">This frame</span>
-                                <input type="number" min="0" max="65535" value="${d.mux_value}"
+                                <input type="number" min="0" max="65535" value="${d.mux_value}" data-mux="mux_value"
                                        title="Decode only frames whose index equals this."
                                        oninput="_chNewSetMux('mux_value', Number(this.value))">
                             </div>
@@ -25097,7 +25273,7 @@
                     </div>
                 </div>`;
 
-            _probeAttach(() => _chNewDraft, 'chNewProbe');
+            _probeAttach(() => _chNewDraft, 'chNewProbe', _chNewApplyMux);
         }
 
         async function _chCreateSubmit() {
@@ -25158,7 +25334,7 @@
             } catch (e) {
                 showToast('Could not create channel: ' + (e.message || e), 'error');
                 if (btn) { btn.disabled = false; btn.textContent = 'Create channel'; }
-                if (_chNewMode) _probeAttach(() => _chNewDraft, 'chNewProbe');   /* form still up — resume the bus view */
+                if (_chNewMode) _probeAttach(() => _chNewDraft, 'chNewProbe', _chNewApplyMux);   /* form still up — resume the bus view */
                 return;
             }
 
@@ -25178,6 +25354,9 @@
             if (newId) _chSelectedId = newId;
             _refreshChannelsList();
             _renderChannelDetail();
+            /* The drawer is now the new channel's editor; its heading kept
+             * saying "New channel" over it. No-op in the modal. */
+            if (newId) _chOpenDrawer(d.label);
         }
 
         /* Preview for a catalogue channel that isn't set up yet. Says what it
@@ -25332,8 +25511,10 @@
              * that stops matching what the inputs are editing. */
             if (document.getElementById('chDecProbe')) {
                 const pid = c.id;
+                const psig = c.signal;
                 _probeAttach(() => _chEffectiveDecode(
-                    (_chCache || []).find(x => x.id === pid)), 'chDecProbe');
+                    (_chCache || []).find(x => x.id === pid)), 'chDecProbe',
+                    f => _chDecApplyMux(pid, psig, f));
             } else {
                 /* No decode editor on this channel — nothing will re-aim the
                  * focus buffer, so hand it back. */
@@ -25362,18 +25543,27 @@
          * truthful, and never render blank — an empty cell under a "Source"
          * heading reads as "no source", which is the one wrong answer. */
         function _chSourceCell(c, bound) {
-            if (!bound) return '<span class="ch2-srctxt none">Not set up</span>';
+            /* Under "Not set up" every row would say so, 130 times over, which
+             * is the heading's job (ADR-0071). The one worth words is a channel
+             * that IS on the car and has nothing feeding it. */
+            if (!bound) return c.is_active ? '<span class="ch2-srctxt none">No source yet</span>' : '';
             const s = c.source;
             if (s === 'can') {
                 /* The frame id is the one fact that tells two same-named
                  * decodes apart; it also reads unmistakably as "CAN". Prefer
                  * the channel's own decode (ADR-0005), fall back to the live
                  * registry for channels whose decode still lives in the
-                 * layout, and only then to the raw name. */
+                 * layout, and only then to the raw name.
+                 *
+                 * On a multiplexed id the frame index is the other half of
+                 * that identity: a Link's coolant, oil pressure and lambda all
+                 * ride 0x3E8, so the id alone printed three identical cells. */
                 const cid = (c.decode && c.decode.can_id)
                          || (_chSignalValuesCache[c.signal] || {}).can_id;
+                const frame = (c.decode && c.decode.mux_bit_length)
+                    ? ` · frame ${c.decode.mux_value | 0}` : '';
                 return cid
-                    ? `<span class="ch2-srctxt mono">0x${(cid >>> 0).toString(16).toUpperCase()}</span>`
+                    ? `<span class="ch2-srctxt mono">0x${(cid >>> 0).toString(16).toUpperCase()}${frame}</span>`
                     : `<span class="ch2-srctxt">${_textEscape(c.signal)}</span>`;
             }
             if (s === 'internal') return '<span class="ch2-srctxt">Built in</span>';
@@ -25770,6 +25960,28 @@
             return !!m.is_active;
         }
 
+        /* Add mode: does the car already have a channel decoding THIS row?
+         *
+         * Without it the add picker offered every signal as new, so ticking
+         * "the extras my car has" meant remembering which ones were set up —
+         * and the ones you re-ticked came back as "Added 3 of 5 — the rest
+         * were already set up", after the fact. The decode settles it the
+         * same way _srcPRowIsCurrent does: frame, bit offset, frame index.
+         * A preset applied at a moved base id (a Link stream PCLink put
+         * somewhere else) no longer shares the frame id, so inside the version
+         * the car runs a bound signal of the same name counts too. */
+        function _srcPRowOnCar(s, m, v) {
+            if (s.kind !== 'ecu') return false;
+            return (_chCache || []).some(c => {
+                const d = c.decode;
+                if (d && d.can_id && Number(d.can_id) === Number(s.can_id)
+                    && (d.bit_start | 0) === (s.bit_start | 0)
+                    && !!d.mux_bit_length === !!s.mux_bit_length
+                    && (d.mux_value | 0) === (s.mux_value | 0)) return true;
+                return !!(m.is_active && v && v.is_active && s.signal_name && c.signal === s.signal_name);
+            });
+        }
+
         function _srcPSigKey(s, m, v) {
             return [m.make, v.version, s.kind, s.signal_name || '', s.label,
                     s.can_id || '', s.mux_value != null ? s.mux_value : ''].join('|');
@@ -25832,6 +26044,16 @@
                 _srcP.make = act.make;
                 const av = (act.versions || []).find(v => v.is_active) || (act.versions || [])[0];
                 _srcP.version = av ? av.version : null;
+            } else if (mode === 'add' && _chCache.length) {
+                /* No dash to say which ECU the car runs (offline, or no preset
+                 * recorded) — but the car's own channels say it: land on the
+                 * version whose rows already feed the most of them, instead of
+                 * whichever make sorts first. */
+                let best = 0;
+                makes.forEach(m => (m.versions || []).forEach(v => {
+                    const n = (v.signals || []).filter(s => _srcPRowOnCar(s, m, v)).length;
+                    if (n > best) { best = n; _srcP.make = m.make; _srcP.version = v.version; }
+                }));
             } else if (mode === 'bind') {
                 outer:
                 for (const m of makes) for (const v of (m.versions || [])) for (const s of (v.signals || [])) {
@@ -25839,8 +26061,14 @@
                 }
             }
             if (!_srcP.make && makes.length) {
-                _srcP.make = makes[0].make;
-                _srcP.version = (makes[0].versions || [])[0] ? (makes[0].versions || [])[0].version : null;
+                /* The top of the rail, not the top of the catalogue — the rail
+                 * sorts by group then name, so makes[0] opened on its second
+                 * row with the first one sitting above it unselected. */
+                const gi = m => _SRCP_GROUPS.findIndex(g => g.key === _srcPGroupOf(m));
+                const first = makes.slice().sort((a, b) =>
+                    (gi(a) - gi(b)) || (a.make || '').localeCompare(b.make || ''))[0];
+                _srcP.make = first.make;
+                _srcP.version = (first.versions || [])[0] ? first.versions[0].version : null;
             }
             /* Pre-select the bound signal so its row is already highlighted
              * and the primary button is live. */
@@ -25889,6 +26117,21 @@
             _renderSourcePicker();
         }
 
+        /* Rows in the open version that the car does not have yet — what
+         * "Tick all" means. Adding the car's extras is usually most of a
+         * version, and ticking forty boxes one at a time is the wrong cost. */
+        function _srcPTickable() {
+            return _srcPVisibleRows().filter(e => !_srcPRowOnCar(e.s, e.m, e.v));
+        }
+
+        function _srcPTickAll() {
+            const rows = _srcPTickable();
+            const keys = rows.map(e => _srcPSigKey(e.s, e.m, e.v));
+            const allOn = keys.length && keys.every(k => _srcP.ticks.has(k));
+            keys.forEach(k => { if (allOn) _srcP.ticks.delete(k); else _srcP.ticks.add(k); });
+            _renderSourcePicker();
+        }
+
         /* Resolve the selected key back to its row. */
         function _srcPResolve(key) {
             return _srcPAllSignals().find(e => _srcPSigKey(e.s, e.m, e.v) === key) || null;
@@ -25923,22 +26166,33 @@
             });
             const rail = [];
             _SRCP_GROUPS.forEach(g => {
-                let inGroup = makes.filter(m => _srcPGroupOf(m) === g.key);
+                /* A source with nothing in it is a dead end, not an option:
+                 * "Custom · 0 signals" led to "No signals here." The way to
+                 * make a custom one is the author button under the list. */
+                let inGroup = makes.filter(m => _srcPGroupOf(m) === g.key
+                    && (m.versions || []).some(v => (v.signals || []).length));
                 if (q) inGroup = inGroup.filter(m => hits[m.make]);
                 if (!inGroup.length) return;
                 inGroup.sort((a, b) => (a.make || '').localeCompare(b.make || ''));
-                rail.push(`<div class="ch2-srcp-grouphead">${g.title}</div>`);
+                /* "Other" than the car's ECU — which only reads right when
+                 * there is one. A fresh install has no "Your ECU" above it. */
+                const title = (g.key === 'ecu' && !makes.some(m => m.is_active)) ? 'ECUs' : g.title;
+                rail.push(`<div class="ch2-srcp-grouphead">${title}</div>`);
                 inGroup.forEach(m => {
                     const sel = !q && m.make === _srcP.make;
                     const total = (m.versions || []).reduce((n, v) => n + (v.signals || []).length, 0);
                     const ticked = addMode
                         ? _srcPAllSignals().filter(e => e.m.make === m.make
                             && _srcP.ticks.has(_srcPSigKey(e.s, e.m, e.v))).length : 0;
+                    const have = (addMode && !q)
+                        ? _srcPAllSignals().filter(e => e.m.make === m.make
+                            && _srcPRowOnCar(e.s, e.m, e.v)).length : 0;
                     rail.push(
                         `<div class="ch2-srcp-make${sel ? ' active' : ''}" onclick="_srcPPickMake('${_escJs(m.make)}')">
                             <div class="nm">${_textEscape(m.make)}</div>
                             <div class="sub">${q ? (hits[m.make] + ' match' + (hits[m.make] === 1 ? '' : 'es'))
                                                  : (total + ' signal' + (total === 1 ? '' : 's'))}${
+                                have ? ` · ${have} on car` : ''}${
                                 ticked ? ` · ${ticked} picked` : ''}</div>
                         </div>`);
                 });
@@ -25968,6 +26222,17 @@
                         + `${_textEscape(v.version)}${v.is_active ? ' (on this car)' : ''}</option>`).join('')
                     + `</select>`;
             }
+            if (addMode && !q) {
+                const tickable = _srcPTickable();
+                if (tickable.length) {
+                    const allOn = tickable.every(e => _srcP.ticks.has(_srcPSigKey(e.s, e.m, e.v)));
+                    const some = tickable.length < _srcPVisibleRows().length;
+                    vbox.innerHTML += `<button class="ch2-srcp-tickall" onclick="_srcPTickAll()">`
+                        + (allOn ? 'Untick all'
+                                 : `Tick all ${tickable.length}${some ? ' not on this car' : ''}`)
+                        + `</button>`;
+                }
+            }
 
             /* ── Signal list ── */
             const chBound = _srcP.channelId
@@ -25976,18 +26241,24 @@
             const list = rows.map(e => {
                 const key = _srcPSigKey(e.s, e.m, e.v);
                 const sel = !addMode && _srcP.sig === key;
-                const on  = addMode && _srcP.ticks.has(key);
+                /* Already a channel on this car: shown ticked and settled, so
+                 * the list reads as "what you have, and what you could add". */
+                const onCar = addMode && _srcPRowOnCar(e.s, e.m, e.v);
+                const on  = addMode && (onCar || _srcP.ticks.has(key));
                 const cur = _srcPRowIsCurrent(e.s, e.m, chBound);
                 const val = e.s.live_value;
                 const live = !!(e.s.exists_in_layout && !e.s.is_stale && val != null && !isNaN(val));
                 const meta = _srcPRowMeta(e.s);
-                return `<div class="ch2-srcp-row${sel ? ' active' : ''}${cur ? ' current' : ''}"
-                             onclick="${addMode ? `_srcPToggle('${_escJs(key)}')` : `_srcPPickSig('${_escJs(key)}')`}">
-                    ${addMode ? `<input type="checkbox" tabindex="-1"${on ? ' checked' : ''}>` : ''}
+                const click = onCar ? ''
+                    : addMode ? `_srcPToggle('${_escJs(key)}')` : `_srcPPickSig('${_escJs(key)}')`;
+                return `<div class="ch2-srcp-row${sel ? ' active' : ''}${cur ? ' current' : ''}${onCar ? ' oncar' : ''}"
+                             onclick="${click}">
+                    ${addMode ? `<input type="checkbox" tabindex="-1"${on ? ' checked' : ''}${onCar ? ' disabled' : ''}>` : ''}
                     <div class="txt">
                         <div class="nm">${_textEscape(e.s.label)}${
                             q ? `<span class="mk">${_textEscape(e.m.make)} &rsaquo; ${_textEscape(e.v.version)}</span>` : ''}${
-                            cur ? '<span class="inuse">· in use</span>' : ''}</div>
+                            cur ? '<span class="inuse">· in use</span>' : ''}${
+                            onCar ? '<span class="inuse">· on this car</span>' : ''}</div>
                         ${meta ? `<div class="meta">${_textEscape(meta)}</div>` : ''}
                     </div>
                     ${live ? `<span class="val">${Number(val).toFixed(e.s.decimals ?? 0)}<span class="u">${_textEscape(e.s.unit || '')}</span></span>` : ''}
@@ -26474,7 +26745,20 @@
                 sum.textContent = 'Multiplexed frame'
                     + (c.decode.mux_bit_length ? ` — on, frame ${c.decode.mux_value | 0}` : '');
             }
-            _probeInvalidate();
+            /* See _chNewSetMux: the index is a render choice, not a re-poll. */
+            if (field === 'mux_value') _probeRender(); else _probeInvalidate();
+        }
+
+        /* The probe's "use byte 0" / frame buttons, aimed at a channel's
+         * buffered decode — so they apply when you Save, like typing would. */
+        function _chDecApplyMux(channelId, signalName, f) {
+            const geom = ('mux_bit_length' in f) || ('mux_bit_start' in f);
+            Object.keys(f).forEach(k => _chEditDecode(channelId, signalName, k, f[k]));
+            const c = (_chCache || []).find(x => x.id === channelId);
+            const dd = (c && c.decode) || {};
+            _probeSyncMuxInputs('#chDecMux', f, 'Multiplexed frame'
+                + (dd.mux_bit_length ? ` — on, frame ${dd.mux_value | 0}` : ''));
+            if (geom) _probeInvalidate(); else _probeRender();
         }
 
         function _chEditDecodeCanId(channelId, signalName, inputEl) {
@@ -26568,19 +26852,19 @@
                         <div class="ch2-dec-grid">
                             <div class="ch2-num">
                                 <span class="ch2-num-label">Index bits</span>
-                                <input type="number" min="0" max="16" value="${d.mux_bit_length}"
+                                <input type="number" min="0" max="16" value="${d.mux_bit_length}" data-mux="mux_bit_length"
                                        title="0 = not multiplexed. Width of the frame-index field, usually 8."
                                        oninput="_chEditDecodeTarget('${id}','${sig}','mux_bit_length', Number(this.value));">
                             </div>
                             <div class="ch2-num">
                                 <span class="ch2-num-label">Index at bit</span>
-                                <input type="number" min="0" max="63" value="${d.mux_bit_start}"
+                                <input type="number" min="0" max="63" value="${d.mux_bit_start}" data-mux="mux_bit_start"
                                        title="Where the frame index sits. 0 = byte 0, the usual convention."
                                        oninput="_chEditDecodeTarget('${id}','${sig}','mux_bit_start', Number(this.value));">
                             </div>
                             <div class="ch2-num">
                                 <span class="ch2-num-label">This frame</span>
-                                <input type="number" min="0" max="65535" value="${d.mux_value}"
+                                <input type="number" min="0" max="65535" value="${d.mux_value}" data-mux="mux_value"
                                        title="Decode only frames whose index equals this."
                                        oninput="_chEditDecodeTarget('${id}','${sig}','mux_value', Number(this.value));">
                             </div>

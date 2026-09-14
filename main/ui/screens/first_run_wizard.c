@@ -1,11 +1,11 @@
-/* first_run_wizard.c - four-step onboarding: CAN scan, ECU auto-detect,
- * Channels review, WiFi options.
+/* first_run_wizard.c - five-step onboarding: CAN scan, OBD2, ECU
+ * auto-detect, Channels review, WiFi options.
  *
- * Runs CAN bitrate scan inline (step 1), auto-detects the ECU by
- * matching CAN IDs against the preconfig catalog (step 2), shows the
- * canonical channels that just got auto-bound from the detected
- * preset (step 3, tap any row to retarget), then connection options
- * (step 4). User can skip at any point — the same screens are reachable
+ * Runs CAN bitrate scan inline (step 1), offers an OBD2 scan (step 2),
+ * auto-detects the ECU by matching frames against the preconfig catalog
+ * (step 3), shows the channels that preset just set up — the car's own
+ * first, then the rest of the catalogue (step 4, ADR-0071) — then
+ * connection options (step 5). User can skip at any point — the same screens are reachable
  * from Device Settings later. NVS flag marks completion on Finish Setup
  * only; plain Skip lets the wizard return on the next boot.
  *
@@ -1631,8 +1631,6 @@ static void _render_ecu_result(void) {
 
     if (s_ecu_top_match >= 0) {
         const wiz_ecu_match_t *m = &s_ecu_matches[s_ecu_top_match];
-        int pct = (m->total > 0) ? (m->matched * 100) / m->total : 0;
-
         lv_obj_t *head = lv_label_create(s_ecu_result_card);
         lv_label_set_text(head, "Detected");
         lv_obj_align(head, LV_ALIGN_TOP_LEFT, 0, 0);
@@ -1649,9 +1647,14 @@ static void _render_ecu_result(void) {
         lv_obj_set_style_text_font(t, THEME_FONT_LARGE, 0);
         lv_obj_set_style_text_color(t, THEME_COLOR_TEXT_PRIMARY, 0);
 
-        char sub[64];
-        snprintf(sub, sizeof(sub), "%u of %u CAN IDs matched  (%d%% confidence)",
-                 m->matched, m->total, pct);
+        /* Counts, not a percentage. "23% confidence" was what a correct
+         * detection of a wide preset printed — a MaxxECU can send 21 frames
+         * and a real one may only broadcast five — so the one screen whose
+         * job is "yes, that's your ECU" read as a shrug. The ranking never
+         * trusted the percentage either (see _compute_ecu_matches). */
+        char sub[72];
+        snprintf(sub, sizeof(sub), "Heard %u of the %u frames this ECU can send",
+                 m->matched, m->total);
         lv_obj_t *s = lv_label_create(s_ecu_result_card);
         lv_label_set_text(s, sub);
         lv_obj_align(s, LV_ALIGN_TOP_LEFT, 0, 50);
@@ -2207,9 +2210,12 @@ static void _channels_refresh_cb(lv_timer_t *t) {
     (void)t;
     for (uint16_t i = 0; i < s_channels_count; i++) {
         lv_obj_t *lbl = s_channels_value_lbls[i];
-        if (!lbl || !lv_obj_is_valid(lbl)) continue;
-        if (!s_channels_ids[i]) continue;
+        if (!lbl || !s_channels_ids[i]) continue;
         const channel_t *c = channel_manager_get(s_channels_ids[i]);
+        /* Ghosts are skipped BEFORE lv_obj_is_valid(): in LVGL v8 that call
+         * walks every object on every screen, and it ran for all ~100
+         * catalogue rows twice a second only to reach the `continue` below. */
+        if (c && !lv_obj_is_valid(lbl)) continue;
         /* Ghost row — "Inactive" + disabled colour already baked at
          * creation time. Don't touch the label every tick — LVGL v8
          * forces an invalidation on every style write regardless of
@@ -3320,9 +3326,25 @@ static void _append_group_header(const char *title, bool first) {
     lv_obj_set_style_bg_opa(hrule, LV_OPA_30, 0);
 }
 
-/* Build the full channel list: every canonical channel as either a
- * ghost (activate-on-tap) or an active row, then any custom channels
- * the user added via "+ Add custom", then the "+ Add custom" button.
+/* Section heading — one of the list's two halves (ADR-0071). Primary text
+ * and a size up from a group header, because it contains group headers. */
+static void _append_section_header(const char *title, bool first) {
+    lv_obj_t *hdr = lv_obj_create(s_channels_list_box);
+    lv_obj_remove_style_all(hdr);
+    lv_obj_set_size(hdr, CH_ROW_W, first ? 22 : 34);
+    lv_obj_set_style_bg_opa(hdr, LV_OPA_TRANSP, 0);
+    lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *htxt = lv_label_create(hdr);
+    lv_label_set_text(htxt, title);
+    lv_obj_align(htxt, LV_ALIGN_BOTTOM_LEFT, 4, -2);
+    lv_obj_set_style_text_font(htxt, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(htxt, THEME_COLOR_TEXT_PRIMARY, 0);
+}
+
+/* Build the full channel list: the channels this car has (by group, custom
+ * ones in their own group), "+ Add custom channel", then the catalogue's
+ * channels that are not set up, as ghosts (activate-on-tap).
  *
  * Safe to call repeatedly — clears s_channels_list_box first. The
  * selection (s_selected_ch_id) is preserved so rebuilds keep the
@@ -3354,47 +3376,85 @@ static void _populate_channels_list(void) {
         s_channels_ids[i]        = NULL;
     }
 
-    /* Canonical catalog — grouped by channel_group_t. Stable order
-     * inside each group (catalog order = curated). */
-    bool any_emitted = false;
+    /* Two halves, as on the web page (ADR-0071): the channels this car has,
+     * then the rest of the catalogue.
+     *
+     * This used to be the catalogue in group order with each row either
+     * set up or a ghost, and custom channels in a Custom section after all
+     * of it. Two things went wrong with that, one of them silently:
+     *
+     *  - Applying an ECU makes a custom_ channel for every signal with no
+     *    canonical home (most of a Haltech's 69, most of a MaxxECU's 100).
+     *    The catalogue alone is 135 rows against a 144-row cap, so the
+     *    custom section got about seven rows and every other channel the
+     *    ECU had just created was simply not in the list. The cap's own
+     *    comment still said "~90" canonical channels.
+     *  - The step exists to show what the ECU just set up, and that was
+     *    spread across fourteen group headings between greyed ghosts.
+     *
+     * Putting the car first means a full list truncates the catalogue's
+     * tail — which says so, and which Studio can still add — never a channel
+     * that exists. The cap stays where it was: every row costs an
+     * lv_obj_is_valid() tree walk per refresh in LVGL v8, and a longer list
+     * is not something to take on without a dash to measure it on. */
+    /* No counts in these headings: "Add this channel" updates its row in
+     * place (no list rebuild, so nothing jumps under your finger), which
+     * would leave a count stale. The hero's "N bound of M active" is live. */
+    size_t mgr_count = channel_manager_count();
+    _append_section_header("On this car", true);
+
+    uint16_t n_mine = 0;
     for (channel_group_t g = 0; g < CHGRP__COUNT; g++) {
         bool first_in_group = true;
+        /* Built-in channels in catalogue order (curated: RPM before
+         * Absolute Load), then anything else the car has filed under the
+         * same group — custom channels carry their own group. */
         for (size_t i = 0; i < CANONICAL_CHANNEL_COUNT; i++) {
             const canonical_channel_def_t *def = &CANONICAL_CHANNELS[i];
             if (def->group != g) continue;
-            if (s_channels_count >= WIZ_CH_MAX_ROWS - 4) goto done_canonical;
-            if (first_in_group) {
-                _append_group_header(channel_group_name(g), !any_emitted);
-                first_in_group = false;
-                any_emitted = true;
-            }
-            /* Prefer the live channel's label (user may have renamed)
-             * but fall back to canonical default for ghost rows. */
             const channel_t *c = channel_manager_get(def->id);
-            _append_channel_row(c ? c->id : def->id,
-                                c ? c->label : def->label);
+            if (!c || s_channels_count >= WIZ_CH_MAX_ROWS) continue;
+            if (first_in_group) {
+                _append_group_header(channel_group_name(g), false);
+                first_in_group = false;
+            }
+            _append_channel_row(c->id, c->label);
+            n_mine++;
+        }
+        for (size_t i = 0; i < mgr_count; i++) {
+            const channel_t *c = channel_manager_at(i);
+            if (!c || c->group != g || canonical_channel_exists(c->id)) continue;
+            if (s_channels_count >= WIZ_CH_MAX_ROWS) break;
+            if (first_in_group) {
+                _append_group_header(channel_group_name(g), false);
+                first_in_group = false;
+            }
+            _append_channel_row(c->id, c->label);
+            n_mine++;
         }
     }
-done_canonical: ;
-
-    /* Custom channels — walk channel_manager for any id with the
-     * "custom_" prefix and surface them in a Custom section. */
-    bool custom_header_added = false;
-    size_t mgr_count = channel_manager_count();
+    /* A channel with no group we know. */
+    bool other_header = false;
     for (size_t i = 0; i < mgr_count; i++) {
         const channel_t *c = channel_manager_at(i);
-        if (!c || !channel_id_is_custom(c->id)) continue;
-        if (s_channels_count >= WIZ_CH_MAX_ROWS - 2) break;
-        if (!custom_header_added) {
-            _append_group_header("Custom", !any_emitted);
-            custom_header_added = true;
-        }
+        if (!c || (int)c->group < (int)CHGRP__COUNT || canonical_channel_exists(c->id)) continue;
+        if (s_channels_count >= WIZ_CH_MAX_ROWS) break;
+        if (!other_header) { _append_group_header("Custom", false); other_header = true; }
         _append_channel_row(c->id, c->label);
+        n_mine++;
+    }
+    if (n_mine == 0) {
+        lv_obj_t *none = lv_label_create(s_channels_list_box);
+        lv_label_set_text(none,
+            "Nothing set up yet. Tap a channel below to\nadd it, or go back and pick your ECU.");
+        lv_obj_set_width(none, CH_ROW_W);
+        lv_obj_set_style_pad_left(none, 4, 0);
+        lv_obj_set_style_text_font(none, THEME_FONT_TINY, 0);
+        lv_obj_set_style_text_color(none, THEME_COLOR_TEXT_MUTED, 0);
     }
 
-    /* Bottom sticky-ish "+ Add custom channel" button row. Lives in
-     * the scroll list so it scrolls with content — the user finds it
-     * by scrolling to the bottom, same as the web modal's footer. */
+    /* "+ Add custom channel" belongs with the car it adds to — at the
+     * bottom it sat under 135 catalogue rows. */
     lv_obj_t *add_btn = lv_btn_create(s_channels_list_box);
     lv_obj_set_size(add_btn, CH_ROW_W, 36);
     lv_obj_set_style_bg_color(add_btn, THEME_COLOR_SECTION_BG, 0);
@@ -3410,6 +3470,39 @@ done_canonical: ;
     lv_obj_center(al);
     lv_obj_set_style_text_font(al, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(al, THEME_COLOR_ACCENT_BLUE, 0);
+
+    /* ── Not set up: the rest of the catalogue, tap a ghost to add it. ── */
+    uint16_t n_ghosts = 0;
+    for (size_t i = 0; i < CANONICAL_CHANNEL_COUNT; i++)
+        if (!channel_manager_get(CANONICAL_CHANNELS[i].id)) n_ghosts++;
+    uint16_t n_dropped = 0;
+    if (n_ghosts) {
+        _append_section_header("Not set up", false);
+        for (channel_group_t g = 0; g < CHGRP__COUNT; g++) {
+            bool first_in_group = true;
+            for (size_t i = 0; i < CANONICAL_CHANNEL_COUNT; i++) {
+                const canonical_channel_def_t *def = &CANONICAL_CHANNELS[i];
+                if (def->group != g || channel_manager_get(def->id)) continue;
+                if (s_channels_count >= WIZ_CH_MAX_ROWS) { n_dropped++; continue; }
+                if (first_in_group) {
+                    _append_group_header(channel_group_name(g), false);
+                    first_in_group = false;
+                }
+                _append_channel_row(def->id, def->label);
+            }
+        }
+    }
+    if (n_dropped) {
+        lv_obj_t *more = lv_label_create(s_channels_list_box);
+        lv_label_set_text_fmt(more,
+            "%u more in the standard list - add them\nfrom Channels in RDM Studio.",
+            (unsigned)n_dropped);
+        lv_obj_set_width(more, CH_ROW_W);
+        lv_obj_set_style_pad_left(more, 4, 0);
+        lv_obj_set_style_pad_top(more, 6, 0);
+        lv_obj_set_style_text_font(more, THEME_FONT_TINY, 0);
+        lv_obj_set_style_text_color(more, THEME_COLOR_TEXT_MUTED, 0);
+    }
 
     /* On an apply-to-widget open, jump the list to the bound channel. */
     if (s_apply_to_widget_mode) _scroll_to_selected();
