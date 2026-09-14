@@ -23762,6 +23762,8 @@
                 ts: Date.now(),
                 serial: window._deviceSerial || '',
                 capacity: _chCapacity,
+                stoich: _chStoich,
+                fuel: _chFuel,
                 channels: _chCache,
                 canonical: _chCanonical,
             });
@@ -23823,6 +23825,7 @@
             if (m) {
                 if (!_chCanonical.length && Array.isArray(m.canonical)) _chCanonical = m.canonical;
                 if (typeof m.capacity === 'number' && m.capacity > 0) _chCapacity = m.capacity;
+                _chAdoptFuel(m);
             }
             _chCache = _chApplyQueue(m && Array.isArray(m.channels) ? m.channels : []);
             /* Nothing offline is live — a stale reading shown as current is
@@ -23944,6 +23947,7 @@
                 _chCache = Array.isArray(data.channels) ? data.channels : [];
                 if (typeof data.capacity === 'number' && data.capacity > 0)
                     _chCapacity = data.capacity;
+                _chAdoptFuel(data);
                 _chStoreOfflineSnapshot();
                 _chUpdateCountLabel();
                 /* A dash is answering and there is work waiting — this is the
@@ -24139,11 +24143,19 @@
             ['km/h', 'mph',  0.62137119,  0],
             ['m/s',  'km/h', 3.6,         0],
             ['m/s',  'mph',  2.23693629,  0],
-            ['λ',    'AFR',  14.7,        0],
+            ['λ',    'AFR',  14.7,        0],   /* scale replaced by _chStoich */
         ];
+        /* The λ <-> AFR ratio is not a constant: it is the stoich of the fuel
+         * in the tank (14.7 petrol, ~9.8 E85), set per dash under "Fuel" and,
+         * in Flex mode, tracked from the ethanol sensor. The dash reports the
+         * ratio it is using on every /api/channels reply, so the editor
+         * converts with the same number the screen does. 14.7 until told. */
+        let _chStoich = 14.7;
+        let _chFuel = 'petrol';
         function _unitConvert(v, from, to) {
             if (v == null || isNaN(v) || !from || !to || from === to) return v;
-            for (const [f, t, s, o] of _UNIT_CONVS) {
+            for (const [f, t, s0, o] of _UNIT_CONVS) {
+                const s = (f === 'λ' && t === 'AFR') ? _chStoich : s0;
                 if (f === from && t === to) return v * s + o;
                 if (t === from && f === to) return (v - o) / s;
             }
@@ -24165,6 +24177,67 @@
         function _chDispRound(v) {
             return (v == null || v === '' || isNaN(v)) ? v : Number(Number(v).toPrecision(6));
         }
+        /* ── Fuel: the stoich behind λ <-> AFR ── */
+        const _CH_FUELS = [
+            ['petrol',   'Petrol'],
+            ['e10',      'E10'],
+            ['e85',      'E85'],
+            ['e100',     'E100 (ethanol)'],
+            ['methanol', 'Methanol'],
+            ['flex',     'Flex (Ethanol % channel)'],
+        ];
+        function _chAdoptFuel(src) {
+            if (!src) return;
+            const st = Number(src.stoich);
+            if (isFinite(st) && st >= 5 && st <= 20) _chStoich = st;
+            if (typeof src.fuel === 'string' && _CH_FUELS.some(f => f[0] === src.fuel)) _chFuel = src.fuel;
+        }
+        /* Shown only where it matters: a channel read or shown in λ or AFR.
+         * The setting belongs to the dash, not the channel, so it applies the
+         * moment it is picked rather than waiting for Save, and it changes
+         * every AFR readout at once, which the help says. */
+        function _chFuelRowHTML(c) {
+            const u = [c.units_native, c.units_display];
+            if (!u.includes('λ') && !u.includes('AFR')) return '';
+            const opts = _CH_FUELS.map(([k, l]) =>
+                `<option value="${k}" ${_chFuel === k ? 'selected' : ''}>${l}</option>`).join('');
+            const help = 'The fuel sets what λ 1.00 is in AFR, for every AFR readout on this dash. '
+                + 'Flex follows the Ethanol % channel and uses petrol until it has a reading. '
+                + 'If your wideband sends AFR and you display λ, this sets that conversion too.';
+            return `<div class="ch2-num-row">
+                        <div class="ch2-num"><span class="ch2-num-label" title="${help}">Fuel</span>
+                            <select onchange="_chSetFuel(this.value)" ${_chOnline ? '' : 'disabled title="Connect to the dash to change the fuel."'}>${opts}</select></div>
+                        <div class="ch2-num"><span class="ch2-num-label">Stoich</span>
+                            <span style="line-height:28px;">λ 1.00 = ${_chStoich.toFixed(2)} AFR</span></div>
+                    </div>`;
+        }
+        async function _chSetFuel(key) {
+            const prev = _chFuel;
+            try {
+                const r = await fetch('/api/fuel/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ fuel: key }),
+                });
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                _chAdoptFuel(await r.json());
+                _chFuel = key;
+                /* The dash applies the new ratio on its next LVGL frame, so the
+                 * reply can still carry the old one. Ask again shortly so the
+                 * readouts here agree with the screen. */
+                setTimeout(async () => {
+                    try {
+                        const g = await fetch('/api/fuel/config');
+                        if (g.ok) { _chAdoptFuel(await g.json()); _chStoreOfflineSnapshot(); _renderChannelDetail(); }
+                    } catch (_) {}
+                }, 400);
+            } catch (e) {
+                _chFuel = prev;
+                showToast('Could not change the fuel: ' + e.message, 'error');
+            }
+            _renderChannelDetail();
+        }
+
         /* Units offered in the display-unit dropdown for a native unit. */
         function _chUnitOptions(native) {
             if (!native) return [];
@@ -26664,6 +26737,7 @@
                         <div class="ch2-num"><span class="ch2-num-label">Decimals</span>
                             <input type="number" min="0" max="3" value="${c.decimals||0}" onchange="_chEdit('${c.id}','decimals', Number(this.value)); _renderChannelDetail();"></div>
                     </div>
+                    ${_chFuelRowHTML(c)}
                 </div>`;
         }
 

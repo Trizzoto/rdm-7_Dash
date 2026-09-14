@@ -1021,6 +1021,31 @@ esp_err_t config_store_load_odometer_km(float *out)
     return err;
 }
 
+/* ── Fuel in the tank ────────────────────────────────────────────────────── */
+
+/* Mirrors FUEL__COUNT in main/data/fuel_stoich_calc.h — kept as a literal so
+ * the storage layer does not depend on the data layer. A mismatch only means
+ * a newer fuel loads as petrol on an older build, which is the safe way to
+ * fail. */
+#define FUEL_MODE_COUNT 6
+
+esp_err_t config_store_save_fuel_mode(uint8_t mode)
+{
+    if (mode >= FUEL_MODE_COUNT) return ESP_ERR_INVALID_ARG;
+    esp_err_t err = chs_save_u8(NS_VEHICLE, "fuel", mode);
+    if (err == ESP_OK) ESP_LOGI(TAG, "Fuel mode saved: %u", (unsigned)mode);
+    return err;
+}
+
+esp_err_t config_store_load_fuel_mode(uint8_t *mode)
+{
+    if (!mode) return ESP_ERR_INVALID_ARG;
+    *mode = 0;
+    uint8_t u8 = 0;
+    if (chs_load_u8(NS_VEHICLE, "fuel", &u8) == ESP_OK && u8 < FUEL_MODE_COUNT) *mode = u8;
+    return ESP_OK;
+}
+
 /* ── Fuel-over-CAN forward ─────────────────────────────────────────────── */
 
 #define NS_FUELFWD "fuelfwd"

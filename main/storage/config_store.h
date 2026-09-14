@@ -235,6 +235,14 @@ esp_err_t config_store_save_fuel_forward(const fuel_forward_config_t *cfg);
  * id 0x6F0, LE, 16 bit, 10 Hz, scale 1) when nothing is stored. */
 esp_err_t config_store_load_fuel_forward(fuel_forward_config_t *out);
 
+/* ── Fuel in the tank ────────────────────────────────────────────────────
+ * Which fuel the car runs, as a fuel_mode_t (main/data/fuel_stoich_calc.h),
+ * used for the stoichiometric ratio behind every λ <-> AFR conversion. One
+ * byte in NVS namespace "vehicle" key "fuel". Absent or out of range loads as
+ * 0 (petrol), which is what the dash always used before this existed. */
+esp_err_t config_store_save_fuel_mode(uint8_t mode);
+esp_err_t config_store_load_fuel_mode(uint8_t *mode);
+
 /* ── Vehicle odometer (kilometres) ───────────────────────────────────────
  * The odometer is maintained by signal_internal.c — it integrates the
  * configured vehicle-speed signal each tick and accumulates kilometres.

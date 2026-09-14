@@ -213,10 +213,15 @@ static bool _operand_resolve(const char *channel_id, bool is_const,
  * named" (a bare constant, which may still adopt one) vs "a dimension we
  * have deliberately dropped" (which must never adopt one again).
  *
+ * @p const_scaled records that a number multiplied or divided a value that
+ * HAS a unit — `λ × 14.7`, `14.7 × λ`, `MAP ÷ 6.895`. The caller uses it to
+ * decide whether to convert the result into the channel's own unit; see the
+ * output-conversion note in _math_timer_cb for why that has to be skipped.
+ *
  * Returns false when the operand makes the result meaningless (divide by
  * ~zero): the caller skips this tick and the output goes stale on its own.
  */
-static bool _fold(float *v, const char **unit, bool *derived,
+static bool _fold(float *v, const char **unit, bool *derived, bool *const_scaled,
                   uint8_t op, float ov, const char *ounit) {
 	switch (op) {
 	case CH_MATH_ADD:
@@ -229,8 +234,12 @@ static bool _fold(float *v, const char **unit, bool *derived,
 	case CH_MATH_MUL:
 		*v *= ov;
 		if (ounit) {
-			if (!*unit && !*derived) *unit = ounit;   /* number × channel */
-			else { *unit = NULL; *derived = true; }
+			if (!*unit && !*derived) {             /* number × channel */
+				*unit = ounit;
+				*const_scaled = true;
+			} else { *unit = NULL; *derived = true; }
+		} else if (*unit) {
+			*const_scaled = true;                  /* channel × number */
 		}
 		return true;
 	case CH_MATH_DIV:
@@ -239,6 +248,7 @@ static bool _fold(float *v, const char **unit, bool *derived,
 		/* Even number ÷ channel inverts the dimension (1/unit), which no
 		 * unit string here names — unlike ×, there is nothing to adopt. */
 		if (ounit) { *unit = NULL; *derived = true; }
+		else if (*unit) *const_scaled = true;      /* channel ÷ number */
 		return true;
 	default:
 		return false;
@@ -262,21 +272,40 @@ static void _math_timer_cb(lv_timer_t *t) {
 		float v = a;
 		const char *res_unit = a_unit;
 		bool derived = false;
-		if (!_fold(&v, &res_unit, &derived, c->math_op, b, b_unit)) continue;
+		bool const_scaled = false;
+		if (!_fold(&v, &res_unit, &derived, &const_scaled, c->math_op, b, b_unit)) continue;
 
 		if (c->math_c_enabled) {
 			float cv; const char *c_unit;
 			if (!_operand_resolve(c->math_c, c->math_c_is_const,
 			                      c->math_c_const, &cv, &c_unit)) continue;
-			if (!_fold(&v, &res_unit, &derived, c->math_op2, cv, c_unit)) continue;
+			if (!_fold(&v, &res_unit, &derived, &const_scaled, c->math_op2, cv, c_unit)) continue;
 		}
 		if (!isfinite(v)) continue;
 
 		/* Output-unit conversion: honour this channel's units_native only
 		 * while the running dimension is still one a unit names. Once it
 		 * has been dropped (channel × / ÷ channel) the output unit is the
-		 * user's to label — an L/100km channel is exactly that case. */
-		if (res_unit && c->units_native[0] &&
+		 * user's to label — an L/100km channel is exactly that case.
+		 *
+		 * And NOT when a number scaled a unit-bearing value on the way here.
+		 * A constant multiply is how people convert units by hand, so it is
+		 * already the conversion: "AFR Bank 1 = Lambda × 14.7" means λ in,
+		 * AFR out. The fold keeps the running unit through × a constant (it
+		 * has to — `bar × 1.6` is still bar), so without this the result was
+		 * still tagged λ and got converted λ -> AFR a SECOND time: 14.7
+		 * became 216, and the E85 version "× 9.8" read 144. Both silent, on a
+		 * form with no preview. The same trap caught `MAP × 0.145` onto a psi
+		 * channel.
+		 *
+		 * What this gives up: `MAP × 0.5` onto a psi channel now reads half
+		 * the kPa figure labelled psi, where it used to be converted. That
+		 * trade is deliberate — a hand conversion is the common reason to
+		 * multiply into a differently-united channel, and a scale-then-convert
+		 * expression is rare enough to write the other way round (convert on
+		 * a same-unit channel, then Display as). Same-unit cases like
+		 * `bar × 1.6` onto a bar channel are untouched: nothing to convert. */
+		if (res_unit && c->units_native[0] && !const_scaled &&
 		    strcmp(res_unit, c->units_native) != 0)
 			v = unit_convert(v, res_unit, c->units_native);
 

@@ -365,6 +365,18 @@ void channel_manager_end_bulk(void);
 void channel_manager_subscribe(channel_t *c, channel_changed_cb cb, void *user);
 void channel_manager_unsubscribe(channel_t *c, channel_changed_cb cb, void *user);
 
+/* Fire the changed-listeners of every channel converting between @unit_a and
+ * @unit_b (native one, display the other, either way round), because the
+ * FACTOR of that conversion just changed — today only λ <-> AFR, when the fuel
+ * stoich moves.
+ *
+ * Widgets that bake a converted scale at sync time (meter, arc) re-derive it
+ * from their native bases on this notify; without it their tick labels would
+ * keep the old ratio while the needle moved with the new one. Readout widgets
+ * convert every value and need nothing. Channels not converting between the
+ * two units are left alone. LVGL task. */
+void channel_manager_notify_conversion_changed(const char *unit_a, const char *unit_b);
+
 /* ── Signal pipeline ──────────────────────────────────────────────── */
 
 /**

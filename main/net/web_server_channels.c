@@ -22,12 +22,14 @@
  */
 
 #include "web_server_internal.h"
+#include <math.h>
 #include "system/safe_restart.h"
 #include "data/channel_manager.h"
 #include "data/channel_math.h"
 #include "data/channel_source_apply.h"  /* shared bind-preconfig path */
 #include "data/canonical_channels.h"
 #include "data/unit_convert.h"
+#include "data/fuel_stoich.h"
 #include "layout/ecu_presets.h"
 #include "layout/layout_manager.h"
 #include "can/obd2.h"
@@ -303,6 +305,12 @@ static esp_err_t channels_list_handler(httpd_req_t *req) {
 		if (rdm_lvgl_lock(500)) {
 			cJSON_AddNumberToObject(root, "count", channel_manager_count());
 			cJSON_AddNumberToObject(root, "capacity", channel_manager_capacity());
+			/* The ratio every λ <-> AFR conversion on the dash is using right
+			 * now. The editor mirrors unit_convert() in JS; without this it
+			 * would convert with its own 14.7 and disagree with the dash the
+			 * moment a fuel other than petrol is chosen. */
+			cJSON_AddNumberToObject(root, "stoich", fuel_stoich_current());
+			cJSON_AddStringToObject(root, "fuel", fuel_mode_key(fuel_stoich_get_mode()));
 			cJSON *arr = cJSON_AddArrayToObject(root, "channels");
 			for (size_t i = 0; i < channel_manager_count(); ++i) {
 				channel_t *c = channel_manager_at(i);
@@ -1830,6 +1838,91 @@ static const httpd_uri_t channels_activate_uri = {
 	.user_ctx = NULL
 };
 
+/* ── Fuel in the tank ─────────────────────────────────────────────────────
+ *
+ * GET  /api/fuel/config  -> { fuel, stoich, flex: { has_reading, ethanol_pct } }
+ * POST /api/fuel/config  <- { "fuel": "petrol|e10|e85|e100|methanol|flex" }
+ *
+ * The fuel sets the stoichiometric ratio behind every λ <-> AFR conversion
+ * (see main/data/fuel_stoich.h). The API speaks in keys, not enum numbers, so
+ * reordering the enum can never reinterpret a request.
+ */
+static void _fuel_config_json(cJSON *root) {
+	fuel_mode_t m = fuel_stoich_get_mode();
+	cJSON_AddStringToObject(root, "fuel", fuel_mode_key(m));
+	cJSON_AddNumberToObject(root, "stoich", fuel_stoich_current());
+	if (m == FUEL_FLEX) {
+		/* Say whether the ratio is a measurement or the petrol fallback, so the
+		 * editor can show "waiting for the ethanol sensor" rather than implying
+		 * 14.7 was read off the car. */
+		cJSON *flex = cJSON_AddObjectToObject(root, "flex");
+		bool have = fuel_stoich_flex_has_reading();
+		cJSON_AddBoolToObject(flex, "has_reading", have);
+		float pct = fuel_stoich_flex_ethanol_pct();
+		if (have && isfinite(pct)) cJSON_AddNumberToObject(flex, "ethanol_pct", pct);
+		else                       cJSON_AddNullToObject(flex, "ethanol_pct");
+	}
+}
+
+static esp_err_t fuel_config_get_handler(httpd_req_t *req) {
+	cJSON *root = cJSON_CreateObject();
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+		return ESP_FAIL;
+	}
+	_fuel_config_json(root);
+	return web_server_send_json(req, root);
+}
+
+static esp_err_t fuel_config_post_handler(httpd_req_t *req) {
+	char buf[96];
+	if (recv_json_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
+	cJSON *body = cJSON_Parse(buf);
+	if (!body) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+		return ESP_FAIL;
+	}
+	cJSON *jf = cJSON_GetObjectItemCaseSensitive(body, "fuel");
+	fuel_mode_t m;
+	bool ok = cJSON_IsString(jf) && fuel_mode_from_key(jf->valuestring, &m);
+	cJSON_Delete(body);
+	if (!ok) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+		                    "fuel must be petrol, e10, e85, e100, methanol or flex");
+		return ESP_FAIL;
+	}
+	/* set_mode persists and defers the apply (which notifies widgets) to the
+	 * LVGL task, so the ratio in this reply may still be the previous one for
+	 * a frame. The fuel key is authoritative; the editor re-reads stoich from
+	 * the next /api/channels poll. */
+	if (fuel_stoich_set_mode(m) != ESP_OK) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Could not save fuel");
+		return ESP_FAIL;
+	}
+	cJSON *root = cJSON_CreateObject();
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+		return ESP_FAIL;
+	}
+	cJSON_AddBoolToObject(root, "ok", true);
+	_fuel_config_json(root);
+	return web_server_send_json(req, root);
+}
+
+static const httpd_uri_t fuel_config_get_uri = {
+	.uri = "/api/fuel/config",
+	.method = HTTP_GET,
+	.handler = fuel_config_get_handler,
+	.user_ctx = NULL,
+};
+
+static const httpd_uri_t fuel_config_post_uri = {
+	.uri = "/api/fuel/config",
+	.method = HTTP_POST,
+	.handler = fuel_config_post_handler,
+	.user_ctx = NULL,
+};
+
 static const httpd_uri_t channels_update_uri = {
 	.uri = "/api/channels/update",
 	.method = HTTP_POST,
@@ -1847,6 +1940,8 @@ static const httpd_uri_t channels_delete_uri = {
 void web_server_channels_register(httpd_handle_t server) {
 	if (!s_channels_list_mux) s_channels_list_mux = xSemaphoreCreateMutex();
 	REGISTER_URI(server, &channels_list_uri);
+	REGISTER_URI(server, &fuel_config_get_uri);
+	REGISTER_URI(server, &fuel_config_post_uri);
 	REGISTER_URI(server, &channels_canonical_uri);
 	REGISTER_URI(server, &channels_create_uri);
 	REGISTER_URI(server, &channels_activate_uri);

@@ -60,6 +60,19 @@ Changes that have landed on `master` since the last tagged version.
     binary by under 2 KB despite gaining a whole new surface.
 
 ### Fixed
+- **AFR on E85 read petrol numbers, and Calculate could read 216.** (ADR-0072)
+  λ → AFR always used 14.7, so an E85 car at stoich showed 14.7 where the tune
+  says 9.8. Each dash now has a **Fuel** setting — Petrol (the default, so
+  nothing changes on update), E10, E85, E100, Methanol, or **Flex**, which
+  follows the Ethanol % channel. It appears in the channel drawer next to
+  "Display as" on any λ or AFR channel and applies to every AFR readout at once.
+  Blends mix by mass (E85 = 9.81, E10 = 14.10).
+  - Calculate… `Lambda × 14.7` onto an AFR channel read 216 (and `× 9.8` read
+    144): the result was converted λ → AFR a second time. Scaling a channel by
+    a constant is now treated as a hand conversion and left alone. Trade:
+    `MAP × 0.5` onto a psi channel reads the raw half, not a converted one.
+  - API: `GET/POST /api/fuel/config` (`{"fuel":"e85"}`); `/api/channels` now
+    carries `stoich` and `fuel`.
 - **The setup wizard hid most of the channels applying an ECU created.** The
   dash's channel step listed the 135-row catalogue against a 144-row cap and
   put custom channels last, but applying an ECU makes a custom channel for

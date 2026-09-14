@@ -52,6 +52,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/* "λ" as explicit UTF-8, so it cannot be mangled by an editor or a shell on
+ * its way into this file — it must be byte-identical to the literal in
+ * unit_convert.c's table, or every λ conversion silently passes through. */
+#define LAMBDA "\xce\xbb"
+
 /* ── Mirror of channel_math.c ─────────────────────────────────────────── */
 
 typedef enum {
@@ -61,7 +66,7 @@ typedef enum {
 	CH_MATH_DIV = 3,
 } channel_math_op_t;
 
-static bool _fold(float *v, const char **unit, bool *derived,
+static bool _fold(float *v, const char **unit, bool *derived, bool *const_scaled,
                   uint8_t op, float ov, const char *ounit) {
 	switch (op) {
 	case CH_MATH_ADD:
@@ -74,14 +79,19 @@ static bool _fold(float *v, const char **unit, bool *derived,
 	case CH_MATH_MUL:
 		*v *= ov;
 		if (ounit) {
-			if (!*unit && !*derived) *unit = ounit;   /* number x channel */
-			else { *unit = NULL; *derived = true; }
+			if (!*unit && !*derived) {             /* number x channel */
+				*unit = ounit;
+				*const_scaled = true;
+			} else { *unit = NULL; *derived = true; }
+		} else if (*unit) {
+			*const_scaled = true;                  /* channel x number */
 		}
 		return true;
 	case CH_MATH_DIV:
 		if (fabsf(ov) < 1e-9f) return false;
 		*v /= ov;
 		if (ounit) { *unit = NULL; *derived = true; }
+		else if (*unit) *const_scaled = true;      /* channel / number */
 		return true;
 	default:
 		return false;
@@ -113,15 +123,17 @@ static result_t _eval(operand_t a, uint8_t op, operand_t b,
 	float v = a.v;
 	const char *unit = a.unit;
 	bool derived = false;
+	bool const_scaled = false;
 
-	if (!_fold(&v, &unit, &derived, op, b.v, b.unit)) return r;
+	if (!_fold(&v, &unit, &derived, &const_scaled, op, b.v, b.unit)) return r;
 
 	/* The "" unit marks the absent third term — a real operand is either a
 	 * channel with a unit or a constant with NULL. */
 	bool has_c = !(c.unit && c.unit[0] == '\0');
-	if (has_c && !_fold(&v, &unit, &derived, op2, c.v, c.unit)) return r;
+	if (has_c && !_fold(&v, &unit, &derived, &const_scaled, op2, c.v, c.unit)) return r;
 
-	if (unit && out_native && out_native[0] && strcmp(unit, out_native) != 0)
+	if (unit && out_native && out_native[0] && !const_scaled &&
+	    strcmp(unit, out_native) != 0)
 		v = unit_convert(v, unit, out_native);
 
 	r.ok = true; r.value = v; r.unit = unit;
@@ -249,6 +261,89 @@ static void test_unknown_unit_pairs_pass_through_unchanged(void) {
 	TEST_ASSERT_FLOAT_WITHIN(0.001f, 15.0f, r.value);
 }
 
+/* ── A number that scales a unit IS the conversion ────────────────────
+ *
+ * The bug these pin: the fold keeps the running unit through "x a constant"
+ * (it has to — bar x 1.6 is still bar), so "lambda x 14.7" stayed tagged λ and
+ * the output step then converted it λ -> AFR a second time. A customer asking
+ * how to see AFR off a Link would have been told the obvious formula, and it
+ * reads 216. None of the tests above combined a constant scale with an output
+ * unit that differs from the running one, which is exactly why it shipped. */
+
+static void test_lambda_times_stoich_onto_an_afr_channel_is_afr(void) {
+	/* Guard first. These hand-conversion cases assert that conversion is
+	 * SKIPPED — so a mangled λ string, which also makes unit_convert skip,
+	 * would let them pass for the wrong reason. It happened once while writing
+	 * this file (a shell double-encoded the escape). Prove the pair is real. */
+	TEST_ASSERT_TRUE(unit_convert_supported(LAMBDA, "AFR"));
+	unit_convert_set_stoich(UNIT_STOICH_PETROL);
+	result_t r = _eval(CHAN(1.0f, LAMBDA), CH_MATH_MUL, CONST(14.7f),
+	                   0, NO_THIRD_TERM, "AFR");
+	TEST_ASSERT_TRUE(r.ok);
+	TEST_ASSERT_FLOAT_WITHIN(0.001f, 14.7f, r.value);   /* was 216.09 */
+}
+
+static void test_the_e85_formula_reads_e85_afr(void) {
+	unit_convert_set_stoich(UNIT_STOICH_PETROL);
+	result_t r = _eval(CHAN(1.0f, LAMBDA), CH_MATH_MUL, CONST(9.8f),
+	                   0, NO_THIRD_TERM, "AFR");
+	TEST_ASSERT_TRUE(r.ok);
+	TEST_ASSERT_FLOAT_WITHIN(0.001f, 9.8f, r.value);    /* was 144.06 */
+}
+
+static void test_constant_first_is_the_same_hand_conversion(void) {
+	/* "14.7 x lambda": the running value starts as a bare constant and
+	 * ADOPTS λ from the channel, so it is tagged λ at the end just the same.
+	 * Missing this order would have left half the bug in place. */
+	unit_convert_set_stoich(UNIT_STOICH_PETROL);
+	result_t r = _eval(CONST(14.7f), CH_MATH_MUL, CHAN(0.85f, LAMBDA),
+	                   0, NO_THIRD_TERM, "AFR");
+	TEST_ASSERT_TRUE(r.ok);
+	TEST_ASSERT_FLOAT_WITHIN(0.01f, 12.495f, r.value);
+}
+
+static void test_dividing_by_a_factor_is_a_hand_conversion_too(void) {
+	/* 180 kPa / 6.894757 = 26.1 psi, typed by hand onto a psi channel. */
+	result_t r = _eval(CHAN(180.0f, "kPa"), CH_MATH_DIV, CONST(6.894757f),
+	                   0, NO_THIRD_TERM, "psi");
+	TEST_ASSERT_TRUE(r.ok);
+	TEST_ASSERT_FLOAT_WITHIN(0.02f, 26.107f, r.value);  /* was 3.79 */
+}
+
+static void test_an_offset_after_a_hand_conversion_stays_converted(void) {
+	/* lambda x 14.7 + 0.2: the + does not undo the fact that the user
+	 * already converted, so the result must not be re-converted either. */
+	unit_convert_set_stoich(UNIT_STOICH_PETROL);
+	result_t r = _eval(CHAN(1.0f, LAMBDA), CH_MATH_MUL, CONST(14.7f),
+	                   CH_MATH_ADD, CONST(0.2f), "AFR");
+	TEST_ASSERT_TRUE(r.ok);
+	TEST_ASSERT_FLOAT_WITHIN(0.001f, 14.9f, r.value);
+}
+
+static void test_adding_zero_still_converts_with_the_live_stoich(void) {
+	/* No constant SCALE here, so the channel's own unit is honoured — and the
+	 * λ -> AFR step uses whatever fuel is set, not a hardcoded 14.7. */
+	unit_convert_set_stoich(9.814f);                     /* E85 */
+	result_t r = _eval(CHAN(1.0f, LAMBDA), CH_MATH_ADD, CONST(0.0f),
+	                   0, NO_THIRD_TERM, "AFR");
+	TEST_ASSERT_TRUE(r.ok);
+	TEST_ASSERT_FLOAT_WITHIN(0.001f, 9.814f, r.value);
+	unit_convert_set_stoich(UNIT_STOICH_PETROL);
+}
+
+static void test_scale_then_convert_is_the_trade_we_accepted(void) {
+	/* Pinned on purpose, so a future change to it is a decision rather than
+	 * an accident. "MAP x 0.5" onto a psi channel used to be converted; now
+	 * the constant is taken as the user's own conversion, so it reads half the
+	 * kPa number. A hand conversion is the common reason to multiply into a
+	 * differently-united channel; this case can be written as a same-unit
+	 * channel with Display as psi instead. See channel_math.c. */
+	result_t r = _eval(CHAN(180.0f, "kPa"), CH_MATH_MUL, CONST(0.5f),
+	                   0, NO_THIRD_TERM, "psi");
+	TEST_ASSERT_TRUE(r.ok);
+	TEST_ASSERT_FLOAT_WITHIN(0.001f, 90.0f, r.value);
+}
+
 int main(void) {
 	UNITY_BEGIN();
 	RUN_TEST(test_litres_per_100km_is_flow_over_speed_times_100);
@@ -263,5 +358,12 @@ int main(void) {
 	RUN_TEST(test_channel_times_constant_keeps_its_unit);
 	RUN_TEST(test_channel_times_channel_drops_the_unit);
 	RUN_TEST(test_unknown_unit_pairs_pass_through_unchanged);
+	RUN_TEST(test_lambda_times_stoich_onto_an_afr_channel_is_afr);
+	RUN_TEST(test_the_e85_formula_reads_e85_afr);
+	RUN_TEST(test_constant_first_is_the_same_hand_conversion);
+	RUN_TEST(test_dividing_by_a_factor_is_a_hand_conversion_too);
+	RUN_TEST(test_an_offset_after_a_hand_conversion_stays_converted);
+	RUN_TEST(test_adding_zero_still_converts_with_the_live_stoich);
+	RUN_TEST(test_scale_then_convert_is_the_trade_we_accepted);
 	return UNITY_END();
 }

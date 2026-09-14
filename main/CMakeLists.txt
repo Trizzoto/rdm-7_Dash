@@ -15,6 +15,7 @@ idf_component_register(
         "data/canonical_channels.c"
         "data/channel_manager.c"
         "data/channel_math.c"
+        "data/fuel_stoich.c"
         "data/channel_source_apply.c"
         "data/unit_convert.c"
         "lap/lap_engine.c"

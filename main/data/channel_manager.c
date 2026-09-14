@@ -196,6 +196,21 @@ static void chm_notify_listeners(channel_t *c) {
 	}
 }
 
+void channel_manager_notify_conversion_changed(const char *unit_a, const char *unit_b) {
+	if (!unit_a || !unit_b || !unit_a[0] || !unit_b[0]) return;
+	size_t n = channel_manager_count();
+	for (size_t i = 0; i < n; ++i) {
+		channel_t *c = channel_manager_at(i);
+		if (!c) continue;
+		/* An empty display unit means "show native", so it converts nothing. */
+		const char *nat = c->units_native, *dis = c->units_display;
+		if (!nat[0] || !dis[0]) continue;
+		bool converting = (strcmp(nat, unit_a) == 0 && strcmp(dis, unit_b) == 0) ||
+		                  (strcmp(nat, unit_b) == 0 && strcmp(dis, unit_a) == 0);
+		if (converting) chm_notify_listeners(c);
+	}
+}
+
 /* Shared tail for the simple field mutators below: notify listeners, mark
  * the debounced-write dirty flag, and report success. Mutators with a
  * different persistence need (channel_manager_set_signal's synchronous

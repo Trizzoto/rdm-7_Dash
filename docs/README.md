@@ -14,6 +14,7 @@ Reading the codebase cold? Open the docs by the **question you have**, not by wh
 |---|---|
 | How does a CAN frame become a widget update? | [`docs/handover/04-signal-and-can.md`](handover/04-signal-and-can.md) |
 | How do I decode an ID that carries several payloads (Link Generic Dash, a muxed DBC)? | [`docs/MULTIPLEXED_CAN.md`](MULTIPLEXED_CAN.md) |
+| Why does AFR depend on a Fuel setting (E85, flex), and how does Calculate treat `Lambda × 14.7`? | [`docs/adr/0072-afr-follows-the-fuel-in-the-tank.md`](adr/0072-afr-follows-the-fuel-in-the-tank.md) |
 | How do I add a new widget type? | [`docs/handover/03-widget-system.md`](handover/03-widget-system.md) + the existing widget files in `main/widgets/` |
 | What's the LVGL mutex / threading rule? | [`CLAUDE.md`](../CLAUDE.md) § "Threading" |
 | What does the JSON layout look like? | [`docs/handover/03-widget-system.md`](handover/03-widget-system.md) + a saved `.json` in `data/layouts/` |

@@ -400,6 +400,8 @@ function loadChannelStore() {
   } catch (e) { console.log('[channels] failed to load dev_channels.json:', e.message); }
   return DEFAULT_CHANNELS;
 }
+const FUEL_STOICH = { petrol: 14.7, e10: 14.1, e85: 9.81, e100: 9.0, methanol: 6.4, flex: 14.7 };
+const fuelStub = { fuel: 'petrol', stoich: 14.7 };
 let channelStore = loadChannelStore();
 function persistChannelStore() {
   try {
@@ -562,7 +564,25 @@ const server = http.createServer((req, res) => {
          dash" branch be exercised in the browser. */
       if (/[?&]stub=1/.test(req.url))
         return sendJson(res, { channels: [], capacity: 128, offline: true });
-      return sendJson(res, { count: channelStore.length, capacity: 128, channels: channelStore });
+      return sendJson(res, { count: channelStore.length, capacity: 128, stoich: fuelStub.stoich, fuel: fuelStub.fuel, channels: channelStore });
+    }
+    /* Fuel -> stoich behind lambda <-> AFR (main/data/fuel_stoich_calc.h). */
+    if (url === '/api/fuel/config' && req.method === 'GET') {
+      return sendJson(res, fuelStub);
+    }
+    if (url === '/api/fuel/config' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', () => {
+        try {
+          const k = JSON.parse(body || '{}').fuel;
+          if (!(k in FUEL_STOICH)) return sendJson(res, { ok: false, error: 'bad fuel' }, 400);
+          fuelStub.fuel = k;
+          fuelStub.stoich = FUEL_STOICH[k];
+          sendJson(res, Object.assign({ ok: true }, fuelStub));
+        } catch (e) { sendJson(res, { ok: false, error: e.message }, 400); }
+      });
+      return;
     }
     if (url === '/api/channels/canonical' && req.method === 'GET') {
       return sendJson(res, { channels: CANONICAL_DEFS });

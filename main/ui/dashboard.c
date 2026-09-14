@@ -24,6 +24,7 @@
 #include "can/can_manager.h"
 #include "can/dtc_monitor.h"
 #include "data/channel_math.h"
+#include "data/fuel_stoich.h"
 #include "io/can_forward.h"
 #include "lap/lap_engine.h"
 
@@ -361,6 +362,12 @@ loaded:
 	 * tick. Output signals were (re-)registered during the layout load via
 	 * channel_manager_register_decoded_signals. */
 	channel_math_start();
+
+	/* The fuel in the tank sets what λ 1.00 is in AFR. Idempotent: loads its
+	 * NVS choice once and keeps its flex timer across layout reloads. Runs
+	 * after the widgets are built, so a non-petrol fuel re-syncs any meter or
+	 * arc that just scaled itself at 14.7 — before the first frame is drawn. */
+	fuel_stoich_start();
 
 	/* Fuel-over-CAN forwarder (io/can_forward.c). Idempotent — loads its
 	 * NVS config once and keeps its own timer across layout reloads. */
