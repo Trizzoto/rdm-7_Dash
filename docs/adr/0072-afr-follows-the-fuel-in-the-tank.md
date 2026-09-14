@@ -62,6 +62,17 @@ made it wrong elsewhere:
 
 - Nobody who never opens the Fuel setting sees a different number.
 - The Fuel row appears only on a channel read or shown in λ or AFR.
+- **Flex reads exactly one channel, `ethanol_pct`, and the UI owns telling
+  the user that.** Rather than a "which channel" picker (one more setting to
+  get wrong), every preset's ethanol signal maps onto `ethanol_pct` — Link
+  `ETHANOL`, Haltech `FUEL_COMP`, MaxxECU `E85` (added after the fact: it had
+  been falling through to a custom channel, leaving Flex silently on petrol).
+  Under Flex the drawer states the source and live reading, or that
+  Ethanol % isn't set up (button to it), or that it's waiting — and names a
+  custom channel that looks like an ethanol reading Flex isn't using.
+- The dash cannot read a flex sensor wired to it directly: those output a
+  frequency and the dash's inputs don't measure one. The reading has to come
+  over CAN or OBD2 (PID 0x52).
 - Not covered: a car switching fuels without an ethanol sensor has to change
   the setting by hand; the dash's own on-screen settings have no Fuel control
   yet (web/desktop only).

@@ -73,6 +73,16 @@ Changes that have landed on `master` since the last tagged version.
     `MAP × 0.5` onto a psi channel reads the raw half, not a converted one.
   - API: `GET/POST /api/fuel/config` (`{"fuel":"e85"}`); `/api/channels` now
     carries `stoich` and `fuel`.
+  - **Flex says where its number comes from.** Under Fuel = Flex the drawer
+    reads "Reading 72% ethanol from Ethanol % (E85 · 0x531)", or says the
+    channel isn't set up (with a button to it), or that it's waiting for a
+    reading. It also spots an ethanol reading living in a channel of its own
+    ("Your Flex % channel isn't read by Flex"). Before, Flex with nothing
+    feeding it looked exactly like Petrol.
+  - **MaxxECU's `E85 %` now lands on Ethanol %**, like Link's `ETHANOL %` and
+    Haltech's `FUEL COMP`. It used to become a custom channel, which Flex
+    never read. Dashes that already applied the MaxxECU preset keep their
+    custom channel; re-apply, or give Ethanol % the same source.
 - **The setup wizard hid most of the channels applying an ECU created.** The
   dash's channel step listed the 135-row catalogue against a 144-row cap and
   put custom channels last, but applying an ECU makes a custom channel for

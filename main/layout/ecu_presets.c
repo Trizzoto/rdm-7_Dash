@@ -179,6 +179,10 @@ static const ecu_alias_t ECU_SIGNAL_ALIASES[] = {
     { "KM_RANGE",          "fuel_remaining_distance" },  /* Ford BA/BF */
     { "ETHANOL",           "ethanol_pct" },            /* Link "ETHANOL %" */
     { "FUEL_COMP",         "ethanol_pct" },            /* Haltech fuel composition */
+    { "E85",               "ethanol_pct" },            /* MaxxECU "E85 %" — ethanol content, 0.1 %/bit.
+                                                        * Must land on ethanol_pct: that is the one channel
+                                                        * Fuel = Flex reads (main/data/fuel_stoich.c). As a
+                                                        * custom channel it left Flex quietly on petrol. */
     { "INJ_PULSE_WIDTH",   "injector_pulse_width" },   /* Link */
     { "INJECTOR_DC",       "injector_duty" },          /* Link */
     { "FUEL_TRIM_ST_B1",   "short_term_fuel_trim" },   /* Haltech */

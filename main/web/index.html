@@ -24063,6 +24063,8 @@
                     _patchRowLive(c);
                 });
                 if (_chSelectedId && map[_chSelectedId]) _patchHeroLive(map[_chSelectedId]);
+                _chAdoptFuel(data);
+                _chFuelPatchLive();
 
                 if (sigR.ok) {
                     const sdata = await sigR.json();
@@ -24208,8 +24210,43 @@
                         <div class="ch2-num"><span class="ch2-num-label" title="${help}">Fuel</span>
                             <select onchange="_chSetFuel(this.value)" ${_chOnline ? '' : 'disabled title="Connect to the dash to change the fuel."'}>${opts}</select></div>
                         <div class="ch2-num"><span class="ch2-num-label">Stoich</span>
-                            <span style="line-height:28px;">λ 1.00 = ${_chStoich.toFixed(2)} AFR</span></div>
-                    </div>`;
+                            <span id="chFuelStoich" style="line-height:28px;">λ 1.00 = ${_chStoich.toFixed(2)} AFR</span></div>
+                    </div>
+                    <div id="chFuelFlex">${_chFuelFlexHTML()}</div>`;
+        }
+        /* Flex only ever reads the built-in Ethanol % channel. Say where the
+         * number is coming from, or why there isn't one — without this, Flex
+         * with nothing feeding it looked exactly like Petrol. */
+        function _chFuelFlexHTML() {
+            if (_chFuel !== 'flex') return '';
+            const e = (_chCache || []).find(x => x.id === 'ethanol_pct');
+            const bound = !!(e && e.signal);
+            const note = (html) => `<div style="margin:6px 0 2px; font-size:12px; line-height:1.5; color:var(--text-muted);">${html}</div>`;
+            const btn = `<button onclick="_selectChannel('ethanol_pct')" style="margin-left:8px; padding:2px 10px; border:1px solid var(--border-light); border-radius:4px; background:rgba(255,255,255,0.04); color:var(--text); font-size:11px; cursor:pointer;">Set up Ethanol %</button>`;
+            if (!bound) {
+                /* The trap: an ethanol reading already on the car, but as a
+                 * channel of its own, which Flex does not look at. */
+                const look = /ethanol|e85|flex|fuel.?comp|alcohol/i;
+                const own = (_chCache || []).find(x => x.id !== 'ethanol_pct' && x.signal
+                    && (look.test(x.label || '') || look.test(x.signal)));
+                const also = own
+                    ? ` Your <b>${_textEscape(own.label || own.id)}</b> channel isn't read by Flex — give Ethanol % the same source.`
+                    : '';
+                return note(`Flex reads the <b>Ethanol %</b> channel, which isn't set up, so the dash is using petrol (14.7).${also}${btn}`);
+            }
+            const from = [e.signal, (e.decode && e.decode.can_id) ? '0x' + (e.decode.can_id >>> 0).toString(16).toUpperCase() : '']
+                .filter(Boolean).join(' · ');
+            const v = Number(e.current_value);
+            if (e.is_stale || e.current_value == null || !isFinite(v)) {
+                return note(`Waiting for a reading from <b>Ethanol %</b> (${_textEscape(from)}). The dash keeps its last ratio until one arrives — petrol if it has never had one.`);
+            }
+            return note(`Reading <b>${Math.round(v)}% ethanol</b> from Ethanol % (${_textEscape(from)}).`);
+        }
+        function _chFuelPatchLive() {
+            const st = document.getElementById('chFuelStoich');
+            if (st) st.textContent = `λ 1.00 = ${_chStoich.toFixed(2)} AFR`;
+            const fx = document.getElementById('chFuelFlex');
+            if (fx) fx.innerHTML = _chFuelFlexHTML();
         }
         async function _chSetFuel(key) {
             const prev = _chFuel;
