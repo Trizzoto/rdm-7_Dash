@@ -251,10 +251,10 @@ bool can_sim_start(const char *ecu, const char *version)
 
     snprintf(s_ecu, sizeof(s_ecu), "%s", ecu);
     snprintf(s_version, sizeof(s_version), "%s", version);
-    /* Aftermarket ECUs broadcast at 1 Mbps (Haltech, Link, MaxxECU, ECU
-     * Master); the factory streams in the table are 500 k. */
-    s_bitrate_idx = (!strcasecmp(ecu, "Ford") || !strcasecmp(ecu, "Toyota") ||
-                     !strcasecmp(ecu, "Subaru")) ? 2 : 3;
+    /* Each stream at its maker's default speed: Haltech is fixed at 1 Mbps and
+     * Link's dash streams usually run there; MaxxECU, ECU Master (EMU Black),
+     * MegaSquirt and the factory buses default to 500 k. */
+    s_bitrate_idx = (!strcasecmp(ecu, "Haltech") || !strncasecmp(ecu, "Link", 4)) ? 3 : 2;
 
     s_active = true;
     if (xTaskCreatePinnedToCoreWithCaps(_sim_task, "can_sim", 4096, NULL, 3, &s_task, 0,
