@@ -507,18 +507,9 @@ esp_err_t dashboard_persist_layout(void) {
 		return err;
 	}
 
-	/* Protect the factory default — when the user edits "default", route the
-	 * save to "default_modified" so the original always survives as a
-	 * reset/revert target. Updates the active-layout pointer in NVS so
-	 * subsequent saves land in the new file too. */
-	if (strcmp(layout_name, "default") == 0) {
-		strncpy(layout_name, "default_modified", sizeof(layout_name) - 1);
-		layout_name[sizeof(layout_name) - 1] = '\0';
-		layout_manager_set_active(layout_name);
-		ESP_LOGI(TAG, "Default layout edited — saving as '%s' to preserve "
-			 "the factory layout as a revert target", layout_name);
-	}
-
+	/* "default" saves in place. It used to fork to "default_modified" to keep
+	 * the factory layout as a revert target, but Reset layout regenerates it
+	 * from default_layout.c, so the copy only confused people. */
 	err = layout_manager_save(layout_name, s_widgets, s_widget_count);
 	if (err != ESP_OK) {
 		ESP_LOGE(TAG, "dashboard_persist_layout: save '%s' failed (%s)",

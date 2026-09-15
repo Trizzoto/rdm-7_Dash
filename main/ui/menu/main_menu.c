@@ -66,8 +66,7 @@ void main_menu_close_cb(lv_event_t *e)
         /* Settings that shape the dashboard were open (CAN, channels, OBD2):
          * re-apply the CAN filter and rebuild the dashboard from its saved
          * layout. Not close_menu_event_cb: that also SAVES the widgets, which
-         * menus never edit, and saving "default" forks it into
-         * "default_modified" — a copy nobody asked for, every time. */
+         * menus never edit. */
         reconfigure_can_filter();
         ui_Screen3_rebuild();
         return;

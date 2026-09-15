@@ -1456,8 +1456,8 @@ static const httpd_uri_t layout_delete_uri = {.uri = "/api/layout/delete",
 
 /* POST /api/layout/reset_default — regenerate the factory "default" layout.
  * Body ignored. Scope: rewrites /lfs/layouts/default.json only — other
- * layouts, channels.json (CAN decode/thresholds live there since ADR-0005)
- * and any "default_modified" forks are untouched. The stored ECU preset is
+ * layouts and channels.json (CAN decode/thresholds live there since
+ * ADR-0005) are untouched. The stored ECU preset is
  * re-applied afterwards so the reset dash comes back with live signal
  * bindings instead of a screen full of "--". */
 static esp_err_t layout_reset_default_handler(httpd_req_t *req) {
@@ -1482,8 +1482,8 @@ static esp_err_t layout_reset_default_handler(httpd_req_t *req) {
 	 * counter ourselves — /api/layout/version pollers re-sync. */
 	layout_manager_bump_version();
 
-	/* Only reload the screen when "default" is what's showing. A user whose
-	 * active dash is a fork (default_modified etc.) keeps their screen. */
+	/* Only reload the screen when "default" is what's showing. A user on
+	 * another layout keeps their screen. */
 	char active[LAYOUT_MAX_NAME];
 	layout_manager_get_active(active, sizeof(active));
 	if (strcmp(active, "default") == 0)

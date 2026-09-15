@@ -1612,9 +1612,7 @@ static void _save_toast_timer_cb(lv_timer_t *t) {
     if (lbl && lv_obj_is_valid(lbl)) lv_obj_del(lbl);
 }
 
-/* Manual save — flushes pending debounce, persists immediately, shows toast.
- * dashboard_persist_layout() handles the default → default_modified redirect,
- * so this callback doesn't need to know about it. */
+/* Manual save — flushes pending debounce, persists immediately, shows toast. */
 static void _save_btn_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
 
@@ -1739,9 +1737,7 @@ static void _build_top_toolbar(lv_obj_t *parent) {
     lv_obj_add_event_cb(s_del_btn, _delete_btn_cb, LV_EVENT_CLICKED, NULL);
 
     /* Save button — accent-tinted, far-right. Flushes pending edits and
-     * persists immediately (bypassing the debounce timer) with a toast.
-     * dashboard_persist_layout() handles the default → default_modified
-     * redirect so the factory default never gets overwritten. */
+     * persists immediately (bypassing the debounce timer) with a toast. */
     s_save_btn = _make_tbtn(s_top_toolbar, 100, 44, LV_SYMBOL_SAVE "  Save");
     lv_obj_set_style_bg_color(s_save_btn, DT_ACCENT, 0);
     lv_obj_set_style_bg_color(s_save_btn, DT_ACCENT, LV_STATE_PRESSED);

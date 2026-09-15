@@ -359,6 +359,38 @@ esp_err_t layout_manager_init(void) {
 		}
 	}
 
+	/* ── Fold a "default_modified" fork back into "default" ───────────────
+	 * Editing "default" used to fork the save to "default_modified" and make
+	 * that the active layout. "default" now saves in place (Reset layout
+	 * regenerates the factory one), so a dash still showing the fork gets its
+	 * edits moved onto "default" once. Only when the fork is ACTIVE — an
+	 * inactive leftover is just another layout the user can delete. The fork
+	 * is removed only after "default" is safely written. */
+	{
+		char active[LAYOUT_MAX_NAME] = {0};
+		char fork_path[80];
+		snprintf(fork_path, sizeof(fork_path), "%s/default_modified.json",
+				 LFS_LAYOUT_DIR);
+		if (layout_manager_get_active(active, sizeof(active)) == ESP_OK &&
+		    strcmp(active, "default_modified") == 0) {
+			char *fb = _read_layout_file(fork_path);
+			cJSON *fj = fb ? cJSON_Parse(fb) : NULL;
+			free(fb);
+			if (fj) {
+				cJSON_DeleteItemFromObjectCaseSensitive(fj, "name");
+				cJSON_AddStringToObject(fj, "name", "default");
+				if (layout_manager_save_raw("default", fj) == ESP_OK &&
+				    layout_manager_set_active("default") == ESP_OK) {
+					layout_manager_delete("default_modified");
+					ESP_LOGI(TAG, "Folded 'default_modified' back into 'default'");
+				} else {
+					ESP_LOGW(TAG, "Could not fold 'default_modified' into 'default'");
+				}
+				cJSON_Delete(fj);
+			}
+		}
+	}
+
 	/* ── Migrate legacy _splash.json → _splash_Default.json ──────────── */
 	{
 		char old_path[80], new_path[80];

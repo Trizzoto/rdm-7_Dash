@@ -17761,10 +17761,10 @@
                 history = [JSON.stringify(currentLayout)];
                 historyIndex = 0;
                 _lastDeviceSnapshot = rawDeviceSnap;
-                /* Baseline for factory-default protection: snapshot the widget
+                /* Baseline for factory-splash protection: snapshot the widget
                  * array as loaded, so a later save can detect widget changes
                  * (and ignore signal-only changes) before deciding whether to
-                 * keep the "default" name or fork to "default_modified[_N]". */
+                 * keep "_splash_Default" or fork it. */
                 _baselineWidgetsFp = _widgetsFingerprint(currentLayout.widgets);
                 renderEditor();
                 renderSignals();
@@ -17775,13 +17775,13 @@
             } catch (e) { updateStatus(`Error loading layout ${name}`, true); }
         }
 
-        /* ── Factory-default protection ───────────────────────────────────
-         * The factory "default" dashboard and "_splash_Default" splash get
-         * protected when widget changes are about to be saved. Signal-only
-         * (or other non-widget) edits still go through to the factory file
-         * so users can configure CAN signals once without forking. Widget
-         * edits fork to "default_modified" (or "default_modified_2" etc.
-         * if a previous fork already exists).
+        /* ── Factory-splash protection ────────────────────────────────────
+         * Only the "_splash_Default" splash is protected now. The "default"
+         * dashboard saves in place — Reset layout regenerates it on the dash,
+         * so forking it to "default_modified" just left people editing a copy
+         * they never asked for. The splash has no reset, so widget edits to it
+         * still fork to "_splash_Default_modified" (or "_2" etc.). Signal-only
+         * (or other non-widget) edits go through to the factory file.
          *
          * Auto-save: silently picks the next free name (no prompt cascade).
          * Manual save: prompts the user to overwrite the existing fork OR
@@ -17814,28 +17814,21 @@
         }
 
         async function _resolveProtectedName(intendedName, isSplash, silent) {
-            const dashGuarded = (!isSplash && intendedName === 'default');
-            const splashGuarded = (isSplash && intendedName === '_splash_Default');
-            if (!dashGuarded && !splashGuarded) return intendedName;
+            if (!(isSplash && intendedName === '_splash_Default')) return intendedName;
 
             /* Widget-only check — ignore signal edits. */
             const currentFp = _widgetsFingerprint(currentLayout.widgets);
             if (currentFp === _baselineWidgetsFp) return intendedName;
 
             /* Build the candidate name + the list of existing siblings. */
-            const base = dashGuarded ? 'default_modified' : '_splash_Default_modified';
-            let existing = [];
-            if (dashGuarded) {
-                existing = Array.from(layoutSelect.options).map(o => o.value);
-            } else {
-                const splashSel = document.getElementById('splashSelect');
-                /* Skip the synthetic "Disable" entry — it is a setting, not a
-                   sibling to avoid colliding with. */
-                existing = splashSel
-                    ? Array.from(splashSel.options).filter(o => o.value !== '__disable__')
-                        .map(o => '_splash_' + o.value)
-                    : [];
-            }
+            const base = '_splash_Default_modified';
+            const splashSel = document.getElementById('splashSelect');
+            /* Skip the synthetic "Disable" entry — it is a setting, not a
+               sibling to avoid colliding with. */
+            const existing = splashSel
+                ? Array.from(splashSel.options).filter(o => o.value !== '__disable__')
+                    .map(o => '_splash_' + o.value)
+                : [];
             const baseExists = existing.includes(base);
             const nextFree   = _nextFreeName(existing, base);
 
@@ -17850,9 +17843,7 @@
             const displayName = base.startsWith('_splash_') ? base.slice(8) : base;
             const displayNext = nextFree.startsWith('_splash_') ? nextFree.slice(8) : nextFree;
             if (!baseExists) {
-                const msg = isSplash
-                    ? `Save widget changes to a new splash layout "${displayName}"?\n\nFactory "_splash_Default" stays untouched.`
-                    : `Save widget changes to a new layout "${displayName}"?\n\nFactory "default" stays untouched.`;
+                const msg = `Save widget changes to a new splash layout "${displayName}"?\n\nFactory "_splash_Default" stays untouched.`;
                 return (await confirmAsync('Save to New Layout', msg, 'Save')) ? base : null;
             }
             /* base already exists → overwrite vs. next-numbered. Both buttons
