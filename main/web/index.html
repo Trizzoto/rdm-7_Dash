@@ -37,6 +37,13 @@
             --shadow-md: 0 4px 16px rgba(0,0,0,0.5);
             --shadow-inset: inset 0 1px 2px rgba(0,0,0,0.3);
 
+            /* Status — the CAN emulator and the share dialog ask for these by
+               name. They were never defined, so each call site carried its own
+               fallback, and two of them disagreed about what red "failed" is. */
+            --danger: #e53935;
+            --warning: #f0a020;
+            --success: #4caf50;
+
             /* Radii — tight and professional */
             --radius-sm: 2px;
             --radius-md: 4px;
@@ -28857,10 +28864,10 @@
                         _canShareStatusTimer = null;
                         submitBtn.disabled = false;
                         if (s.state === 'success') {
-                            status.style.color = 'var(--accent, #5ad17a)';
+                            status.style.color = 'var(--success)';
                             setTimeout(() => closeCanShare(), 1500);
                         } else {
-                            status.style.color = 'var(--danger, #ff6b6b)';
+                            status.style.color = 'var(--danger)';
                         }
                     }
                 } catch (_) { /* keep polling */ }
