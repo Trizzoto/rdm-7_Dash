@@ -112,6 +112,20 @@ bool ble_protocol_pump(uint8_t *scratch, size_t scratch_len);
  */
 void ble_protocol_use_external_pump(void);
 
+/** @brief True once ble_protocol_init() succeeded. Says nothing about the
+ *  user switch — see ble_protocol_enabled(). */
+bool ble_protocol_started(void);
+
+/**
+ * @brief The user's on/off switch (Connect page). Off stops advertising and
+ * drops any connected phone; on resumes advertising. Not persisted here —
+ * the caller saves it. May be called before ble_protocol_init() to start the
+ * dash with Bluetooth off; the controller memory is still reserved either
+ * way, so turning it back on never needs a reboot.
+ */
+void ble_protocol_set_enabled(bool on);
+bool ble_protocol_enabled(void);
+
 /** @brief True once a central is connected and subscribed to notifications. */
 bool ble_protocol_connected(void);
 

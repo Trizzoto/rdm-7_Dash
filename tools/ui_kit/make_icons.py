@@ -73,6 +73,7 @@ ICONS = {
     'hotspot':  '<circle cx="12" cy="12" r="2"/><path d="M7.8 16.2a6 6 0 0 1 0-8.4M16.2 7.8a6 6 0 0 1 0 8.4M5 19a10 10 0 0 1 0-14M19 5a10 10 0 0 1 0 14"/>',
     'trash':    '<path d="M4.5 6.5h15M9.5 6.5V4h5v2.5M6.5 6.5l1 13.5h9l1-13.5"/>',
     'keypad':   '<rect x="2.5" y="5" width="19" height="14" rx="2.5"/><circle cx="7.5" cy="9.7" r="1.7"/><circle cx="12" cy="9.7" r="1.7"/><circle cx="16.5" cy="9.7" r="1.7"/><circle cx="7.5" cy="14.3" r="1.7"/><circle cx="12" cy="14.3" r="1.7"/><circle cx="16.5" cy="14.3" r="1.7" fill="currentColor"/>',
+    'bluetooth': '<path d="M6.5 7.5l11 9-5.5 4.5v-18l5.5 4.5-11 9"/>',
 }
 
 

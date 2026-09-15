@@ -29,6 +29,9 @@ esp_err_t ble_protocol_init(void)
     ESP_LOGW(TAG, "NimBLE not enabled in this build");
     return ESP_ERR_NOT_SUPPORTED;
 }
+bool ble_protocol_started(void) { return false; }
+void ble_protocol_set_enabled(bool on) { (void)on; }
+bool ble_protocol_enabled(void) { return false; }
 bool ble_protocol_connected(void) { return false; }
 const char *ble_protocol_name(void) { return ""; }
 esp_err_t ble_protocol_send_frame(const uint8_t *d, size_t l) { (void)d; (void)l; return ESP_ERR_NOT_SUPPORTED; }
@@ -110,6 +113,7 @@ static bool     s_subscribed;
 static bool     s_started;
 static bool     s_reserved;
 static bool     s_adv_held;
+static bool     s_user_off; /* Connect-page switch; independent of s_adv_held */
 static bool     s_external_pump;
 static char     s_name[24];
 
@@ -305,7 +309,10 @@ static int gap_event(struct ble_gap_event *event, void *arg)
 
     switch (event->type) {
     case BLE_GAP_EVENT_CONNECT:
-        if (event->connect.status == 0) {
+        if (event->connect.status == 0 && s_user_off) {
+            /* Switched off while this connection was being set up. */
+            ble_gap_terminate(event->connect.conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+        } else if (event->connect.status == 0) {
             s_conn = event->connect.conn_handle;
             ESP_LOGI(TAG, "central connected");
             /* Ask for a short connection interval. The central picks the
@@ -377,6 +384,7 @@ static int gap_event(struct ble_gap_event *event, void *arg)
 static void advertise(void)
 {
     if (s_adv_held) return; /* WiFi is mid-handshake — stay off the air */
+    if (s_user_off) return; /* switched off on the Connect page */
 
     struct ble_hs_adv_fields fields = { 0 };
     fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
@@ -562,6 +570,35 @@ void ble_protocol_hold_advertising(bool hold)
         ESP_LOGI(TAG, "advertising resumed");
         advertise();
     }
+}
+
+bool ble_protocol_started(void)
+{
+    return s_started;
+}
+
+void ble_protocol_set_enabled(bool on)
+{
+    if (s_user_off == !on) return;
+    s_user_off = !on;
+    if (!s_started) return; /* init picks the flag up at sync */
+
+    if (on) {
+        ESP_LOGI(TAG, "Bluetooth switched on");
+        if (s_conn == BLE_HS_CONN_HANDLE_NONE) advertise();
+    } else {
+        ESP_LOGI(TAG, "Bluetooth switched off");
+        ble_gap_adv_stop();
+        /* The disconnect event resets state and calls advertise(), which
+         * s_user_off now turns into a no-op. */
+        if (s_conn != BLE_HS_CONN_HANDLE_NONE)
+            ble_gap_terminate(s_conn, BLE_ERR_REM_USER_CONN_TERM);
+    }
+}
+
+bool ble_protocol_enabled(void)
+{
+    return !s_user_off;
 }
 
 bool ble_protocol_connected(void)

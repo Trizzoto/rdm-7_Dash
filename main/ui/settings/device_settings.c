@@ -55,6 +55,7 @@
 #include <string.h>
 
 #include "net/wifi_manager.h"
+#include "net/ble_protocol.h"
 #include "kit/ui_kit.h"
 #include "settings/can_emu_settings.h"
 #include "menu/main_menu.h"
@@ -65,6 +66,16 @@ static lv_obj_t* wifi_status_label = NULL;
 static lv_obj_t* web_status_label = NULL;
 static lv_timer_t *s_wifi_status_timer = NULL;
 static lv_obj_t* wifi_loading_dialog = NULL;
+
+/* Connect page: the Bluetooth tile and the "How to reach it" card's values.
+ * The card used to be painted once at build, so a page opened before the
+ * DHCP lease landed read "Not joined" next to a WiFi tile showing the SSID. */
+static lv_obj_t *s_ble_tile          = NULL;
+static lv_obj_t *s_reach_net         = NULL;
+static lv_obj_t *s_reach_addr        = NULL;
+static lv_obj_t *s_reach_hotspot     = NULL;
+static lv_obj_t *s_reach_hotspot_row = NULL;
+static lv_obj_t *s_reach_ble         = NULL;
 
 /* Web-editor QR popup (Connect page -> "Web editor"). Phone scans the QR,
  * browser opens the editor directly — bypasses flaky .local resolution.
@@ -282,7 +293,80 @@ static void _qr_btn_cb(lv_event_t *e) {
  * page (see _build_connect_page). Stats are short,
  * uppercase-friendly — title + body already describe the section, so
  * the stat is just the live status (SSID, IP, "OFFLINE", etc). */
+/* Label text only if it changed — the timer runs every 2 s and an unchanged
+ * set_text still invalidates the label. */
+static void _set_text_if(lv_obj_t *lbl, const char *txt) {
+    const char *cur = lv_label_get_text(lbl);
+    if (!cur || strcmp(cur, txt) != 0) lv_label_set_text(lbl, txt);
+}
+
+/* Bluetooth tile + the card's rows. Same sources as the WiFi / Web editor
+ * tiles, read at the same moment, so the page can't disagree with itself. */
+static void refresh_reach_card(void) {
+    if (s_ble_tile && !lv_obj_is_valid(s_ble_tile)) s_ble_tile = NULL;
+    if (s_reach_net && !lv_obj_is_valid(s_reach_net)) {
+        s_reach_net = s_reach_addr = s_reach_hotspot = NULL;
+        s_reach_hotspot_row = s_reach_ble = NULL;
+    }
+
+    /* started = the radio came up at boot; enabled = the user's switch. */
+    bool ble_up   = ble_protocol_started();
+    bool ble_on   = ble_up && ble_protocol_enabled();
+    bool ble_conn = ble_on && ble_protocol_connected();
+    const char *ble_name = ble_on ? ble_protocol_name() : "";
+
+    if (s_ble_tile) {
+        if (!ble_up)
+            uk_tile_set_status(s_ble_tile, NULL, "Unavailable", UK_TONE_MUTED);
+        else if (!ble_on)
+            uk_tile_set_status(s_ble_tile, "Off", "tap to turn on", UK_TONE_MUTED);
+        else
+            uk_tile_set_status(s_ble_tile, "On",
+                               ble_conn ? "phone connected" : ble_name, UK_TONE_OK);
+        if (ble_conn) uk_tile_set_badge(s_ble_tile, "Connected", UK_TONE_OK, true);
+        else          uk_tile_set_badge(s_ble_tile, NULL, UK_TONE_OK, false);
+    }
+
+    if (!s_reach_net) return;
+
+    const char *ssid = wifi_manager_get_connected_ssid();
+    bool joined = ssid && ssid[0];
+    _set_text_if(s_reach_net, joined ? ssid : "Not joined");
+
+    char ip[20] = "-";
+    if (joined) {
+        esp_netif_ip_info_t ip_info;
+        esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+        if (sta && esp_netif_get_ip_info(sta, &ip_info) == ESP_OK && ip_info.ip.addr)
+            snprintf(ip, sizeof(ip), IPSTR, IP2STR(&ip_info.ip));
+        else
+            snprintf(ip, sizeof(ip), "Waiting");
+    }
+    _set_text_if(s_reach_addr, ip);
+
+    bool ap = wifi_manager_is_started() && wifi_manager_is_ap_enabled();
+    _set_text_if(s_reach_hotspot, ap ? wifi_manager_get_ap_ssid() : "Off");
+    if (ap) lv_obj_clear_flag(s_reach_hotspot_row, LV_OBJ_FLAG_HIDDEN);
+    else    lv_obj_add_flag(s_reach_hotspot_row, LV_OBJ_FLAG_HIDDEN);
+
+    _set_text_if(s_reach_ble, !ble_up ? "Unavailable" : !ble_on ? "Off"
+                              : ble_conn ? "Connected" : ble_name);
+}
+
+/* Bluetooth tile tap: flip the switch, save it, repaint straight away. */
+static void _ble_tile_cb(lv_event_t *e) {
+    (void)e;
+    if (!ble_protocol_started()) return; /* radio never came up — nothing to flip */
+    bool on = !ble_protocol_enabled();
+    ble_protocol_set_enabled(on);
+    if (config_store_save_ble_enabled(on) != ESP_OK)
+        ESP_LOGW("BLE", "Bluetooth %s, but the setting was not saved", on ? "on" : "off");
+    refresh_reach_card();
+}
+
 static void refresh_wifi_status(void) {
+    refresh_reach_card();
+
     /* Defensive bail — labels can survive screen delete if cleanup
      * skipped a path. lv_obj_is_valid catches freed-but-non-NULL. */
     if (!wifi_status_label || !lv_obj_is_valid(wifi_status_label)) {
@@ -309,7 +393,7 @@ static void refresh_wifi_status(void) {
         if (sta_ssid && sta_ssid[0] != '\0') {
             esp_netif_ip_info_t ip_info;
             esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-            if (netif && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
+            if (netif && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK && ip_info.ip.addr) {
                 snprintf(buf, sizeof(buf), IPSTR, IP2STR(&ip_info.ip));
                 lv_label_set_text(web_status_label, buf);
             } else {
@@ -2103,32 +2187,32 @@ static void _build_connect_page(lv_obj_t *body) {
     uk_grid_place(card, 2, 0, 1, 2);
     lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
     uk_section(card, "How to reach it");
-    const char *ssid = wifi_manager_get_connected_ssid();
-    uk_row(card, "Network", (ssid && ssid[0]) ? ssid : "Not joined");
-    char ip[20] = "-";
-    esp_netif_ip_info_t ip_info;
-    esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-    if (ssid && ssid[0] && sta && esp_netif_get_ip_info(sta, &ip_info) == ESP_OK && ip_info.ip.addr)
-        snprintf(ip, sizeof(ip), IPSTR, IP2STR(&ip_info.ip));
-    uk_row(card, "Address", ip);
-    bool ap = wifi_manager_is_started() && wifi_manager_is_ap_enabled();
-    uk_row(card, "Hotspot", ap ? wifi_manager_get_ap_ssid() : "Off");
-    if (ap) uk_row(card, "Hotspot address", "192.168.4.1");
+    /* Values are placeholders; refresh_reach_card fills them now and on the
+     * status timer, so a lease or a hotspot toggle shows up while open. */
+    s_reach_net     = uk_row(card, "Network", "-");
+    s_reach_addr    = uk_row(card, "Address", "-");
+    s_reach_hotspot = uk_row(card, "Hotspot", "-");
+    s_reach_hotspot_row = lv_obj_get_parent(uk_row(card, "Hotspot address",
+                                                   wifi_manager_get_ap_ip()));
+    s_reach_ble     = uk_row(card, "Bluetooth", "-");
 
     lv_obj_t *note = uk_label(card,
-        "Join the hotspot or the same network with your phone, then open the "
-        "address, or scan the web editor code.", UK_FONT_SMALL, UK_TONE_MUTED);
+        "Join the same network or the hotspot with your phone, then open the "
+        "address, or scan the web editor code.",
+        UK_FONT_SMALL, UK_TONE_MUTED);
     lv_obj_set_width(note, lv_pct(100));
     lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_pad_top(note, 8, 0);
     lv_obj_set_style_text_line_space(note, 3, 0);
 
-    /* Bottom-left: a wide tile for the phone app / Studio pointer. */
-    lv_obj_t *studio = uk_tile(grid, UK_ICON_WEB, "RDM Studio",
-        "Design layouts on a computer and send them to the dash over USB or WiFi.",
-        UK_TILE_NORMAL, NULL, NULL);
-    uk_grid_place(studio, 0, 1, 2, 1);
-    lv_obj_clear_flag(studio, LV_OBJ_FLAG_CLICKABLE);
+    /* Bottom-left: Bluetooth. The whole tile is the on/off switch. */
+    s_ble_tile = uk_tile(grid, UK_ICON_BLUETOOTH, "Bluetooth",
+        "Tap to turn on or off. The RDM phone app is in development - "
+        "stay tuned, it's coming in a future update.",
+        UK_TILE_NORMAL, _ble_tile_cb, NULL);
+    uk_grid_place(s_ble_tile, 0, 1, 2, 1);
+
+    refresh_reach_card();
 }
 
 static void _share_btn_cb(lv_event_t *e) {
@@ -2293,6 +2377,9 @@ static void _settings_screen_delete_cb(lv_event_t *e) {
 
     wifi_status_label    = NULL;
     web_status_label     = NULL;
+    s_ble_tile           = NULL;
+    s_reach_net = s_reach_addr = s_reach_hotspot = NULL;
+    s_reach_hotspot_row = s_reach_ble = NULL;
     brightness_label     = NULL;
     s_log_btn            = NULL;
     s_log_btn_label      = NULL;
@@ -2336,6 +2423,9 @@ void device_settings_open_page(ds_page_t page) {
 
     /* The labels a page doesn't build must read NULL to the timers. */
     wifi_status_label = web_status_label = NULL;
+    s_ble_tile = NULL;
+    s_reach_net = s_reach_addr = s_reach_hotspot = NULL;
+    s_reach_hotspot_row = s_reach_ble = NULL;
     s_can_bitrate_stat_label = s_obd2_btn_label = s_sim_card_stat = NULL;
 
     switch (page) {

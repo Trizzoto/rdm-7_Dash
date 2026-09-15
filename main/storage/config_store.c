@@ -1159,6 +1159,22 @@ bool config_store_load_ecu_picker_auto(void)
     return v != 0;
 }
 
+/* ── Bluetooth on/off ──────────────────────────────────────────────────── */
+
+#define NS_BLE "ble"
+
+esp_err_t config_store_save_ble_enabled(bool on)
+{
+    return chs_save_u8(NS_BLE, "on", on ? 1u : 0u);
+}
+
+bool config_store_load_ble_enabled(void)
+{
+    uint8_t v = 1; /* untouched on failure: default on */
+    chs_load_u8(NS_BLE, "on", &v);
+    return v != 0;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
  *  WIDGET LATCH STATE (button / toggle "remember state")
  * ═══════════════════════════════════════════════════════════════════════ */

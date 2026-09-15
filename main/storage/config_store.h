@@ -319,6 +319,14 @@ esp_err_t config_store_save_ecu_picker_auto(bool auto_mode);
  */
 bool config_store_load_ecu_picker_auto(void);
 
+/**
+ * Bluetooth on/off, set from the Connect page. Namespace "ble" / key "on"
+ * (one byte). Load returns true (on) if never set or unreadable — the dash
+ * has always advertised, so an unset flag must not silently turn it off.
+ */
+esp_err_t config_store_save_ble_enabled(bool on);
+bool config_store_load_ble_enabled(void);
+
 /* ── Latching button/toggle CAN-output state persistence ──────────────────
  * When a button/toggle widget has "remember state" enabled, its latched
  * on/off state is persisted so a CAN-controlled output (e.g. a PDM channel

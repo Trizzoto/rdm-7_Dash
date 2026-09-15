@@ -1745,6 +1745,9 @@ void app_main(void) {
    * dash's own access point it costs the phone nothing — it keeps its
    * internet, and it can hold the GPS puck's link at the same time. */
 #if !RDM7_DEBUG_NO_BLE
+  /* The Connect-page switch. Init still runs when it is off, so turning it
+   * back on is instant rather than a reboot. */
+  ble_protocol_set_enabled(config_store_load_ble_enabled());
   if (ble_protocol_init() != ESP_OK) {
     ESP_LOGW(TAG, "BLE protocol init failed — Wi-Fi and USB are unaffected");
   }
