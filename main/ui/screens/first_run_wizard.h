@@ -19,6 +19,12 @@ extern "C" {
 /* Create and show the wizard overlay. Safe to call from the LVGL task only. */
 void show_first_run_wizard(void);
 
+/* The same wizard, run again from This dash > Setup wizard. The one
+ * difference: skipping the ECU step keeps the channel sources the dash
+ * already has, because the person asked to revisit a working setup, not to
+ * start one (the confirm box tells them their settings are kept). */
+void show_first_run_wizard_rerun(void);
+
 /* The wizard (or its standalone channels editor) is on screen. LVGL task. */
 bool first_run_wizard_is_open(void);
 

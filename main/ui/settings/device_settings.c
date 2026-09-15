@@ -1319,7 +1319,7 @@ static void _diag_btn_cb(lv_event_t *e) {
 
 static void _show_wizard_async(void *arg) {
     (void)arg;
-    show_first_run_wizard();
+    show_first_run_wizard_rerun();
 }
 
 /* Drop back to the dashboard then show the wizard overlay on the next

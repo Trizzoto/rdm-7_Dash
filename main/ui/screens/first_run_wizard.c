@@ -1558,15 +1558,20 @@ static void _ecu_btn_use_cb(lv_event_t *e) {
     _show_step_channels();
 }
 
+/* True while the wizard was opened by show_first_run_wizard_rerun(). */
+static bool s_rerun = false;
+
 static void _ecu_btn_skip_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
     /* User declined to bind anything — restore the signal-derived filter
      * we replaced at probe start. */
     can_set_promiscuous_mode(false);
-    /* Resetup: skipping ECU detection means "I'll bind manually" — start
-     * the channels step from a blank slate rather than the prior setup's
-     * bindings, same as the apply paths do. */
-    _wiz_clear_vehicle_channel_bindings();
+    /* First run: skipping ECU detection means "I'll bind manually", so the
+     * channels step starts from a blank slate, as the apply paths do.
+     * A re-run from This dash keeps what is there: its confirm box promises
+     * the current settings are kept, and on 2026-09-14 skipping here wiped
+     * 51 working channel sources off a bench dash. */
+    if (!s_rerun) _wiz_clear_vehicle_channel_bindings();
     /* ...and nothing is owed any more to the car that setup was for. */
     obd2_autosetup_cancel();
     _show_step_channels();
@@ -5011,8 +5016,15 @@ static void _wiz_build_shell(void) {
     lv_obj_clear_flag(s_card, LV_OBJ_FLAG_SCROLLABLE);
 }
 
+void show_first_run_wizard_rerun(void) {
+    if (s_overlay && lv_obj_is_valid(s_overlay)) return;
+    show_first_run_wizard();
+    s_rerun = true;
+}
+
 void show_first_run_wizard(void) {
     if (s_overlay && lv_obj_is_valid(s_overlay)) return;
+    s_rerun = false;
     s_standalone_channels = false;  /* full onboarding flow, not channels-only */
 
     _wiz_build_shell();
