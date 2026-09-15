@@ -1716,18 +1716,13 @@ void app_main(void) {
   ESP_LOGW(TAG, "RDM7_DEBUG_KEEP_CONSOLE=1 — skipping uart_protocol_init "
                 "so console logs stay on USB. Desktop app will not connect.");
 #else
-  {
-    bool wire_input_mode = false;
-    config_store_load_wire_input_mode(&wire_input_mode);
-    if (wire_input_mode) {
-      ESP_LOGI(TAG, "Wire input mode: GPIO 43/44 reserved for indicators, "
-                    "UART1 serial disabled.");
-    } else {
-      if (uart_protocol_init() != ESP_OK) {
-        ESP_LOGE(TAG, "UART protocol init failed!");
-      }
-    }
+  /* Always up, whichever way the UART1 / UART2 switch is set: the indicator
+   * task takes GPIO 43 off the UART while the switch is on UART2 and gives it
+   * back when it moves to UART1, so the switch works without a restart. */
+  if (uart_protocol_init() != ESP_OK) {
+    ESP_LOGE(TAG, "UART protocol init failed!");
   }
+  wire_inputs_uart_ready();
 #endif
 
   /* USB CDC disabled — ESP32-S3 USB Serial/JTAG and USB OTG share the
