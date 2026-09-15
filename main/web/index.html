@@ -1749,6 +1749,15 @@
             stroke: var(--accent);
             fill: none; stroke-width: 1.8;
         }
+        /* A feature that works but is still being built: the card opens as
+           normal, the chip says it isn't finished. */
+        .setup-card .dev-chip {
+            margin-left: auto;
+            padding: 2px 6px;
+            font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+            color: #1d1f20; background: var(--warning);
+            border-radius: 2px; white-space: nowrap;
+        }
         .setup-card .card-body {
             font-size: 11px;
             color: var(--text-muted);
@@ -5129,7 +5138,7 @@
                  cruise buttons a Haltech reads as its own IO box, or any
                  spec a customer brings. -->
             <div class="setup-card" onclick="openCanEmu && openCanEmu()">
-                <div class="card-title"><svg viewBox="0 0 24 24"><rect x="2.5" y="5" width="19" height="14" rx="2.5"/><circle cx="7.5" cy="9.7" r="1.6"/><circle cx="12" cy="9.7" r="1.6"/><circle cx="16.5" cy="9.7" r="1.6"/><circle cx="7.5" cy="14.3" r="1.6"/><circle cx="12" cy="14.3" r="1.6"/><circle cx="16.5" cy="14.3" r="1.6" fill="currentColor" stroke="none"/></svg>Keypads &amp; IO boxes</div>
+                <div class="card-title"><svg viewBox="0 0 24 24"><rect x="2.5" y="5" width="19" height="14" rx="2.5"/><circle cx="7.5" cy="9.7" r="1.6"/><circle cx="12" cy="9.7" r="1.6"/><circle cx="16.5" cy="9.7" r="1.6"/><circle cx="7.5" cy="14.3" r="1.6"/><circle cx="12" cy="14.3" r="1.6"/><circle cx="16.5" cy="14.3" r="1.6" fill="currentColor" stroke="none"/></svg>Keypads &amp; IO boxes<span class="dev-chip">In development</span></div>
                 <div class="card-body">Buttons on the screen that your ECU reads as its own keypad or IO box &mdash; cruise control on a Haltech, for one.</div>
                 <div class="card-stat" id="setupEmuStat">&mdash;</div>
             </div>

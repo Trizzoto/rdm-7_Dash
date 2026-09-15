@@ -470,7 +470,9 @@ void can_emu_settings_stat(char *buf, size_t cap, uk_tone_t *tone) {
 	can_emu_summary_t s;
 	can_emu_summary(&s);
 	*tone = UK_TONE_TEXT;
-	if (!s.devices) snprintf(buf, cap, "Add one");
+	/* Still being built: with nothing set up, say so rather than invite
+	 * "Add one". A dash that already runs devices keeps its real status. */
+	if (!s.devices) { snprintf(buf, cap, "In development"); *tone = UK_TONE_WARN; }
 	else if (s.problems) { snprintf(buf, cap, "Check"); *tone = UK_TONE_DANGER; }
 	else if (s.sending) { snprintf(buf, cap, "%u on the bus", (unsigned)s.sending); *tone = UK_TONE_OK; }
 	else if (s.enabled) { snprintf(buf, cap, "Not sending"); *tone = UK_TONE_WARN; }
