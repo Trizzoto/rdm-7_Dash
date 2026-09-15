@@ -21986,8 +21986,8 @@
             } catch (e) { throw new Error('No reply from the dash.'); }
             let j = null;
             try { j = await r.json(); } catch (e) {}
-            if (!j) throw new Error(r.status === 404
-                ? "This dash's firmware doesn't have Keypads & IO boxes yet. Update the dash first."
+            if (!j || !j.file) throw new Error(r.status === 404 || (j && !j.file)
+                ? "Keypads & IO boxes live on the dash. Connect to one, and if you already are, update its firmware."
                 : 'No reply from the dash.');
             return j;
         }
