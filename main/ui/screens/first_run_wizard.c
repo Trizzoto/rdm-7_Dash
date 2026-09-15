@@ -14,7 +14,17 @@
  * the wizard touches it: ECU auto-detect uses `preconfig_items[]` (same
  * one the web Studio uses, dynamically extended when DBCs are imported)
  * and the channels picker uses it too. New signal libraries land
- * everywhere without code changes. */
+ * everywhere without code changes.
+ *
+ * Look: a kit page (ADR-0075). The overlay is opaque on the palette
+ * background with the kit's brand bar across the top — the step's name as
+ * the title, "Step N of M" in the status strip, Close where that step has a
+ * way out — and each step lays itself out in the body under it. Sheets
+ * (ECU picker, source picker, Calculate, OBD2 scan) are kit-styled cards
+ * over a dimmed backdrop, but stay CHILDREN OF THE OVERLAY rather than
+ * uk_popup()s on lv_layer_top(): the keypad/keyboard dialogs they open are
+ * built on lv_scr_act() and would land underneath a top-layer popup, and
+ * hiding the overlay for the WiFi screen has to hide them too. */
 
 #include "first_run_wizard.h"
 #include "esp_attr.h"
@@ -24,6 +34,7 @@
 #include <string.h>
 
 #include "../theme.h"
+#include "kit/ui_kit.h"
 #include "../../system/rdm_lv_async.h"
 #include "../../storage/config_store.h"
 #include "../../can/can_bus_test.h"
@@ -55,40 +66,56 @@
 static const char *TAG = "first_run";
 
 /* ── Layout constants ─────────────────────────────────────────────────── */
-#define CARD_W   560
-#define CARD_H   470   /* Bumped from 430 to fit the Skip-for-good button in step 1 */
+/* The glass is a fixed 800x480. The body (s_card) is the area under the kit
+ * bar, inset by the kit's body padding; every step lays out inside it. */
+#define WIZ_SCR_W    800
+#define WIZ_SCR_H    480
+#define WIZ_BODY_W   (WIZ_SCR_W - 2 * UK_PAD)              /* 776 */
+#define WIZ_BODY_H   (WIZ_SCR_H - UK_BAR_H - 2 * UK_PAD)   /* 404 */
 #define BTN_W    500
-#define BTN_H     40
+#define BTN_H    UK_BTN_H
 
-/* Channels step uses a wider card so the split-pane (list left, detail
- * right) lays out properly. Card resizes on enter and restores when
- * leaving for the WiFi step.
+/* Sheets (ECU picker, source picker) — kit popup cards nearly the size of
+ * the glass so the picker has room for its 3-column browser. */
+#define SHEET_W      760
+#define SHEET_H      460
+#define SHEET_PAD     18   /* the kit popup's padding */
+
+/* Channels step: split pane (list left, detail right) filling the body.
  *
  * Layout — mirrors the web Studio's Channels modal:
- *   ┌─ Hero (title + step chip + stats line + hairline) ────────────┐
+ *   ┌─ Hero (stats line + OBD2 chip) ───────────────────────────────┐
  *   │ ┌── List (left) ────┐ ┌── Detail (right) ─────────────────────┐│
  *   │ │ scrollable rows   │ │ hero value, source pill, range edits  ││
  *   │ └───────────────────┘ └───────────────────────────────────────┘│
  *   │ ┌── Continue (full width) ────────────────────────────────────┐│
  *   └────────────────────────────────────────────────────────────────┘
+ * The title and step chip live in the kit bar above.
  *
  * Row width was 720 (full card). Compressing to ~336 halves the dirty
  * area per scroll/repaint — the framerate cost of the old design was
  * unacceptable on the dash. */
-#define CH_CARD_W      760
-#define CH_CARD_H      460
-#define CH_HERO_H       60   /* title row + stats row + 1 px rule */
-#define CH_BODY_TOP     CH_HERO_H + 8
-#define CH_BODY_H      332
+#define CH_W           WIZ_BODY_W
+#define CH_H           WIZ_BODY_H
+#define CH_HERO_H       34   /* stats line + the OBD2 chip */
+#define CH_BODY_TOP    (CH_HERO_H + 6)
+#define CH_FOOT_H      (BTN_H + 10)
+#define CH_BODY_H      (CH_H - CH_BODY_TOP - CH_FOOT_H)
 #define CH_PANE_GAP     12
 #define CH_LIST_W      336
-#define CH_DETAIL_W    372
-#define CH_ROW_W       (CH_LIST_W - 4)  /* inside list pad */
+#define CH_DETAIL_W    (CH_W - CH_LIST_W - CH_PANE_GAP)
+#define CH_ROW_W       (CH_LIST_W - 8)  /* clear of the list's scrollbar */
 #define CH_ROW_H        40              /* compressed — label + value, no subtitle */
 
 /* ── State ────────────────────────────────────────────────────────────── */
 static lv_obj_t  *s_overlay    = NULL;
-static lv_obj_t  *s_card       = NULL;
+static lv_obj_t  *s_card       = NULL;   /* the body under the bar */
+/* The kit brand bar and the parts of it each step repaints. Children of
+ * s_overlay, so they go with it. */
+static lv_obj_t  *s_bar        = NULL;
+static lv_obj_t  *s_bar_title  = NULL;
+static lv_obj_t  *s_bar_status = NULL;
+static lv_obj_t  *s_bar_close  = NULL;
 
 /* Step 1: CAN scan */
 static lv_obj_t  *s_step1          = NULL;
@@ -159,8 +186,7 @@ static EXT_RAM_BSS_ATTR obd2_channel_match_t s_obd2_matches[CH_OBD2_MATCH_MAX];
 static bool        s_obd2_pick[CH_OBD2_MATCH_MAX] = {false};
 static size_t      s_obd2_match_count   = 0;
 static lv_obj_t   *s_obd2_chip          = NULL;   /* "Scan for OBD2" pill */
-static lv_obj_t   *s_step_chip_lbl      = NULL;   /* header text the pill anchors to */
-static lv_obj_t   *s_obd2_modal         = NULL;   /* scan/result overlay */
+static lv_obj_t   *s_obd2_modal         = NULL;   /* scan/result sheet (its backdrop) */
 static lv_obj_t   *s_obd2_status_lbl    = NULL;
 static lv_obj_t   *s_obd2_list          = NULL;   /* offer list */
 static lv_obj_t   *s_obd2_add_btn       = NULL;
@@ -375,6 +401,7 @@ static void _close_wizard(bool mark_done) {
     if (s_overlay && lv_obj_is_valid(s_overlay))
         rdm_obj_del_async(s_overlay);   /* crash-safe: cancelled if a reload frees it first */
     s_overlay = s_card = s_step1 = s_step_channels = s_step3 = NULL;
+    s_bar = s_bar_title = s_bar_status = s_bar_close = NULL;
     s_step_ecu = NULL;
     s_step_obd2 = NULL;
     s_obd2_step_status = s_obd2_step_spinner = s_obd2_step_rescan_btn = NULL;
@@ -403,7 +430,6 @@ static void _close_wizard(bool mark_done) {
     s_detail_warn_lbl      = NULL;
     s_detail_source_lbl    = NULL;
     s_channels_stats_lbl   = NULL;
-    s_step_chip_lbl        = NULL;
     s_selected_ch_id[0]    = '\0';
     s_scan_status = s_scan_progress = s_scan_bar = s_scan_detail = NULL;
     s_btn_apply = s_btn_next1 = s_btn_cancel = s_btn_start = NULL;
@@ -424,27 +450,144 @@ static void _show_step_ecu_detect(void);
 static void _show_step_obd2(void);
 static void _close_bind_sheet(void);
 
-static lv_obj_t *_make_btn(lv_obj_t *parent, const char *text,
-                           lv_color_t bg, lv_color_t fg,
-                           bool border, lv_coord_t y,
+/* A full-width (BTN_W) kit button centred at @y in @parent. The label is
+ * uk_btn_label()'s child 1 (child 0 is the icon slot) — change it with
+ * uk_btn_set_text(), never lv_obj_get_child(btn, 0). */
+static lv_obj_t *_make_btn(lv_obj_t *parent, uk_icon_t icon, const char *text,
+                           uk_btn_kind_t kind, lv_coord_t y,
                            lv_event_cb_t cb) {
-    lv_obj_t *btn = lv_btn_create(parent);
+    lv_obj_t *btn = uk_btn(parent, icon, text, kind, cb, NULL);
     lv_obj_set_size(btn, BTN_W, BTN_H);
     lv_obj_align(btn, LV_ALIGN_TOP_MID, 0, y);
-    lv_obj_set_style_bg_color(btn, bg, 0);
-    lv_obj_set_style_bg_opa(btn, lv_color_brightness(bg) == 0
-                                    ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_border_width(btn, border ? 1 : 0, 0);
-    lv_obj_set_style_border_color(btn, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_shadow_width(btn, 0, 0);
-    lv_obj_t *lbl = lv_label_create(btn);
-    lv_label_set_text(lbl, text);
-    lv_obj_center(lbl);
-    lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(lbl, fg, 0);
-    lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, NULL);
     return btn;
+}
+
+/* ── Kit shell helpers ────────────────────────────────────────────────── */
+
+/* The condensed face is drawn in capitals (uk_label does this at creation;
+ * a relabel has to do it again). */
+static void _wiz_set_caps(lv_obj_t *label, const char *text) {
+    char buf[64];
+    size_t i = 0;
+    for (; text && text[i] && i < sizeof(buf) - 1; i++)
+        buf[i] = (char)toupper((unsigned char)text[i]);
+    buf[i] = '\0';
+    lv_label_set_text(label, buf);
+}
+
+/* Repaint the bar for the step being built: its name, "Step N of M" (or
+ * NULL for none) in the status strip, and whether Close is offered. */
+static void _wiz_bar_set(const char *title, const char *status, bool can_close) {
+    if (s_bar_title) _wiz_set_caps(s_bar_title, title);
+    if (s_bar_status) {
+        lv_obj_t *item = lv_obj_get_parent(s_bar_status);
+        if (status && status[0]) {
+            lv_label_set_text(s_bar_status, status);
+            if (item) lv_obj_clear_flag(item, LV_OBJ_FLAG_HIDDEN);
+        } else if (item) {
+            lv_obj_add_flag(item, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    if (s_bar_close) {
+        if (can_close) lv_obj_clear_flag(s_bar_close, LV_OBJ_FLAG_HIDDEN);
+        else           lv_obj_add_flag(s_bar_close, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+/* The bar's Close — the same teardown the old top-right "×" used. Shown on
+ * the channels step (standalone, apply-to-widget and the full flow alike),
+ * so the editor always has a visible way out at the top. */
+static void _bar_close_cb(lv_event_t *e) {
+    (void)e;
+    _close_wizard(false);
+}
+
+/* Thin kit progress track: raised track, accent fill, round ends. */
+static void _wiz_style_bar(lv_obj_t *bar) {
+    lv_obj_set_style_bg_color(bar, ui_pal->raised_hi, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(bar, THEME_COLOR_ACCENT, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(bar, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_radius(bar, LV_RADIUS_CIRCLE, LV_PART_INDICATOR);
+}
+
+static void _wiz_style_spinner(lv_obj_t *sp) {
+    lv_obj_set_style_arc_color(sp, ui_pal->raised_hi, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(sp, THEME_COLOR_ACCENT, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(sp, 4, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(sp, 4, LV_PART_INDICATOR);
+}
+
+/* Kit dropdown in the small face the 30 px rows are sized for. Call after
+ * lv_dropdown_create (its option list exists from creation). */
+static void _wiz_style_dropdown(lv_obj_t *dd) {
+    uk_style_dropdown(dd);
+    lv_obj_set_style_text_font(dd, THEME_FONT_SMALL, 0);
+    lv_obj_t *list = lv_dropdown_get_list(dd);
+    if (list) lv_obj_set_style_text_font(list, THEME_FONT_SMALL, 0);
+}
+
+/* A tap-to-edit value box (a button that opens the keypad) drawn as a kit
+ * text field. The default theme's button look is removed first so the kit
+ * field style is all there is. */
+static void _wiz_style_textbox(lv_obj_t *box) {
+    lv_obj_remove_style_all(box);
+    uk_style_textarea(box);
+    lv_obj_set_style_bg_color(box, THEME_COLOR_SECTION_BG, LV_STATE_PRESSED);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+}
+
+/* A sheet: a kit popup card (surface, strong hairline, radius 14, pad 18,
+ * caps title top-left, square X top-right) over a backdrop — both children
+ * of s_overlay, see the note at the top of the file. Returns the backdrop,
+ * which is what the callers keep and delete; @card_out gets the card.
+ * Children go at y >= UK_POPUP_BODY_Y inside the card's padding.
+ * @opaque paints the backdrop solid so nothing under a heavy sheet redraws. */
+static lv_obj_t *_wiz_sheet_open(lv_coord_t w, lv_coord_t h, const char *title,
+                                 lv_event_cb_t close_cb, bool opaque,
+                                 lv_obj_t **card_out) {
+    lv_obj_t *bd = lv_obj_create(s_overlay);
+    lv_obj_remove_style_all(bd);
+    lv_obj_set_size(bd, lv_pct(100), lv_pct(100));
+    lv_obj_center(bd);
+    if (opaque) {
+        lv_obj_set_style_bg_color(bd, THEME_COLOR_BG, 0);
+        lv_obj_set_style_bg_opa(bd, LV_OPA_COVER, 0);
+    } else {
+        lv_obj_set_style_bg_color(bd, lv_color_black(), 0);   /* the kit backdrop */
+        lv_obj_set_style_bg_opa(bd, 150, 0);
+    }
+    lv_obj_clear_flag(bd, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(bd, LV_OBJ_FLAG_CLICKABLE);   /* taps behind the card stop here */
+
+    lv_obj_t *card = lv_obj_create(bd);
+    lv_obj_remove_style_all(card);
+    lv_obj_set_size(card, w, h);
+    lv_obj_center(card);
+    lv_obj_set_style_bg_color(card, THEME_COLOR_SURFACE, 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(card, THEME_COLOR_BORDER_MED, 0);   /* line_strong */
+    lv_obj_set_style_border_width(card, 1, 0);
+    lv_obj_set_style_radius(card, UK_R_POPUP, 0);
+    lv_obj_set_style_pad_all(card, SHEET_PAD, 0);
+    lv_obj_set_style_text_color(card, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t *t = uk_label(card, title, UK_FONT_HEAD, UK_TONE_TEXT);
+    lv_label_set_long_mode(t, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(t, w - 2 * SHEET_PAD - 56);
+    lv_obj_align(t, LV_ALIGN_TOP_LEFT, 0, 4);
+
+    lv_obj_t *x = uk_btn(card, UK_ICON_CLOSE, NULL, UK_BTN_NEUTRAL, close_cb, NULL);
+    lv_obj_set_size(x, 40, 36);
+    lv_obj_set_style_pad_hor(x, 0, 0);
+    lv_obj_align(x, LV_ALIGN_TOP_RIGHT, 4, -4);
+    lv_obj_set_ext_click_area(x, 12);
+
+    if (card_out) *card_out = card;
+    return bd;
 }
 
 /* ── CAN scan UI callbacks ────────────────────────────────────────────── */
@@ -547,8 +690,9 @@ static void _scan_ui_update(void) {
                 (unsigned long)r->results[bi].frames_received,
                 r->results[bi].unique_id_count);
             /* Show Apply button */
-            lv_obj_t *lbl = lv_obj_get_child(s_btn_apply, 0);
-            lv_label_set_text_fmt(lbl, "Apply %s & Continue", BR_NAMES[bi]);
+            char abuf[40];
+            snprintf(abuf, sizeof(abuf), "Apply %s & Continue", BR_NAMES[bi]);
+            uk_btn_set_text(s_btn_apply, abuf);
             lv_obj_clear_flag(s_btn_apply, LV_OBJ_FLAG_HIDDEN);
         } else {
             /* If every bitrate failed to install, that's a peripheral
@@ -578,8 +722,7 @@ static void _scan_ui_update(void) {
         /* Hide cancel, show Re-scan + (when no traffic) Continue */
         lv_obj_add_flag(s_btn_cancel, LV_OBJ_FLAG_HIDDEN);
         if (s_btn_start) {
-            lv_obj_t *slbl = lv_obj_get_child(s_btn_start, 0);
-            if (slbl) lv_label_set_text(slbl, "Re-scan");
+            uk_btn_set_text(s_btn_start, "Re-scan");
             lv_obj_clear_flag(s_btn_start, LV_OBJ_FLAG_HIDDEN);
         }
         if (r->recommended_bitrate < 0) {
@@ -628,8 +771,7 @@ static void _reset_step1_for_scan(void) {
 static void _show_start_failed_state(void) {
     if (s_btn_cancel) lv_obj_add_flag(s_btn_cancel, LV_OBJ_FLAG_HIDDEN);
     if (s_btn_start) {
-        lv_obj_t *slbl = lv_obj_get_child(s_btn_start, 0);
-        if (slbl) lv_label_set_text(slbl, "Start Scan");
+        uk_btn_set_text(s_btn_start, "Start Scan");
         lv_obj_clear_flag(s_btn_start, LV_OBJ_FLAG_HIDDEN);
     }
     if (s_scan_status) {
@@ -714,7 +856,7 @@ static void _btn_start_scan_cb(lv_event_t *e) {
     if (s_start_retry_timer) {
         if (s_scan_status) {
             lv_label_set_text(s_scan_status,
-                "Already retrying — please wait...");
+                "Already retrying - please wait...");
         }
         return;
     }
@@ -825,6 +967,7 @@ static void _btn_finish_cb(lv_event_t *e) {
         if (can_bus_test_is_running()) can_bus_test_cancel();
         lv_obj_t *overlay_to_free = s_overlay;
         s_overlay = s_card = s_step1 = s_step3 = NULL;
+        s_bar = s_bar_title = s_bar_status = s_bar_close = NULL;
         s_scan_status = s_scan_progress = s_scan_bar = s_scan_detail = NULL;
         s_btn_apply = s_btn_next1 = s_btn_cancel = s_btn_start = NULL;
         for (int i = 0; i < 4; i++) s_scan_results[i] = NULL;
@@ -1465,15 +1608,9 @@ static void _ecu_obd2_check_cb(const obd2_autosetup_result_t *r, void *user) {
     snprintf(b, sizeof(b), "Use OBD2  -  your car answers %u readings",
              (unsigned)r->readings);
     lv_label_set_text(s_ecu_obd2_lbl, b);
-    lv_obj_set_style_text_color(s_ecu_obd2_lbl, THEME_COLOR_TEXT_ON_ACCENT, 0);
-    lv_obj_set_style_bg_color(s_ecu_obd2_btn, THEME_COLOR_ACCENT_BLUE, 0);
-    lv_obj_set_style_border_width(s_ecu_obd2_btn, 0, 0);
+    uk_btn_set_kind(s_ecu_obd2_btn, UK_BTN_PRIMARY);
     if (s_ecu_pick_btn && lv_obj_get_parent(s_ecu_pick_btn) == s_ecu_result_card) {
-        lv_obj_set_style_bg_color(s_ecu_pick_btn, THEME_COLOR_BG, 0);
-        lv_obj_set_style_border_color(s_ecu_pick_btn, THEME_COLOR_BORDER, 0);
-        lv_obj_set_style_border_width(s_ecu_pick_btn, 1, 0);
-        lv_obj_t *pl = lv_obj_get_child(s_ecu_pick_btn, 0);
-        if (pl) lv_obj_set_style_text_color(pl, THEME_COLOR_TEXT_PRIMARY, 0);
+        uk_btn_set_kind(s_ecu_pick_btn, UK_BTN_NEUTRAL);
         /* Primary goes on top. */
         lv_obj_align(s_ecu_obd2_btn, LV_ALIGN_TOP_LEFT, 0, 84);
         lv_obj_align(s_ecu_pick_btn, LV_ALIGN_TOP_LEFT, 0, 132);
@@ -1601,63 +1738,33 @@ static void _ecu_btn_pick_cb(lv_event_t *e) {
 
     _ecu_pick_collect();
 
-    /* Full-overlay sheet — backdrop covers wizard card. */
-    s_ecu_picker_sheet = lv_obj_create(s_overlay);
-    lv_obj_remove_style_all(s_ecu_picker_sheet);
-    lv_obj_set_size(s_ecu_picker_sheet, lv_pct(100), lv_pct(100));
-    lv_obj_center(s_ecu_picker_sheet);
-    lv_obj_set_style_bg_color(s_ecu_picker_sheet, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(s_ecu_picker_sheet, LV_OPA_80, 0);
-    lv_obj_clear_flag(s_ecu_picker_sheet, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *card = lv_obj_create(s_ecu_picker_sheet);
-    lv_obj_remove_style_all(card);
-    lv_obj_set_size(card, CH_CARD_W, CH_CARD_H);
-    lv_obj_center(card);
-    lv_obj_set_style_bg_color(card, THEME_COLOR_PANEL, 0);
-    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(card, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_border_width(card, 1, 0);
-    lv_obj_set_style_radius(card, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_pad_all(card, 16, 0);
-    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *title = lv_label_create(card);
-    lv_label_set_text(title, "Pick your ECU");
-    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_text_font(title, THEME_FONT_MEDIUM, 0);
-    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
+    /* Kit sheet over the whole wizard (bar included). */
+    lv_obj_t *card = NULL;
+    s_ecu_picker_sheet = _wiz_sheet_open(SHEET_W, SHEET_H, "Pick your ECU",
+                                         _ecu_picker_close_cb, false, &card);
+    const lv_coord_t inner_w = SHEET_W - 2 * SHEET_PAD;
+    const lv_coord_t inner_h = SHEET_H - 2 * SHEET_PAD;
 
     lv_obj_t *sub = lv_label_create(card);
     lv_label_set_text(sub,
-        "Tap a make + version - we'll auto-populate every channel for it.");
-    lv_obj_align(sub, LV_ALIGN_TOP_LEFT, 0, 26);
-    lv_obj_set_style_text_font(sub, THEME_FONT_TINY, 0);
+        "Tap your ECU and every channel it sends is set up for you.");
+    lv_obj_align(sub, LV_ALIGN_TOP_LEFT, 0, 34);
+    lv_obj_set_style_text_font(sub, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(sub, THEME_COLOR_TEXT_MUTED, 0);
-
-    lv_obj_t *close_btn = lv_btn_create(card);
-    lv_obj_set_size(close_btn, 32, 28);
-    lv_obj_align(close_btn, LV_ALIGN_TOP_RIGHT, 0, -4);
-    lv_obj_set_style_bg_color(close_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_radius(close_btn, 4, 0);
-    lv_obj_set_style_shadow_width(close_btn, 0, 0);
-    lv_obj_t *xlbl = lv_label_create(close_btn);
-    lv_label_set_text(xlbl, LV_SYMBOL_CLOSE);
-    lv_obj_center(xlbl);
-    lv_obj_set_style_text_color(xlbl, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_add_event_cb(close_btn, _ecu_picker_close_cb, LV_EVENT_CLICKED, NULL);
 
     /* Scrollable list of (ECU, Version) rows. Same look as the channel
      * rows in Step 3 so the wizard reads as one coherent UI. */
     lv_obj_t *list = lv_obj_create(card);
     lv_obj_remove_style_all(list);
-    lv_obj_set_size(list, CH_CARD_W - 32, CH_CARD_H - 68);
-    lv_obj_align(list, LV_ALIGN_TOP_LEFT, 0, 52);
+    lv_obj_set_size(list, inner_w, inner_h - UK_POPUP_BODY_Y);
+    lv_obj_align(list, LV_ALIGN_TOP_LEFT, 0, UK_POPUP_BODY_Y);
     lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, 0);
     lv_obj_set_style_pad_all(list, 0, 0);
+    lv_obj_set_style_pad_right(list, 8, 0);   /* rows clear of the scrollbar */
     lv_obj_set_style_pad_row(list, 6, 0);
     lv_obj_set_scroll_dir(list, LV_DIR_VER);
     lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
+    uk_style_scrollbar(list);
 
     /* OBD2 first, set apart from the presets below it: it is the answer
      * for a car with a factory ECU the catalogue has no preset for, and it
@@ -1668,47 +1775,42 @@ static void _ecu_btn_pick_cb(lv_event_t *e) {
         /* The sheet's full width. Rows were CH_ROW_W — the channels list's
          * 336 px, borrowed — so names wrapped in half a card (seen on glass). */
         lv_obj_set_size(row, lv_pct(100), 52);
-        lv_obj_set_style_bg_color(row, THEME_COLOR_BG, 0);
+        lv_obj_set_style_bg_color(row, THEME_COLOR_CONTROL_BG, 0);          /* raised */
+        lv_obj_set_style_bg_color(row, THEME_COLOR_BTN_GRAY, LV_STATE_PRESSED); /* raised_hi */
         lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_color(row, THEME_COLOR_ACCENT_BLUE, 0);
+        /* The accent edge sets it apart from the presets below. */
+        lv_obj_set_style_border_color(row, THEME_COLOR_ACCENT, 0);
         lv_obj_set_style_border_width(row, 1, 0);
         lv_obj_set_style_border_opa(row, LV_OPA_60, 0);
-        lv_obj_set_style_radius(row, 8, 0);
+        lv_obj_set_style_radius(row, UK_R_BTN, 0);
         lv_obj_set_style_pad_hor(row, 16, 0);
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(row, _ecu_btn_obd2_cb, LV_EVENT_CLICKED, NULL);
 
-        lv_obj_t *lbl = lv_label_create(row);
-        lv_label_set_text(lbl, "OBD2");
-        lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 0, 7);
-        lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(lbl, THEME_COLOR_TEXT_PRIMARY, 0);
+        lv_obj_t *lbl = uk_label(row, "OBD2", UK_FONT_LABEL, UK_TONE_TEXT);
+        lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 0, 6);
 
         lv_obj_t *hint = lv_label_create(row);
         lv_label_set_text(hint, "Factory ECU with no preset - read through the diagnostic port");
         lv_label_set_long_mode(hint, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(hint, CH_CARD_W - 32 - 80);
+        lv_obj_set_width(hint, SHEET_W - 2 * SHEET_PAD - 80);
         lv_obj_align(hint, LV_ALIGN_BOTTOM_LEFT, 0, -7);
-        lv_obj_set_style_text_font(hint, THEME_FONT_TINY, 0);
+        lv_obj_set_style_text_font(hint, THEME_FONT_SMALL, 0);
         lv_obj_set_style_text_color(hint, THEME_COLOR_TEXT_MUTED, 0);
 
-        lv_obj_t *arrow = lv_label_create(row);
-        lv_label_set_text(arrow, LV_SYMBOL_RIGHT);
+        lv_obj_t *arrow = uk_icon(row, UK_ICON_RIGHT, UK_ICON_MD, UK_TONE_MUTED);
         lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, 0, 0);
-        lv_obj_set_style_text_font(arrow, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(arrow, THEME_COLOR_TEXT_MUTED, 0);
     }
 
     for (uint8_t i = 0; i < s_pick_count; i++) {
         lv_obj_t *row = lv_obj_create(list);
         lv_obj_remove_style_all(row);
         lv_obj_set_size(row, lv_pct(100), 44);
-        lv_obj_set_style_bg_color(row, THEME_COLOR_BG, 0);
+        lv_obj_set_style_bg_color(row, THEME_COLOR_CONTROL_BG, 0);          /* raised */
+        lv_obj_set_style_bg_color(row, THEME_COLOR_BTN_GRAY, LV_STATE_PRESSED); /* raised_hi */
         lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_color(row, THEME_COLOR_BORDER, 0);
-        lv_obj_set_style_border_width(row, 1, 0);
-        lv_obj_set_style_radius(row, 8, 0);
+        lv_obj_set_style_radius(row, UK_R_BTN, 0);
         lv_obj_set_style_pad_hor(row, 16, 0);
         lv_obj_set_style_pad_ver(row, 8, 0);
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
@@ -1721,9 +1823,9 @@ static void _ecu_btn_pick_cb(lv_event_t *e) {
         lv_obj_t *lbl = lv_label_create(row);
         lv_label_set_text(lbl, buf);
         lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(lbl, CH_CARD_W - 32 - 170);
+        lv_obj_set_width(lbl, SHEET_W - 2 * SHEET_PAD - 180);
         lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 0, 0);
-        lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
+        lv_obj_set_style_text_font(lbl, THEME_FONT_BODY, 0);
         lv_obj_set_style_text_color(lbl, THEME_COLOR_TEXT_PRIMARY, 0);
 
         /* Live-match chip — "matched/total live". Showing the absolute
@@ -1746,20 +1848,20 @@ static void _ecu_btn_pick_cb(lv_event_t *e) {
         }
         lv_obj_t *chip = lv_label_create(row);
         lv_label_set_text(chip, chip_buf);
-        lv_obj_align(chip, LV_ALIGN_RIGHT_MID, -22, 0);
-        lv_obj_set_style_text_font(chip, THEME_FONT_TINY, 0);
-        lv_obj_set_style_pad_hor(chip, 8, 0);
+        lv_obj_align(chip, LV_ALIGN_RIGHT_MID, -30, 0);
+        lv_obj_set_style_text_font(chip, THEME_FONT_SMALL, 0);
+        lv_obj_set_style_pad_hor(chip, 9, 0);
         lv_obj_set_style_pad_ver(chip, 3, 0);
-        lv_obj_set_style_radius(chip, 10, 0);
-        lv_obj_set_style_bg_opa(chip, LV_OPA_30, 0);
+        lv_obj_set_style_radius(chip, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_opa(chip, LV_OPA_COVER, 0);
         if (strong) {
-            /* Strong match — accent blue. */
-            lv_obj_set_style_bg_color(chip, THEME_COLOR_ACCENT_BLUE, 0);
-            lv_obj_set_style_text_color(chip, THEME_COLOR_TEXT_ON_ACCENT, 0);
+            /* Strong match — the kit's "on" tint. */
+            lv_obj_set_style_bg_color(chip, ui_pal->accent_soft, 0);
+            lv_obj_set_style_text_color(chip, ui_pal->accent_ink, 0);
         } else if (has_live) {
             /* Some IDs match but below 30% — show muted to discourage
              * picking it but still give the user the data point. */
-            lv_obj_set_style_bg_color(chip, THEME_COLOR_BORDER_MED, 0);
+            lv_obj_set_style_bg_color(chip, ui_pal->raised_hi, 0);
             lv_obj_set_style_text_color(chip, THEME_COLOR_TEXT_MUTED, 0);
         } else {
             /* No live frames for this ECU — clearly mark as "not seen". */
@@ -1768,11 +1870,8 @@ static void _ecu_btn_pick_cb(lv_event_t *e) {
             lv_obj_set_style_text_color(chip, THEME_COLOR_TEXT_MUTED, 0);
         }
 
-        lv_obj_t *arrow = lv_label_create(row);
-        lv_label_set_text(arrow, LV_SYMBOL_RIGHT);
+        lv_obj_t *arrow = uk_icon(row, UK_ICON_RIGHT, UK_ICON_MD, UK_TONE_MUTED);
         lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, 0, 0);
-        lv_obj_set_style_text_font(arrow, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(arrow, THEME_COLOR_TEXT_MUTED, 0);
     }
 
     if (s_pick_count == 0) {
@@ -1794,35 +1893,23 @@ static void _render_ecu_result(void) {
     }
     s_ecu_result_card = NULL;
 
-    s_ecu_result_card = lv_obj_create(s_step_ecu);
-    lv_obj_remove_style_all(s_ecu_result_card);
+    /* A kit card (card fill, hairline, radius 10, pad 14); the fixed size
+     * keeps the buttons' absolute positions inside it. */
+    s_ecu_result_card = uk_card(s_step_ecu);
     lv_obj_set_size(s_ecu_result_card, BTN_W, 220);
-    lv_obj_align(s_ecu_result_card, LV_ALIGN_TOP_MID, 0, 130);
-    lv_obj_set_style_bg_color(s_ecu_result_card, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(s_ecu_result_card, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(s_ecu_result_card, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_border_width(s_ecu_result_card, 1, 0);
-    lv_obj_set_style_radius(s_ecu_result_card, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_pad_all(s_ecu_result_card, 16, 0);
-    lv_obj_clear_flag(s_ecu_result_card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_align(s_ecu_result_card, LV_ALIGN_TOP_MID, 0, 40);
 
     if (s_ecu_top_match >= 0) {
         const wiz_ecu_match_t *m = &s_ecu_matches[s_ecu_top_match];
-        lv_obj_t *head = lv_label_create(s_ecu_result_card);
-        lv_label_set_text(head, "Detected");
-        lv_obj_align(head, LV_ALIGN_TOP_LEFT, 0, 0);
-        lv_obj_set_style_text_font(head, THEME_FONT_TINY, 0);
-        lv_obj_set_style_text_color(head, THEME_COLOR_TEXT_MUTED, 0);
+        lv_obj_t *head = uk_section(s_ecu_result_card, "Detected");
+        lv_obj_align(head, LV_ALIGN_TOP_LEFT, 0, -4);
 
         char title_buf[64];
         _ecu_display_name(m->ecu, m->version, title_buf, sizeof(title_buf));
-        lv_obj_t *t = lv_label_create(s_ecu_result_card);
-        lv_label_set_text(t, title_buf);
+        lv_obj_t *t = uk_label(s_ecu_result_card, title_buf, UK_FONT_TITLE, UK_TONE_TEXT);
         lv_label_set_long_mode(t, LV_LABEL_LONG_DOT);
         lv_obj_set_width(t, BTN_W - 32);
         lv_obj_align(t, LV_ALIGN_TOP_LEFT, 0, 16);
-        lv_obj_set_style_text_font(t, THEME_FONT_LARGE, 0);
-        lv_obj_set_style_text_color(t, THEME_COLOR_TEXT_PRIMARY, 0);
 
         /* Counts, not a percentage. "23% confidence" was what a correct
          * detection of a wide preset printed — a MaxxECU can send 21 frames
@@ -1834,46 +1921,26 @@ static void _render_ecu_result(void) {
                  m->matched, m->total);
         lv_obj_t *s = lv_label_create(s_ecu_result_card);
         lv_label_set_text(s, sub);
-        lv_obj_align(s, LV_ALIGN_TOP_LEFT, 0, 50);
-        lv_obj_set_style_text_font(s, THEME_FONT_TINY, 0);
+        lv_obj_align(s, LV_ALIGN_TOP_LEFT, 0, 52);
+        lv_obj_set_style_text_font(s, THEME_FONT_SMALL, 0);
         lv_obj_set_style_text_color(s, THEME_COLOR_TEXT_MUTED, 0);
 
-        /* Use this ECU */
-        lv_obj_t *use_btn = lv_btn_create(s_ecu_result_card);
+        /* Use this ECU — the step's one primary action */
+        lv_obj_t *use_btn = uk_btn(s_ecu_result_card, UK_ICON_CHECK, "Use this ECU",
+                                   UK_BTN_PRIMARY, _ecu_btn_use_cb, NULL);
         lv_obj_set_size(use_btn, BTN_W - 32, BTN_H);
         lv_obj_align(use_btn, LV_ALIGN_TOP_LEFT, 0, 84);
-        lv_obj_set_style_bg_color(use_btn, THEME_COLOR_ACCENT_BLUE, 0);
-        lv_obj_set_style_radius(use_btn, THEME_RADIUS_NORMAL, 0);
-        lv_obj_set_style_shadow_width(use_btn, 0, 0);
-        lv_obj_t *ulbl = lv_label_create(use_btn);
-        lv_label_set_text(ulbl, "Use this ECU");
-        lv_obj_center(ulbl);
-        lv_obj_set_style_text_font(ulbl, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(ulbl, THEME_COLOR_TEXT_ON_ACCENT, 0);
-        lv_obj_add_event_cb(use_btn, _ecu_btn_use_cb, LV_EVENT_CLICKED, NULL);
 
         /* Pick different — secondary */
-        lv_obj_t *pick_btn = lv_btn_create(s_ecu_result_card);
+        lv_obj_t *pick_btn = uk_btn(s_ecu_result_card, UK_ICON_LIST, "Pick a different ECU",
+                                    UK_BTN_NEUTRAL, _ecu_btn_pick_cb, NULL);
         lv_obj_set_size(pick_btn, BTN_W - 32, BTN_H);
         lv_obj_align(pick_btn, LV_ALIGN_TOP_LEFT, 0, 132);
-        lv_obj_set_style_bg_color(pick_btn, THEME_COLOR_BG, 0);
-        lv_obj_set_style_border_color(pick_btn, THEME_COLOR_BORDER, 0);
-        lv_obj_set_style_border_width(pick_btn, 1, 0);
-        lv_obj_set_style_radius(pick_btn, THEME_RADIUS_NORMAL, 0);
-        lv_obj_set_style_shadow_width(pick_btn, 0, 0);
-        lv_obj_t *plbl = lv_label_create(pick_btn);
-        lv_label_set_text(plbl, "Pick a different ECU");
-        lv_obj_center(plbl);
-        lv_obj_set_style_text_font(plbl, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(plbl, THEME_COLOR_TEXT_PRIMARY, 0);
-        lv_obj_add_event_cb(pick_btn, _ecu_btn_pick_cb, LV_EVENT_CLICKED, NULL);
     } else {
         /* No match — let the user pick from the catalog or skip. */
-        lv_obj_t *head = lv_label_create(s_ecu_result_card);
-        lv_label_set_text(head, "No ECU detected");
-        lv_obj_align(head, LV_ALIGN_TOP_LEFT, 0, 0);
-        lv_obj_set_style_text_font(head, THEME_FONT_MEDIUM, 0);
-        lv_obj_set_style_text_color(head, THEME_COLOR_TEXT_PRIMARY, 0);
+        lv_obj_t *head = uk_label(s_ecu_result_card, "No ECU detected",
+                                  UK_FONT_HEAD, UK_TONE_TEXT);
+        lv_obj_align(head, LV_ALIGN_TOP_LEFT, 0, -2);
 
         /* Say what we actually heard. A bare "nothing matched" sends the user
          * hunting through Device Settings for the CAN list to find out
@@ -1886,7 +1953,7 @@ static void _render_ecu_result(void) {
         uint16_t seen = can_id_tracker_count();
         if (seen == 0) {
             hn += snprintf(heard + hn, sizeof(heard) - hn,
-                           "No CAN frames were heard at all — check wiring,\n"
+                           "No CAN frames were heard at all - check wiring,\n"
                            "ignition and bitrate.");
         } else {
             hn += snprintf(heard + hn, sizeof(heard) - hn, "Heard %u ID%s:",
@@ -1921,56 +1988,31 @@ static void _render_ecu_result(void) {
         lv_label_set_long_mode(sub, LV_LABEL_LONG_WRAP);
         lv_obj_set_width(sub, BTN_W - 32);
 
-        lv_obj_t *pick_btn = lv_btn_create(s_ecu_result_card);
+        lv_obj_t *pick_btn = uk_btn(s_ecu_result_card, UK_ICON_LIST, "Pick an ECU manually",
+                                    UK_BTN_PRIMARY, _ecu_btn_pick_cb, NULL);
         s_ecu_pick_btn = pick_btn;
         lv_obj_set_size(pick_btn, BTN_W - 32, BTN_H);
         lv_obj_align(pick_btn, LV_ALIGN_TOP_LEFT, 0, 84);
-        lv_obj_set_style_bg_color(pick_btn, THEME_COLOR_ACCENT_BLUE, 0);
-        lv_obj_set_style_radius(pick_btn, THEME_RADIUS_NORMAL, 0);
-        lv_obj_set_style_shadow_width(pick_btn, 0, 0);
-        lv_obj_t *plbl = lv_label_create(pick_btn);
-        lv_label_set_text(plbl, "Pick an ECU manually");
-        lv_obj_center(plbl);
-        lv_obj_set_style_text_font(plbl, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(plbl, THEME_COLOR_TEXT_ON_ACCENT, 0);
-        lv_obj_add_event_cb(pick_btn, _ecu_btn_pick_cb, LV_EVENT_CLICKED, NULL);
 
         /* Nothing matched is what a factory ECU without a preset looks like
          * — the car OBD2 is for. Say it here, where that car ends up. */
-        lv_obj_t *obd_btn = lv_btn_create(s_ecu_result_card);
+        lv_obj_t *obd_btn = uk_btn(s_ecu_result_card, UK_ICON_OBD,
+                                   "My car uses OBD2   (checking...)",
+                                   UK_BTN_NEUTRAL, _ecu_btn_obd2_cb, NULL);
         lv_obj_set_size(obd_btn, BTN_W - 32, BTN_H);
         lv_obj_align(obd_btn, LV_ALIGN_TOP_LEFT, 0, 132);
-        lv_obj_set_style_bg_color(obd_btn, THEME_COLOR_BG, 0);
-        lv_obj_set_style_border_color(obd_btn, THEME_COLOR_BORDER, 0);
-        lv_obj_set_style_border_width(obd_btn, 1, 0);
-        lv_obj_set_style_radius(obd_btn, THEME_RADIUS_NORMAL, 0);
-        lv_obj_set_style_shadow_width(obd_btn, 0, 0);
-        lv_obj_t *olbl = lv_label_create(obd_btn);
-        lv_label_set_text(olbl, "My car uses OBD2   (checking...)");
-        lv_obj_center(olbl);
-        lv_obj_set_style_text_font(olbl, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(olbl, THEME_COLOR_TEXT_PRIMARY, 0);
-        lv_obj_add_event_cb(obd_btn, _ecu_btn_obd2_cb, LV_EVENT_CLICKED, NULL);
         s_ecu_obd2_btn = obd_btn;
-        s_ecu_obd2_lbl = olbl;
+        s_ecu_obd2_lbl = uk_btn_label(obd_btn);
         /* Don't make them guess: ask the car whether it answers OBD2 while
          * the card is up, and say so on the button (ADR-0074). */
         obd2_autosetup_check(_ecu_obd2_check_cb, NULL);
     }
 
     /* Skip — always available, regardless of detection result. */
-    lv_obj_t *skip_btn = lv_btn_create(s_step_ecu);
+    lv_obj_t *skip_btn = uk_btn(s_step_ecu, UK_ICON_NONE, "Skip ECU setup",
+                                UK_BTN_GHOST, _ecu_btn_skip_cb, NULL);
     lv_obj_set_size(skip_btn, BTN_W, BTN_H);
     lv_obj_align(skip_btn, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_bg_opa(skip_btn, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(skip_btn, 0, 0);
-    lv_obj_set_style_shadow_width(skip_btn, 0, 0);
-    lv_obj_t *slbl = lv_label_create(skip_btn);
-    lv_label_set_text(slbl, "Skip ECU setup");
-    lv_obj_center(slbl);
-    lv_obj_set_style_text_font(slbl, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(slbl, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_add_event_cb(skip_btn, _ecu_btn_skip_cb, LV_EVENT_CLICKED, NULL);
 }
 
 /* Probe timer: every 100 ms, recompute matches against the live
@@ -2088,7 +2130,7 @@ static void _obd2_step_result_cb(const obd2_autosetup_result_t *r, void *user) {
             "%u channels set up from OBD2. The dash can poll\n"
             "48 readings at most, so some were left out.",
             (unsigned)r->bound);
-        col = THEME_COLOR_GREEN;
+        col = THEME_COLOR_STATUS_CONNECTED;
     } else if (r->bound && r->err == ESP_FAIL) {
         snprintf(msg, sizeof(msg),
             "%u channels set up from OBD2 - working now, but\n"
@@ -2099,12 +2141,12 @@ static void _obd2_step_result_cb(const obd2_autosetup_result_t *r, void *user) {
             "Done - your car reports %u readings, and %u of\n"
             "them are now channels. You'll see them next.",
             (unsigned)r->readings, (unsigned)r->bound);
-        col = THEME_COLOR_GREEN;
+        col = THEME_COLOR_STATUS_CONNECTED;
     } else if (r->offered) {
         snprintf(msg, sizeof(msg),
             "Your car reports %u readings, and everything it\n"
             "offers is already set up.", (unsigned)r->readings);
-        col = THEME_COLOR_GREEN;
+        col = THEME_COLOR_STATUS_CONNECTED;
     } else {
         snprintf(msg, sizeof(msg),
             "Your car answered, but nothing it reports is a\n"
@@ -2164,10 +2206,8 @@ static void _show_step_obd2(void) {
     config_store_save_ecu("", "");
     config_store_save_ecu_base_id(0);
 
-    if (s_card && lv_obj_is_valid(s_card)) {
-        lv_obj_set_size(s_card, CARD_W, CARD_H);
-        lv_obj_center(s_card);
-    }
+    /* The body under the kit bar is a fixed size; nothing to resize. */
+    _wiz_bar_set("OBD2", "Step 2 of 4", false);
 
     s_step_obd2 = lv_obj_create(s_card);
     lv_obj_remove_style_all(s_step_obd2);
@@ -2175,51 +2215,38 @@ static void _show_step_obd2(void) {
     lv_obj_center(s_step_obd2);
     lv_obj_clear_flag(s_step_obd2, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *title = lv_label_create(s_step_obd2);
-    lv_label_set_text(title, "OBD2");
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_text_font(title, THEME_FONT_LARGE, 0);
-    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
-
-    lv_obj_t *sub = lv_label_create(s_step_obd2);
-    lv_label_set_text(sub, "Step 2 of 4  -  reading the car through its diagnostic port");
-    lv_obj_align(sub, LV_ALIGN_TOP_MID, 0, 34);
-    lv_obj_set_style_text_font(sub, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(sub, THEME_COLOR_TEXT_MUTED, 0);
-
     lv_obj_t *body = lv_label_create(s_step_obd2);
     lv_label_set_text(body,
-        "The dash asks your car which readings it has and\n"
-        "turns each one into a channel. Keep the ignition on.");
+        "The dash asks your car, through its diagnostic port, which\n"
+        "readings it has and turns each one into a channel.\n"
+        "Keep the ignition on.");
     lv_obj_set_width(body, BTN_W);
     lv_obj_set_style_text_align(body, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(body, LV_ALIGN_TOP_MID, 0, 70);
-    lv_obj_set_style_text_font(body, THEME_FONT_SMALL, 0);
+    lv_obj_align(body, LV_ALIGN_TOP_MID, 0, 4);
+    lv_obj_set_style_text_font(body, THEME_FONT_BODY, 0);
     lv_obj_set_style_text_color(body, THEME_COLOR_TEXT_MUTED, 0);
 
     s_obd2_step_spinner = lv_spinner_create(s_step_obd2, 1000, 60);
     lv_obj_set_size(s_obd2_step_spinner, 28, 28);
-    lv_obj_align(s_obd2_step_spinner, LV_ALIGN_TOP_MID, 0, 132);
+    lv_obj_align(s_obd2_step_spinner, LV_ALIGN_TOP_MID, 0, 72);
+    _wiz_style_spinner(s_obd2_step_spinner);
 
     s_obd2_step_status = lv_label_create(s_step_obd2);
     lv_label_set_text(s_obd2_step_status, "");
     lv_obj_set_width(s_obd2_step_status, BTN_W);
     lv_obj_set_style_text_align(s_obd2_step_status, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(s_obd2_step_status, LV_ALIGN_TOP_MID, 0, 172);
+    lv_obj_align(s_obd2_step_status, LV_ALIGN_TOP_MID, 0, 112);
     lv_obj_set_style_text_font(s_obd2_step_status, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(s_obd2_step_status, THEME_COLOR_TEXT_MUTED, 0);
 
-    s_obd2_step_rescan_btn = _make_btn(s_step_obd2, LV_SYMBOL_REFRESH "  Scan again",
-                                       THEME_COLOR_SECTION_BG, THEME_COLOR_TEXT_PRIMARY,
-                                       true, 262, _btn_obd2_rescan_cb);
+    s_obd2_step_rescan_btn = _make_btn(s_step_obd2, UK_ICON_RESET, "Scan again",
+                                       UK_BTN_NEUTRAL, 206, _btn_obd2_rescan_cb);
 
-    _make_btn(s_step_obd2, "Continue",
-              THEME_COLOR_ACCENT_BLUE, THEME_COLOR_TEXT_ON_ACCENT,
-              false, 316, _btn_obd2_continue_cb);
+    _make_btn(s_step_obd2, UK_ICON_NONE, "Continue",
+              UK_BTN_PRIMARY, 258, _btn_obd2_continue_cb);
 
-    _make_btn(s_step_obd2, "Back - pick an ECU instead",
-              lv_color_black(), THEME_COLOR_TEXT_MUTED,
-              false, 370, _btn_obd2_back_cb);
+    _make_btn(s_step_obd2, UK_ICON_LEFT, "Back - pick an ECU instead",
+              UK_BTN_GHOST, 310, _btn_obd2_back_cb);
 
     _obd2_step_scan();
 }
@@ -2238,11 +2265,8 @@ static void _show_step_ecu_detect(void) {
      * last on so the score reflects ONLY frames seen during the probe. */
     can_id_tracker_reset();
 
-    /* Use the standard wizard card size for this step. */
-    if (s_card && lv_obj_is_valid(s_card)) {
-        lv_obj_set_size(s_card, CARD_W, CARD_H);
-        lv_obj_center(s_card);
-    }
+    /* The body under the kit bar is a fixed size; nothing to resize. */
+    _wiz_bar_set("Your ECU", "Step 2 of 4", false);
 
     s_step_ecu = lv_obj_create(s_card);
     lv_obj_remove_style_all(s_step_ecu);
@@ -2250,37 +2274,26 @@ static void _show_step_ecu_detect(void) {
     lv_obj_center(s_step_ecu);
     lv_obj_clear_flag(s_step_ecu, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *title = lv_label_create(s_step_ecu);
-    lv_label_set_text(title, "Detect Your ECU");
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_text_font(title, THEME_FONT_LARGE, 0);
-    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
-
     lv_obj_t *sub = lv_label_create(s_step_ecu);
     lv_label_set_text(sub,
-        "Step 2 of 4  -  matching live CAN IDs against the preset catalog");
-    lv_obj_align(sub, LV_ALIGN_TOP_MID, 0, 34);
-    lv_obj_set_style_text_font(sub, THEME_FONT_TINY, 0);
+        "Matching what is on the CAN bus against the ECU presets");
+    lv_obj_align(sub, LV_ALIGN_TOP_MID, 0, 4);
+    lv_obj_set_style_text_font(sub, THEME_FONT_BODY, 0);
     lv_obj_set_style_text_color(sub, THEME_COLOR_TEXT_MUTED, 0);
 
     /* Probe progress + status line, hidden once the probe completes. */
     s_ecu_status = lv_label_create(s_step_ecu);
     lv_label_set_text(s_ecu_status, "Listening to the bus...");
-    lv_obj_align(s_ecu_status, LV_ALIGN_TOP_MID, 0, 76);
+    lv_obj_align(s_ecu_status, LV_ALIGN_TOP_MID, 0, 60);
     lv_obj_set_style_text_font(s_ecu_status, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(s_ecu_status, THEME_COLOR_TEXT_PRIMARY, 0);
 
     s_ecu_progress = lv_bar_create(s_step_ecu);
-    lv_obj_set_size(s_ecu_progress, BTN_W, 8);
-    lv_obj_align(s_ecu_progress, LV_ALIGN_TOP_MID, 0, 102);
+    lv_obj_set_size(s_ecu_progress, BTN_W, 6);
+    lv_obj_align(s_ecu_progress, LV_ALIGN_TOP_MID, 0, 86);
     lv_bar_set_range(s_ecu_progress, 0, 100);
     lv_bar_set_value(s_ecu_progress, 0, LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(s_ecu_progress, THEME_COLOR_SECTION_BG,
-                              LV_PART_MAIN);
-    lv_obj_set_style_bg_color(s_ecu_progress, THEME_COLOR_ACCENT_BLUE,
-                              LV_PART_INDICATOR);
-    lv_obj_set_style_radius(s_ecu_progress, 4, LV_PART_MAIN);
-    lv_obj_set_style_radius(s_ecu_progress, 4, LV_PART_INDICATOR);
+    _wiz_style_bar(s_ecu_progress);
 
     /* Kick the timer. _ecu_probe_tick will compute matches when
      * elapsed >= WIZ_ECU_PROBE_MS and swap to the result card. */
@@ -2323,37 +2336,48 @@ static void _calc_btn_cb(lv_event_t *e);
 /* ── List rows ───────────────────────────────────────────────────────── */
 
 /* Compressed row — no subtitle, no per-row source label. Just a label
- * left and a value right, plus a thin left accent strip indicating
- * bound/unbound. Halves the per-row paint count vs. the previous design,
- * which is the difference between scrollable and not on the dash. */
+ * left and a value right, plus a thin left strip indicating bound/unbound.
+ * Halves the per-row paint count vs. the previous design, which is the
+ * difference between scrollable and not on the dash.
+ *
+ * Kit look: a neutral raised row (radius 8); selected is the accent tint
+ * with an accent edge; a row with no source is drawn muted. */
 static void _style_channel_row(lv_obj_t *row, bool inactive, bool selected) {
     lv_obj_remove_style_all(row);
     lv_obj_set_size(row, CH_ROW_W, CH_ROW_H);
     lv_obj_set_style_bg_color(row,
-        selected ? THEME_COLOR_ACCENT_BLUE : THEME_COLOR_BG, 0);
-    lv_obj_set_style_bg_opa(row,
-        selected ? LV_OPA_20 : LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(row,
-        selected ? THEME_COLOR_ACCENT_BLUE
-                 : (inactive ? THEME_COLOR_BORDER : THEME_COLOR_ACCENT_BLUE), 0);
-    lv_obj_set_style_border_width(row, 1, 0);
-    lv_obj_set_style_border_opa(row,
-        selected ? LV_OPA_COVER
-                 : (inactive ? LV_OPA_50 : LV_OPA_80), 0);
-    lv_obj_set_style_radius(row, 6, 0);
+        selected ? THEME_COLOR_ACCENT_DIM : THEME_COLOR_CONTROL_BG, 0);   /* accent_soft : raised */
+    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(row, THEME_COLOR_ACCENT, 0);
+    lv_obj_set_style_border_width(row, selected ? 1 : 0, 0);
+    lv_obj_set_style_border_opa(row, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(row, UK_R_BTN, 0);
     lv_obj_set_style_pad_left(row, 14, 0);
     lv_obj_set_style_pad_right(row, 10, 0);
     lv_obj_set_style_pad_ver(row, 4, 0);
-    lv_obj_set_style_opa(row, inactive ? LV_OPA_70 : LV_OPA_COVER, 0);
+    lv_obj_set_style_opa(row, (inactive && !selected) ? LV_OPA_70 : LV_OPA_COVER, 0);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
 }
 
+/* Name-label colour for a row: accent ink on the selection tint, muted for
+ * a catalogue channel not set up on this dash, else primary. */
+static lv_color_t _row_name_color(bool ghost, bool selected) {
+    if (selected) return ui_pal->accent_ink;
+    return ghost ? THEME_COLOR_TEXT_MUTED : THEME_COLOR_TEXT_PRIMARY;
+}
+
+/* Strip colour: a channel with a source reads as live (the status "ok"
+ * colour), one without as a plain strong hairline. */
+static lv_color_t _row_strip_color(bool inactive) {
+    return inactive ? THEME_COLOR_BORDER_MED : THEME_COLOR_STATUS_CONNECTED;
+}
+
 /* In apply-to-widget mode, outline the row of the channel the target widget
- * is CURRENTLY bound to (s_apply_widget_chid) in orange so it's obvious what
- * is applied — distinct from the blue tap-selection. Re-applied on EVERY
- * (re)style (append + rebuild) so it survives selection changes / row
- * rebuilds that reset the border back to blue. */
+ * is CURRENTLY bound to (s_apply_widget_chid) in the warn colour so it's
+ * obvious what is applied — distinct from the accent tap-selection.
+ * Re-applied on EVERY (re)style (append + rebuild) so it survives selection
+ * changes / row rebuilds that reset the border. */
 static void _apply_bound_widget_highlight(lv_obj_t *row, const char *id) {
     if (!s_apply_to_widget_mode || !id || !s_apply_widget_chid[0]) return;
     if (strcmp(id, s_apply_widget_chid) != 0) return;
@@ -2362,15 +2386,14 @@ static void _apply_bound_widget_highlight(lv_obj_t *row, const char *id) {
     lv_obj_set_style_border_opa(row, LV_OPA_COVER, 0);
 }
 
-/* 3 px left accent strip — bound = blue, unbound = muted grey. */
+/* 3 px left strip — bound = live colour, unbound = hairline grey. */
 static void _add_row_accent_strip(lv_obj_t *row, bool inactive) {
     lv_obj_t *strip = lv_obj_create(row);
     lv_obj_remove_style_all(strip);
     lv_obj_set_size(strip, 3, CH_ROW_H - 12);
     /* align is relative to the padded box; -11 = -(pad_left 14) + 3. */
     lv_obj_align(strip, LV_ALIGN_LEFT_MID, -11, 0);
-    lv_obj_set_style_bg_color(strip,
-        inactive ? THEME_COLOR_BORDER_MED : THEME_COLOR_ACCENT_BLUE, 0);
+    lv_obj_set_style_bg_color(strip, _row_strip_color(inactive), 0);
     lv_obj_set_style_bg_opa(strip, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(strip, 2, 0);
     lv_obj_clear_flag(strip, LV_OBJ_FLAG_CLICKABLE);
@@ -2425,9 +2448,12 @@ static void _remove_channel_cb(lv_event_t *e) {
     if (!s_remove_armed) {
         s_remove_armed = true;
         lv_obj_t *btn = lv_event_get_target(e);
-        lv_obj_t *lbl = lv_obj_get_child(btn, 0);
-        if (lbl) lv_label_set_text(lbl, "Tap again to remove");
+        uk_btn_set_text(btn, "Tap again to remove");
+        /* Armed: the danger button fills solid (what it shows when pressed).
+         * The kit has no "armed" kind; the pane re-render that disarms
+         * builds a fresh button, so these local styles never linger. */
         lv_obj_set_style_bg_color(btn, THEME_COLOR_BTN_DANGER, 0);
+        lv_obj_set_style_text_color(btn, THEME_COLOR_TEXT_ON_ACCENT, 0);
         return;
     }
     char removed_id[32];
@@ -2579,14 +2605,19 @@ static void _rebuild_channel_row(uint16_t idx) {
     bool selected = s_selected_ch_id[0] && strcmp(s_selected_ch_id, id) == 0;
     _style_channel_row(row, inactive, selected);
     _apply_bound_widget_highlight(row, id);
-    /* Recolor the left accent strip (first child with width 3). */
+    /* Recolor the left strip (first child with width 3) and the name label
+     * (the first label — the value label after it is the refresh timer's). */
     uint32_t n = lv_obj_get_child_cnt(row);
-    for (uint32_t i = 0; i < n; i++) {
+    bool strip_done = false, name_done = false;
+    for (uint32_t i = 0; i < n && !(strip_done && name_done); i++) {
         lv_obj_t *ch = lv_obj_get_child(row, i);
-        if (ch && lv_obj_get_width(ch) == 3) {
-            lv_obj_set_style_bg_color(ch,
-                inactive ? THEME_COLOR_BORDER_MED : THEME_COLOR_ACCENT_BLUE, 0);
-            break;
+        if (!ch) continue;
+        if (!strip_done && lv_obj_get_width(ch) == 3) {
+            lv_obj_set_style_bg_color(ch, _row_strip_color(inactive), 0);
+            strip_done = true;
+        } else if (!name_done && lv_obj_check_type(ch, &lv_label_class)) {
+            lv_obj_set_style_text_color(ch, _row_name_color(c == NULL, selected), 0);
+            name_done = true;
         }
     }
 }
@@ -2671,27 +2702,15 @@ static void _btn_widget_settings_cb(lv_event_t *e) {
  * timer that drives the list rows (see _channels_refresh_cb).
  */
 
-/* Helper: section heading inside the detail pane. y_offset relative to
- * the pane origin. Returns the label so the caller can stash it if
- * needed (none currently do). */
+/* Helper: section heading inside the detail pane — the kit's muted caps
+ * section label. y_offset relative to the pane origin. Returns the label so
+ * the caller can stash it if needed (none currently do). */
+#define CH_SECTION_H 26   /* a uk_section label and the gap under it */
 static lv_obj_t *_detail_section_label(lv_obj_t *parent, const char *text,
                                        lv_coord_t y) {
-    lv_obj_t *l = lv_label_create(parent);
-    lv_label_set_text(l, text);
+    lv_obj_t *l = uk_section(parent, text);
     lv_obj_align(l, LV_ALIGN_TOP_LEFT, 0, y);
-    lv_obj_set_style_text_font(l, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(l, THEME_COLOR_ACCENT_BLUE, 0);
     return l;
-}
-
-/* Helper: thin rule under a section header. */
-static void _detail_section_rule(lv_obj_t *parent, lv_coord_t y) {
-    lv_obj_t *r = lv_obj_create(parent);
-    lv_obj_remove_style_all(r);
-    lv_obj_set_size(r, CH_DETAIL_W - 20, 1);
-    lv_obj_align(r, LV_ALIGN_TOP_LEFT, 0, y);
-    lv_obj_set_style_bg_color(r, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_bg_opa(r, LV_OPA_40, 0);
 }
 
 /* The signal_t backing the selected channel's CAN decode, or NULL. Wizard
@@ -3009,27 +3028,27 @@ static void _dropdown_changed_cb(lv_event_t *e) {
 #define CH_INPUT_W 160
 #define CH_INPUT_H 30
 
-/* Label + a clean dark "text box"; tap opens the keypad/keyboard. No glyph —
- * the filled input field reads as editable, and the absence of a chevron
+/* The key on the left of an input row: body-sized, muted — the kit row's
+ * key. The control sits right-aligned on the same line. */
+static void _make_row_key(lv_obj_t *parent, lv_coord_t y, const char *label_text) {
+    lv_obj_t *l = lv_label_create(parent);
+    lv_label_set_text(l, label_text);
+    lv_obj_align(l, LV_ALIGN_TOP_LEFT, 0, y + 7);
+    lv_obj_set_style_text_font(l, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(l, THEME_COLOR_TEXT_MUTED, 0);
+}
+
+/* Label + a kit text field; tap opens the keypad/keyboard. No glyph — the
+ * filled input field reads as editable, and the absence of a chevron
  * distinguishes it from the dropdown rows. */
 static void _make_textbox_row(lv_obj_t *parent, lv_coord_t y, const char *label_text,
                               const char *value_text, kp_field_t field) {
-    lv_obj_t *l = lv_label_create(parent);
-    lv_label_set_text(l, label_text);
-    lv_obj_align(l, LV_ALIGN_TOP_LEFT, 0, y + 8);
-    lv_obj_set_style_text_font(l, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(l, THEME_COLOR_TEXT_MUTED, 0);
+    _make_row_key(parent, y, label_text);
 
     lv_obj_t *box = lv_btn_create(parent);
+    _wiz_style_textbox(box);
     lv_obj_set_size(box, CH_INPUT_W, CH_INPUT_H);
     lv_obj_align(box, LV_ALIGN_TOP_LEFT, CH_DETAIL_W - 20 - CH_INPUT_W, y);
-    lv_obj_set_style_bg_color(box, THEME_COLOR_INPUT_BG, 0);
-    lv_obj_set_style_bg_color(box, THEME_COLOR_SECTION_BG, LV_STATE_PRESSED);
-    lv_obj_set_style_border_color(box, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_border_width(box, 1, 0);
-    lv_obj_set_style_radius(box, 6, 0);
-    lv_obj_set_style_shadow_width(box, 0, 0);
-    lv_obj_set_style_pad_all(box, 0, 0);
     lv_obj_set_user_data(box, (void *)(intptr_t)field);
     lv_obj_add_event_cb(box, _kp_open_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *bl = lv_label_create(box);
@@ -3037,46 +3056,23 @@ static void _make_textbox_row(lv_obj_t *parent, lv_coord_t y, const char *label_
     lv_label_set_long_mode(bl, LV_LABEL_LONG_DOT);
     lv_obj_set_width(bl, CH_INPUT_W - 22);
     lv_obj_set_style_text_font(bl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(bl, THEME_COLOR_TEXT_PRIMARY, 0);
     lv_obj_align(bl, LV_ALIGN_LEFT_MID, 11, 0);
 }
 
-/* Label + an lv_dropdown (newline-separated options), styled to match the
- * dark text boxes; its built-in chevron signals "pick from a list". */
+/* Label + an lv_dropdown (newline-separated options) in the kit dropdown
+ * look; its built-in chevron signals "pick from a list". */
 static void _make_dropdown_row(lv_obj_t *parent, lv_coord_t y, const char *label_text,
                                const char *options, uint16_t sel, dd_field_t field) {
-    lv_obj_t *l = lv_label_create(parent);
-    lv_label_set_text(l, label_text);
-    lv_obj_align(l, LV_ALIGN_TOP_LEFT, 0, y + 8);
-    lv_obj_set_style_text_font(l, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(l, THEME_COLOR_TEXT_MUTED, 0);
+    _make_row_key(parent, y, label_text);
 
     lv_obj_t *dd = lv_dropdown_create(parent);
     lv_dropdown_set_options(dd, options);
     lv_dropdown_set_selected(dd, sel);
+    _wiz_style_dropdown(dd);
     lv_obj_set_size(dd, CH_INPUT_W, CH_INPUT_H);
     lv_obj_align(dd, LV_ALIGN_TOP_LEFT, CH_DETAIL_W - 20 - CH_INPUT_W, y);
-    lv_obj_set_style_bg_color(dd, THEME_COLOR_INPUT_BG, 0);
-    lv_obj_set_style_border_color(dd, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_border_width(dd, 1, 0);
-    lv_obj_set_style_radius(dd, 6, 0);
-    lv_obj_set_style_shadow_width(dd, 0, 0);
-    lv_obj_set_style_text_font(dd, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(dd, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_set_style_pad_left(dd, 11, 0);
     lv_obj_set_user_data(dd, (void *)(intptr_t)field);
     lv_obj_add_event_cb(dd, _dropdown_changed_cb, LV_EVENT_VALUE_CHANGED, NULL);
-
-    /* Match the open list + selected highlight to the dark theme. */
-    lv_obj_t *list = lv_dropdown_get_list(dd);
-    if (list) {
-        lv_obj_set_style_bg_color(list, THEME_COLOR_INPUT_BG, 0);
-        lv_obj_set_style_text_color(list, THEME_COLOR_TEXT_PRIMARY, 0);
-        lv_obj_set_style_text_font(list, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_border_color(list, THEME_COLOR_SECTION_BG, 0);
-        lv_obj_set_style_border_width(list, 1, 0);
-        lv_obj_set_style_bg_color(list, THEME_COLOR_ACCENT_BLUE, LV_PART_SELECTED | LV_STATE_CHECKED);
-    }
 }
 
 /* Rebuild the detail pane based on s_selected_ch_id. Cheap to call. */
@@ -3110,46 +3106,33 @@ static void _render_detail_pane(void) {
             canonical_channel_find(s_selected_ch_id);
         if (!def) return;
 
-        lv_obj_t *lbl = lv_label_create(s_detail_pane);
-        lv_label_set_text(lbl, def->label);
+        lv_obj_t *lbl = uk_label(s_detail_pane, def->label, UK_FONT_HEAD, UK_TONE_TEXT);
         lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
         lv_obj_set_width(lbl, CH_DETAIL_W - 20);
         lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 0, 0);
-        lv_obj_set_style_text_font(lbl, THEME_FONT_MEDIUM, 0);
-        lv_obj_set_style_text_color(lbl, THEME_COLOR_TEXT_PRIMARY, 0);
 
         lv_obj_t *sub = lv_label_create(s_detail_pane);
         lv_label_set_text(sub, "Not set up on this dash");
-        lv_obj_align(sub, LV_ALIGN_TOP_LEFT, 0, 26);
-        lv_obj_set_style_text_font(sub, THEME_FONT_TINY, 0);
+        lv_obj_align(sub, LV_ALIGN_TOP_LEFT, 0, 28);
+        lv_obj_set_style_text_font(sub, THEME_FONT_SMALL, 0);
         lv_obj_set_style_text_color(sub, THEME_COLOR_TEXT_MUTED, 0);
 
-        lv_coord_t gy = 52;
-        char line[96];
-        snprintf(line, sizeof(line), "Units: %s",
-                 def->units_display_def[0] ? def->units_display_def : "-");
-        lv_obj_t *l1 = lv_label_create(s_detail_pane);
-        lv_label_set_text(l1, line);
-        lv_obj_align(l1, LV_ALIGN_TOP_LEFT, 0, gy);
-        lv_obj_set_style_text_font(l1, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(l1, THEME_COLOR_TEXT_PRIMARY, 0);
-        gy += 22;
-        snprintf(line, sizeof(line), "Typical range: %g to %g",
+        /* Key / value rows in the kit's row look (hairline under each). */
+        lv_coord_t gy = 50;
+        const lv_coord_t row_h = 36;
+        char line[48];
+        lv_obj_t *v = uk_row(s_detail_pane, "Units",
+                             def->units_display_def[0] ? def->units_display_def : "-");
+        lv_obj_align(lv_obj_get_parent(v), LV_ALIGN_TOP_LEFT, 0, gy);
+        gy += row_h;
+        snprintf(line, sizeof(line), "%g to %g",
                  (double)def->min_default, (double)def->max_default);
-        lv_obj_t *l2 = lv_label_create(s_detail_pane);
-        lv_label_set_text(l2, line);
-        lv_obj_align(l2, LV_ALIGN_TOP_LEFT, 0, gy);
-        lv_obj_set_style_text_font(l2, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(l2, THEME_COLOR_TEXT_PRIMARY, 0);
-        gy += 22;
-        snprintf(line, sizeof(line), "Group: %s",
-                 channel_group_name(def->group));
-        lv_obj_t *l3 = lv_label_create(s_detail_pane);
-        lv_label_set_text(l3, line);
-        lv_obj_align(l3, LV_ALIGN_TOP_LEFT, 0, gy);
-        lv_obj_set_style_text_font(l3, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(l3, THEME_COLOR_TEXT_PRIMARY, 0);
-        gy += 26;
+        v = uk_row(s_detail_pane, "Typical range", line);
+        lv_obj_align(lv_obj_get_parent(v), LV_ALIGN_TOP_LEFT, 0, gy);
+        gy += row_h;
+        v = uk_row(s_detail_pane, "Group", channel_group_name(def->group));
+        lv_obj_align(lv_obj_get_parent(v), LV_ALIGN_TOP_LEFT, 0, gy);
+        gy += row_h + 10;
 
         if (def->notes) {
             lv_obj_t *n = lv_label_create(s_detail_pane);
@@ -3157,50 +3140,42 @@ static void _render_detail_pane(void) {
             lv_label_set_long_mode(n, LV_LABEL_LONG_WRAP);
             lv_obj_set_width(n, CH_DETAIL_W - 20);
             lv_obj_align(n, LV_ALIGN_TOP_LEFT, 0, gy);
-            lv_obj_set_style_text_font(n, THEME_FONT_TINY, 0);
+            lv_obj_set_style_text_font(n, THEME_FONT_SMALL, 0);
             lv_obj_set_style_text_color(n, THEME_COLOR_TEXT_MUTED, 0);
             lv_obj_update_layout(n);
             gy += lv_obj_get_height(n) + 10;
         }
 
-        lv_obj_t *add = lv_btn_create(s_detail_pane);
-        lv_obj_set_size(add, CH_DETAIL_W - 20, 36);
+        /* The pane's one forward action. */
+        lv_obj_t *add = uk_btn(s_detail_pane, UK_ICON_PLUS, "Add this channel",
+                               UK_BTN_PRIMARY, _ghost_add_cb, NULL);
+        lv_obj_set_size(add, CH_DETAIL_W - 20, BTN_H);
         lv_obj_align(add, LV_ALIGN_TOP_LEFT, 0, gy);
-        lv_obj_set_style_bg_color(add, THEME_COLOR_ACCENT_BLUE, 0);
-        lv_obj_set_style_radius(add, 6, 0);
-        lv_obj_set_style_shadow_width(add, 0, 0);
-        lv_obj_t *al = lv_label_create(add);
-        lv_label_set_text(al, LV_SYMBOL_PLUS "  Add this channel");
-        lv_obj_center(al);
-        lv_obj_set_style_text_font(al, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(al, THEME_COLOR_TEXT_ON_ACCENT, 0);
-        lv_obj_add_event_cb(add, _ghost_add_cb, LV_EVENT_CLICKED, NULL);
         return;
     }
 
     /* ── Hero (label + giant live value) ─────────────────────────────── */
-    lv_obj_t *lbl = lv_label_create(s_detail_pane);
-    lv_label_set_text(lbl, c->label);
+    lv_obj_t *lbl = uk_label(s_detail_pane, c->label, UK_FONT_HEAD, UK_TONE_TEXT);
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
     lv_obj_set_width(lbl, CH_DETAIL_W - 20);
     lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_text_font(lbl, THEME_FONT_MEDIUM, 0);
-    lv_obj_set_style_text_color(lbl, THEME_COLOR_TEXT_PRIMARY, 0);
 
+    /* The big value in the kit's condensed face, which (unlike Montserrat)
+     * has a degree sign for the unit. Its colour is data — the refresh
+     * timer paints it (disabled / primary / warn). */
     s_detail_value_lbl = lv_label_create(s_detail_pane);
     lv_label_set_text(s_detail_value_lbl, "...");
     lv_obj_set_width(s_detail_value_lbl, CH_DETAIL_W - 20);
     lv_obj_set_style_text_align(s_detail_value_lbl, LV_TEXT_ALIGN_LEFT, 0);
-    lv_obj_align(s_detail_value_lbl, LV_ALIGN_TOP_LEFT, 0, 24);
-    lv_obj_set_style_text_font(s_detail_value_lbl, THEME_FONT_LARGE, 0);
+    lv_obj_align(s_detail_value_lbl, LV_ALIGN_TOP_LEFT, 0, 26);
+    lv_obj_set_style_text_font(s_detail_value_lbl, uk_font(UK_FONT_TITLE), 0);
     lv_obj_set_style_text_color(s_detail_value_lbl,
         THEME_COLOR_TEXT_DISABLED, 0);
 
     /* ── Source section ─────────────────────────────────────────────── */
-    lv_coord_t y = 60;
-    _detail_section_label(s_detail_pane, "SOURCE", y);
-    _detail_section_rule(s_detail_pane, y + 14);
-    y += 22;
+    lv_coord_t y = 64;
+    _detail_section_label(s_detail_pane, "Source", y);
+    y += CH_SECTION_H;
 
     s_detail_source_lbl = lv_label_create(s_detail_pane);
     if (c->signal_index >= 0 && c->signal_name[0]) {
@@ -3236,39 +3211,27 @@ static void _render_detail_pane(void) {
             THEME_COLOR_STATUS_WARN, 0);
     }
     lv_label_set_long_mode(s_detail_source_lbl, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(s_detail_source_lbl, CH_DETAIL_W - 110);
-    lv_obj_align(s_detail_source_lbl, LV_ALIGN_TOP_LEFT, 0, y + 4);
-    lv_obj_set_style_text_font(s_detail_source_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_width(s_detail_source_lbl, CH_DETAIL_W - 24 - 96 - 10);   /* clear of Change */
+    lv_obj_align(s_detail_source_lbl, LV_ALIGN_TOP_LEFT, 0, y + 9);
+    lv_obj_set_style_text_font(s_detail_source_lbl, THEME_FONT_BODY, 0);
 
-    lv_obj_t *change = lv_btn_create(s_detail_pane);
-    lv_obj_set_size(change, 86, 26);
+    lv_obj_t *change = uk_btn(s_detail_pane, UK_ICON_NONE, "Change",
+                              UK_BTN_NEUTRAL, _change_source_cb, NULL);
+    lv_obj_set_size(change, 96, 34);
     lv_obj_align(change, LV_ALIGN_TOP_RIGHT, 0, y);
-    lv_obj_set_style_bg_color(change, THEME_COLOR_ACCENT_BLUE, 0);
-    lv_obj_set_style_radius(change, 4, 0);
-    lv_obj_set_style_shadow_width(change, 0, 0);
-    lv_obj_t *cl = lv_label_create(change);
-    lv_label_set_text(cl, "Change");
-    lv_obj_center(cl);
-    lv_obj_set_style_text_font(cl, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(cl, THEME_COLOR_TEXT_ON_ACCENT, 0);
-    lv_obj_add_event_cb(change, _change_source_cb, LV_EVENT_CLICKED, NULL);
-    y += 34;
+    y += 42;
 
     /* Calculate button — derive this channel from two others (math), the
      * on-device twin of the web editor's Calculate form. When already a
-     * math channel, the button shows the current formula. */
+     * math channel, the button shows the current formula (and reads "on"). */
     {
-        lv_obj_t *calc = lv_btn_create(s_detail_pane);
-        lv_obj_set_size(calc, CH_DETAIL_W - 40, 26);
+        lv_obj_t *calc = uk_btn(s_detail_pane, UK_ICON_NONE,
+                                "Calculate from other channels",
+                                c->math_enabled ? UK_BTN_ON : UK_BTN_NEUTRAL,
+                                _calc_btn_cb, NULL);
+        lv_obj_set_size(calc, CH_DETAIL_W - 20, 34);
         lv_obj_align(calc, LV_ALIGN_TOP_LEFT, 0, y);
-        lv_obj_set_style_bg_color(calc, THEME_COLOR_SECTION_BG, 0);
-        lv_obj_set_style_border_color(calc,
-            c->math_enabled ? THEME_COLOR_ACCENT_BLUE : THEME_COLOR_BORDER_MED, 0);
-        lv_obj_set_style_border_width(calc, 1, 0);
-        lv_obj_set_style_border_opa(calc, c->math_enabled ? LV_OPA_COVER : LV_OPA_60, 0);
-        lv_obj_set_style_radius(calc, 4, 0);
-        lv_obj_set_style_shadow_width(calc, 0, 0);
-        lv_obj_t *cll = lv_label_create(calc);
+        lv_obj_t *cll = uk_btn_label(calc);
         if (c->math_enabled) {
             static const char *ops = "+-*/";
             char ab[80];
@@ -3289,18 +3252,15 @@ static void _render_detail_pane(void) {
             lv_label_set_text(cll, "Calculate from other channels");
         }
         lv_label_set_long_mode(cll, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(cll, CH_DETAIL_W - 60);
-        lv_obj_center(cll);
-        lv_obj_set_style_text_font(cll, THEME_FONT_TINY, 0);
-        lv_obj_set_style_text_color(cll, THEME_COLOR_TEXT_PRIMARY, 0);
-        lv_obj_add_event_cb(calc, _calc_btn_cb, LV_EVENT_CLICKED, NULL);
-        y += 34;
+        /* Inside the kit button's 16 px side padding. */
+        lv_obj_set_width(cll, CH_DETAIL_W - 20 - 40);
+        lv_obj_set_style_text_align(cll, LV_TEXT_ALIGN_CENTER, 0);
+        y += 42;
     }
 
     /* ── Range section ──────────────────────────────────────────────── */
-    _detail_section_label(s_detail_pane, "RANGE", y);
-    _detail_section_rule(s_detail_pane, y + 14);
-    y += 20;
+    _detail_section_label(s_detail_pane, "Range", y);
+    y += CH_SECTION_H;
 
     /* Range + thresholds render AND edit in the channel's display unit —
      * _ch_to_disp here, _kp_open_cb pre-fills converted, _kp_confirmed
@@ -3345,9 +3305,8 @@ static void _render_detail_pane(void) {
     }
 
     /* ── Thresholds section ─────────────────────────────────────────── */
-    _detail_section_label(s_detail_pane, "THRESHOLDS", y);
-    _detail_section_rule(s_detail_pane, y + 14);
-    y += 20;
+    _detail_section_label(s_detail_pane, "Warnings", y);
+    y += CH_SECTION_H;
 
     const char *u = _ch_disp_unit(c);
     if (c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH)
@@ -3370,22 +3329,11 @@ static void _render_detail_pane(void) {
      * back to the canonical numbers for this channel. Canonical-only;
      * a no-op for custom channels (handled by channel_manager). */
     if (c->is_canonical) {
-        lv_obj_t *reset = lv_btn_create(s_detail_pane);
-        lv_obj_set_size(reset, CH_DETAIL_W - 40, 30);
+        lv_obj_t *reset = uk_btn(s_detail_pane, UK_ICON_RESET, "Reset to defaults",
+                                 UK_BTN_NEUTRAL, _reset_defaults_cb, NULL);
+        lv_obj_set_size(reset, CH_DETAIL_W - 20, 34);
         lv_obj_align(reset, LV_ALIGN_TOP_LEFT, 0, y);
-        lv_obj_set_style_bg_color(reset, THEME_COLOR_SECTION_BG, 0);
-        lv_obj_set_style_border_color(reset, THEME_COLOR_BORDER_MED, 0);
-        lv_obj_set_style_border_width(reset, 1, 0);
-        lv_obj_set_style_border_opa(reset, LV_OPA_60, 0);
-        lv_obj_set_style_radius(reset, 4, 0);
-        lv_obj_set_style_shadow_width(reset, 0, 0);
-        lv_obj_t *rl = lv_label_create(reset);
-        lv_label_set_text(rl, "Reset to defaults");
-        lv_obj_center(rl);
-        lv_obj_set_style_text_font(rl, THEME_FONT_TINY, 0);
-        lv_obj_set_style_text_color(rl, THEME_COLOR_TEXT_PRIMARY, 0);
-        lv_obj_add_event_cb(reset, _reset_defaults_cb, LV_EVENT_CLICKED, NULL);
-        y += 40;
+        y += 44;
     }
 
     /* ── CAN DECODE section ──────────────────────────────────────────────
@@ -3395,9 +3343,8 @@ static void _render_detail_pane(void) {
     signal_t *sig = (c->signal_index >= 0)
                     ? signal_get_by_index((uint16_t)c->signal_index) : NULL;
     if (sig && sig->source == SIGNAL_SOURCE_CAN) {
-        _detail_section_label(s_detail_pane, "CAN DECODE", y);
-        _detail_section_rule(s_detail_pane, y + 14);
-        y += 20;
+        _detail_section_label(s_detail_pane, "CAN decode", y);
+        y += CH_SECTION_H;
 
         char db[28];
         snprintf(db, sizeof(db), "0x%lX", (unsigned long)sig->can_id);
@@ -3438,25 +3385,15 @@ static void _render_detail_pane(void) {
      * Any active channel can leave this dash (ADR-0034): custom is gone
      * for good, canonical returns to the catalogue and can be re-added.
      * Two taps — the first arms and re-labels, any pane re-render
-     * disarms. Quiet styling: this is a footer action, not a feature. */
-    lv_obj_t *rm = lv_btn_create(s_detail_pane);
-    lv_obj_set_size(rm, CH_DETAIL_W - 20, 30);
+     * disarms. The kit's danger button: a soft fill, danger text. */
+    lv_obj_t *rm = uk_btn(s_detail_pane, UK_ICON_NONE,
+                          c->is_canonical
+                              ? "Remove from this dash (returns to list)"
+                              : "Remove from this dash",
+                          UK_BTN_DANGER, _remove_channel_cb, NULL);
+    lv_obj_set_size(rm, CH_DETAIL_W - 20, 34);
     lv_obj_align(rm, LV_ALIGN_TOP_LEFT, 0, y);
-    lv_obj_set_style_bg_color(rm, THEME_COLOR_BTN_DANGER_BG, 0);
-    lv_obj_set_style_border_color(rm, THEME_COLOR_BTN_DANGER, 0);
-    lv_obj_set_style_border_width(rm, 1, 0);
-    lv_obj_set_style_border_opa(rm, LV_OPA_60, 0);
-    lv_obj_set_style_radius(rm, 4, 0);
-    lv_obj_set_style_shadow_width(rm, 0, 0);
-    lv_obj_t *rml = lv_label_create(rm);
-    lv_label_set_text(rml, c->is_canonical
-        ? "Remove from this dash (returns to list)"
-        : "Remove from this dash");
-    lv_obj_center(rml);
-    lv_obj_set_style_text_font(rml, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(rml, THEME_COLOR_STATUS_ERROR, 0);
-    lv_obj_add_event_cb(rm, _remove_channel_cb, LV_EVENT_CLICKED, NULL);
-    y += 38;
+    y += 42;
 
     /* Bottom spacer so the scrollable extent passes the last row by a
      * comfortable margin (otherwise the auto-scrollbar shows over the
@@ -3563,8 +3500,7 @@ static void _append_channel_row(const char *id, const char *label) {
     lv_obj_set_width(name, name_w);
     lv_obj_align(name, LV_ALIGN_LEFT_MID, 0, 0);
     lv_obj_set_style_text_font(name, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(name,
-        ghost ? THEME_COLOR_TEXT_MUTED : THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_style_text_color(name, _row_name_color(ghost, selected), 0);
 
     lv_obj_t *val = lv_label_create(row);
     lv_label_set_text(val, ghost ? "Inactive" : "...");
@@ -3580,43 +3516,23 @@ static void _append_channel_row(const char *id, const char *label) {
     s_channels_count++;
 }
 
-/* Add a section divider row. `title` is copied by LVGL into the label. */
+/* Add a group divider — the kit's muted caps section label, straight into
+ * the flex list. `title` is copied (uppercased) into the label. */
 static void _append_group_header(const char *title, bool first) {
-    lv_obj_t *hdr = lv_obj_create(s_channels_list_box);
-    lv_obj_remove_style_all(hdr);
-    lv_obj_set_size(hdr, CH_ROW_W, 22);
-    lv_obj_set_style_bg_opa(hdr, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_pad_top(hdr, first ? 2 : 8, 0);
-    lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *htxt = lv_label_create(hdr);
-    lv_label_set_text(htxt, title);
-    lv_obj_align(htxt, LV_ALIGN_BOTTOM_LEFT, 4, -2);
-    lv_obj_set_style_text_font(htxt, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(htxt, THEME_COLOR_ACCENT_BLUE, 0);
-
-    lv_obj_t *hrule = lv_obj_create(hdr);
-    lv_obj_remove_style_all(hrule);
-    lv_obj_set_size(hrule, CH_ROW_W - 4, 1);
-    lv_obj_align(hrule, LV_ALIGN_BOTTOM_LEFT, 4, 0);
-    lv_obj_set_style_bg_color(hrule, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_bg_opa(hrule, LV_OPA_30, 0);
+    lv_obj_t *htxt = uk_section(s_channels_list_box, title);
+    lv_obj_set_width(htxt, CH_ROW_W);
+    lv_label_set_long_mode(htxt, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_pad_left(htxt, 4, 0);
+    lv_obj_set_style_pad_top(htxt, first ? 2 : 8, 0);
 }
 
 /* Section heading — one of the list's two halves (ADR-0071). Primary text
  * and a size up from a group header, because it contains group headers. */
 static void _append_section_header(const char *title, bool first) {
-    lv_obj_t *hdr = lv_obj_create(s_channels_list_box);
-    lv_obj_remove_style_all(hdr);
-    lv_obj_set_size(hdr, CH_ROW_W, first ? 22 : 34);
-    lv_obj_set_style_bg_opa(hdr, LV_OPA_TRANSP, 0);
-    lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *htxt = lv_label_create(hdr);
-    lv_label_set_text(htxt, title);
-    lv_obj_align(htxt, LV_ALIGN_BOTTOM_LEFT, 4, -2);
-    lv_obj_set_style_text_font(htxt, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(htxt, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_t *htxt = uk_label(s_channels_list_box, title, UK_FONT_HEAD, UK_TONE_TEXT);
+    lv_obj_set_width(htxt, CH_ROW_W);
+    lv_obj_set_style_pad_left(htxt, 4, 0);
+    lv_obj_set_style_pad_top(htxt, first ? 0 : 12, 0);
 }
 
 /* Build the full channel list: the channels this car has (by group, custom
@@ -3732,21 +3648,9 @@ static void _populate_channels_list(void) {
 
     /* "+ Add custom channel" belongs with the car it adds to — at the
      * bottom it sat under 135 catalogue rows. */
-    lv_obj_t *add_btn = lv_btn_create(s_channels_list_box);
+    lv_obj_t *add_btn = uk_btn(s_channels_list_box, UK_ICON_PLUS, "Add custom channel",
+                               UK_BTN_NEUTRAL, _add_custom_btn_cb, NULL);
     lv_obj_set_size(add_btn, CH_ROW_W, 36);
-    lv_obj_set_style_bg_color(add_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_border_color(add_btn, THEME_COLOR_ACCENT_BLUE, 0);
-    lv_obj_set_style_border_width(add_btn, 1, 0);
-    lv_obj_set_style_border_opa(add_btn, LV_OPA_50, 0);
-    lv_obj_set_style_radius(add_btn, 6, 0);
-    lv_obj_set_style_shadow_width(add_btn, 0, 0);
-    lv_obj_set_style_pad_all(add_btn, 0, 0);
-    lv_obj_add_event_cb(add_btn, _add_custom_btn_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *al = lv_label_create(add_btn);
-    lv_label_set_text(al, LV_SYMBOL_PLUS "  Add custom channel");
-    lv_obj_center(al);
-    lv_obj_set_style_text_font(al, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(al, THEME_COLOR_ACCENT_BLUE, 0);
 
     /* ── Not set up: the rest of the catalogue, tap a ghost to add it. ── */
     uint16_t n_ghosts = 0;
@@ -3880,7 +3784,7 @@ static void _obd2_apply_picks(void) {
                      "some were left out.", (unsigned)bound, bound == 1 ? "" : "s");
         } else if (err == ESP_FAIL) {
             snprintf(msg, sizeof(msg),
-                     "Added %u channel%s — working now, but they could not be\n"
+                     "Added %u channel%s - working now, but they could not be\n"
                      "saved, so they won't survive a restart.",
                      (unsigned)bound, bound == 1 ? "" : "s");
         } else {
@@ -3889,7 +3793,7 @@ static void _obd2_apply_picks(void) {
         }
         lv_label_set_text(s_obd2_status_lbl, msg);
         lv_obj_set_style_text_color(s_obd2_status_lbl,
-                                    bound ? THEME_COLOR_GREEN
+                                    bound ? THEME_COLOR_STATUS_CONNECTED
                                           : THEME_COLOR_TEXT_MUTED, 0);
     }
     _obd2_chip_update();
@@ -3921,10 +3825,16 @@ static void _obd2_render_results(void) {
 
     for (size_t i = 0; i < s_obd2_match_count; i++) {
         const obd2_channel_match_t *m = &s_obd2_matches[i];
+        bool picked = !m->bound && s_obd2_pick[i];
         lv_obj_t *row = lv_obj_create(s_obd2_list);
         lv_obj_remove_style_all(row);
-        lv_obj_set_size(row, lv_pct(100), 30);
-        lv_obj_set_style_pad_hor(row, 8, 0);
+        lv_obj_set_size(row, lv_pct(100), 34);
+        lv_obj_set_style_pad_hor(row, 10, 0);
+        /* Kit checkable row: neutral raised row, ticked = accent tint. */
+        lv_obj_set_style_bg_color(row,
+            picked ? THEME_COLOR_ACCENT_DIM : THEME_COLOR_CONTROL_BG, 0);   /* accent_soft : raised */
+        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(row, UK_R_BTN, 0);
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_user_data(row, (void *)(intptr_t)i);
         if (!m->bound) {
@@ -3932,28 +3842,26 @@ static void _obd2_render_results(void) {
             lv_obj_add_event_cb(row, _obd2_row_cb, LV_EVENT_CLICKED, NULL);
         }
 
-        /* Tick / hollow box / "already set up" all in one leading glyph so
+        /* Tick / empty / "already set up" all in one leading column so
          * the eye reads one column, not three states in three places. */
-        lv_obj_t *mark = lv_label_create(row);
-        lv_label_set_text(mark, m->bound ? LV_SYMBOL_OK
-                                         : (s_obd2_pick[i] ? LV_SYMBOL_OK : ""));
+        lv_obj_t *mark = uk_icon(row, UK_ICON_CHECK, UK_ICON_MD,
+                                 m->bound ? UK_TONE_MUTED : UK_TONE_ACCENT);
         lv_obj_align(mark, LV_ALIGN_LEFT_MID, 0, 0);
-        lv_obj_set_style_text_font(mark, THEME_FONT_TINY, 0);
-        lv_obj_set_style_text_color(mark, m->bound ? THEME_COLOR_TEXT_MUTED
-                                                   : THEME_COLOR_ACCENT_BLUE, 0);
+        if (!m->bound && !picked) lv_obj_add_flag(mark, LV_OBJ_FLAG_HIDDEN);
 
         lv_obj_t *name = lv_label_create(row);
         lv_label_set_text(name, m->label);
-        lv_obj_align(name, LV_ALIGN_LEFT_MID, 22, 0);
-        lv_obj_set_style_text_font(name, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(name, m->bound ? THEME_COLOR_TEXT_MUTED
-                                                   : THEME_COLOR_TEXT_PRIMARY, 0);
+        lv_obj_align(name, LV_ALIGN_LEFT_MID, 30, 0);
+        lv_obj_set_style_text_font(name, THEME_FONT_BODY, 0);
+        lv_obj_set_style_text_color(name,
+            m->bound ? THEME_COLOR_TEXT_MUTED
+                     : (picked ? ui_pal->accent_ink : THEME_COLOR_TEXT_PRIMARY), 0);
 
         lv_obj_t *note = lv_label_create(row);
         if (m->bound) lv_label_set_text(note, "already set up");
         else          lv_label_set_text(note, m->units && m->units[0] ? m->units : "");
         lv_obj_align(note, LV_ALIGN_RIGHT_MID, 0, 0);
-        lv_obj_set_style_text_font(note, THEME_FONT_TINY, 0);
+        lv_obj_set_style_text_font(note, THEME_FONT_SMALL, 0);
         lv_obj_set_style_text_color(note, THEME_COLOR_TEXT_MUTED, 0);
     }
 
@@ -4010,7 +3918,7 @@ static void _obd2_scan_done_cb(const obd2_scan_result_t *r, void *user) {
         char msg[200];
         if (!r || r->count == 0) {
             snprintf(msg, sizeof(msg),
-                     "The car didn't answer. Check the ignition is on — some\n"
+                     "The car didn't answer. Check the ignition is on - some\n"
                      "cars only answer with the engine running.");
         } else if (fresh == 0) {
             snprintf(msg, sizeof(msg),
@@ -4066,101 +3974,60 @@ static void _obd2_close_cb(lv_event_t *e) {
 static void _obd2_open_scan_modal(void) {
     if (s_obd2_modal) return;  /* already open */
 
-    /* Backdrop over the wizard. Owned by s_overlay (wizard lifecycle). */
-    s_obd2_modal = lv_obj_create(s_overlay);
-    lv_obj_remove_style_all(s_obd2_modal);
-    lv_obj_set_size(s_obd2_modal, lv_pct(100), lv_pct(100));
-    lv_obj_center(s_obd2_modal);
-    lv_obj_set_style_bg_color(s_obd2_modal, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(s_obd2_modal, LV_OPA_70, 0);
-    lv_obj_clear_flag(s_obd2_modal, LV_OBJ_FLAG_SCROLLABLE);
+    /* Kit sheet over the wizard. Owned by s_overlay (wizard lifecycle);
+     * s_obd2_modal is the backdrop, which _obd2_close_modal deletes. */
+    #define OBD2_SHEET_W 520
+    #define OBD2_SHEET_H 364
+    const lv_coord_t inner_w = OBD2_SHEET_W - 2 * SHEET_PAD;   /* 484 */
+    lv_obj_t *card = NULL;
+    s_obd2_modal = _wiz_sheet_open(OBD2_SHEET_W, OBD2_SHEET_H,
+                                   "Add channels from OBD2",
+                                   _obd2_close_cb, false, &card);
 
-    lv_obj_t *card = lv_obj_create(s_obd2_modal);
-    lv_obj_remove_style_all(card);
-    lv_obj_set_size(card, 520, 356);
-    lv_obj_center(card);
-    lv_obj_set_style_bg_color(card, THEME_COLOR_PANEL, 0);
-    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(card, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_border_width(card, 1, 0);
-    lv_obj_set_style_radius(card, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_pad_all(card, 18, 0);
-    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *title = lv_label_create(card);
-    lv_label_set_text(title, "Add channels from OBD2");
-    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_text_font(title, THEME_FONT_MEDIUM, 0);
-    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
-
+    /* Busy spinner in the header, left of the X. */
     s_obd2_spinner = lv_spinner_create(card, 1000, 60);
-    lv_obj_set_size(s_obd2_spinner, 34, 34);
-    lv_obj_align(s_obd2_spinner, LV_ALIGN_TOP_RIGHT, 0, -2);
-    lv_obj_set_style_arc_color(s_obd2_spinner, THEME_COLOR_SECTION_BG,
-                               LV_PART_MAIN);
-    lv_obj_set_style_arc_color(s_obd2_spinner, THEME_COLOR_ACCENT_BLUE,
-                               LV_PART_INDICATOR);
+    lv_obj_set_size(s_obd2_spinner, 28, 28);
+    lv_obj_align(s_obd2_spinner, LV_ALIGN_TOP_RIGHT, -52, 0);
+    _wiz_style_spinner(s_obd2_spinner);
 
     s_obd2_status_lbl = lv_label_create(card);
     lv_label_set_long_mode(s_obd2_status_lbl, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(s_obd2_status_lbl, 484);
-    lv_obj_align(s_obd2_status_lbl, LV_ALIGN_TOP_LEFT, 0, 34);
+    lv_obj_set_width(s_obd2_status_lbl, inner_w);
+    lv_obj_align(s_obd2_status_lbl, LV_ALIGN_TOP_LEFT, 0, 42);
     lv_obj_set_style_text_font(s_obd2_status_lbl, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(s_obd2_status_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
 
     /* Scrollable offer list between the message and the buttons. */
     s_obd2_list = lv_obj_create(card);
     lv_obj_remove_style_all(s_obd2_list);
-    lv_obj_set_size(s_obd2_list, 484, 190);
-    lv_obj_align(s_obd2_list, LV_ALIGN_TOP_LEFT, 0, 84);
-    lv_obj_set_style_bg_color(s_obd2_list, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(s_obd2_list, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(s_obd2_list, 4, 0);
-    lv_obj_set_style_pad_all(s_obd2_list, 4, 0);
+    lv_obj_set_size(s_obd2_list, inner_w, 192);
+    lv_obj_align(s_obd2_list, LV_ALIGN_TOP_LEFT, 0, 82);
+    lv_obj_set_style_bg_opa(s_obd2_list, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_pad_all(s_obd2_list, 0, 0);
+    lv_obj_set_style_pad_right(s_obd2_list, 8, 0);   /* rows clear of the scrollbar */
+    lv_obj_set_style_pad_row(s_obd2_list, 4, 0);
     lv_obj_set_flex_flow(s_obd2_list, LV_FLEX_FLOW_COLUMN);
+    uk_style_scrollbar(s_obd2_list);
     lv_obj_add_flag(s_obd2_list, LV_OBJ_FLAG_HIDDEN);
 
-    /* Rescan (left) + Add + Close along the bottom. */
-    s_obd2_rescan_btn = lv_btn_create(card);
-    lv_obj_set_size(s_obd2_rescan_btn, 110, 36);
+    /* Rescan (left) + Add + Done along the bottom. */
+    s_obd2_rescan_btn = uk_btn(card, UK_ICON_RESET, "Rescan", UK_BTN_NEUTRAL,
+                               _obd2_rescan_cb, NULL);
+    lv_obj_set_size(s_obd2_rescan_btn, 120, BTN_H);
     lv_obj_align(s_obd2_rescan_btn, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-    lv_obj_set_style_bg_color(s_obd2_rescan_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_radius(s_obd2_rescan_btn, 4, 0);
-    lv_obj_set_style_shadow_width(s_obd2_rescan_btn, 0, 0);
-    lv_obj_t *rl = lv_label_create(s_obd2_rescan_btn);
-    lv_label_set_text(rl, LV_SYMBOL_REFRESH "  Rescan");
-    lv_obj_center(rl);
-    lv_obj_set_style_text_font(rl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(rl, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_add_event_cb(s_obd2_rescan_btn, _obd2_rescan_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_add_flag(s_obd2_rescan_btn, LV_OBJ_FLAG_HIDDEN);
 
-    lv_obj_t *close_btn = lv_btn_create(card);
-    lv_obj_set_size(close_btn, 100, 36);
+    lv_obj_t *close_btn = uk_btn(card, UK_ICON_NONE, "Done", UK_BTN_NEUTRAL,
+                                 _obd2_close_cb, NULL);
+    lv_obj_set_size(close_btn, 100, BTN_H);
     lv_obj_align(close_btn, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
-    lv_obj_set_style_bg_color(close_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_radius(close_btn, 4, 0);
-    lv_obj_set_style_shadow_width(close_btn, 0, 0);
-    lv_obj_t *cl = lv_label_create(close_btn);
-    lv_label_set_text(cl, "Done");
-    lv_obj_center(cl);
-    lv_obj_set_style_text_font(cl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(cl, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_add_event_cb(close_btn, _obd2_close_cb, LV_EVENT_CLICKED, NULL);
 
-    s_obd2_add_btn = lv_btn_create(card);
-    lv_obj_set_size(s_obd2_add_btn, 120, 36);
+    s_obd2_add_btn = uk_btn(card, UK_ICON_PLUS, "Add", UK_BTN_PRIMARY,
+                            _obd2_add_cb, NULL);
+    lv_obj_set_size(s_obd2_add_btn, 120, BTN_H);
     lv_obj_align_to(s_obd2_add_btn, close_btn, LV_ALIGN_OUT_LEFT_MID, -8, 0);
-    lv_obj_set_style_bg_color(s_obd2_add_btn, THEME_COLOR_ACCENT_BLUE, 0);
-    lv_obj_set_style_radius(s_obd2_add_btn, 4, 0);
-    lv_obj_set_style_shadow_width(s_obd2_add_btn, 0, 0);
-    lv_obj_t *al = lv_label_create(s_obd2_add_btn);
-    lv_label_set_text(al, "Add");
-    lv_obj_center(al);
-    lv_obj_set_style_text_font(al, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(al, THEME_COLOR_TEXT_ON_ACCENT, 0);
-    lv_obj_set_user_data(s_obd2_add_btn, al);
-    lv_obj_add_event_cb(s_obd2_add_btn, _obd2_add_cb, LV_EVENT_CLICKED, NULL);
+    /* _obd2_render_results relabels it ("Add 5") through this pointer. */
+    lv_obj_set_user_data(s_obd2_add_btn, uk_btn_label(s_obd2_add_btn));
     lv_obj_add_flag(s_obd2_add_btn, LV_OBJ_FLAG_HIDDEN);
 
     /* A standing offer is an answer the car already gave (a CHECK after the
@@ -4187,62 +4054,31 @@ static void _obd2_chip_update(void) {
     if (!s_step_channels || !lv_obj_is_valid(s_step_channels)) return;
 
     if (!s_obd2_chip || !lv_obj_is_valid(s_obd2_chip)) {
-        s_obd2_chip = lv_btn_create(s_step_channels);
-        /* Match the established solid-button language ("Change" / "Apply to
-         * widget"): accent-blue fill, white label, radius 4, no shadow. */
-        lv_obj_set_height(s_obd2_chip, 26);
-        lv_obj_set_width(s_obd2_chip, LV_SIZE_CONTENT);
-        lv_obj_set_style_bg_color(s_obd2_chip, THEME_COLOR_ACCENT_BLUE, 0);
-        lv_obj_set_style_bg_opa(s_obd2_chip, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_width(s_obd2_chip, 0, 0);
-        lv_obj_set_style_radius(s_obd2_chip, 4, 0);
-        lv_obj_set_style_shadow_width(s_obd2_chip, 0, 0);
+        /* A neutral kit button sized as a chip; Continue keeps the screen's
+         * one red. */
+        s_obd2_chip = uk_btn(s_step_channels, UK_ICON_OBD, "Scan for OBD2",
+                             UK_BTN_NEUTRAL, _obd2_chip_cb, NULL);
+        lv_obj_set_height(s_obd2_chip, 30);
         lv_obj_set_style_pad_hor(s_obd2_chip, 12, 0);
-        lv_obj_set_style_pad_ver(s_obd2_chip, 0, 0);
-        lv_obj_add_event_cb(s_obd2_chip, _obd2_chip_cb, LV_EVENT_CLICKED, NULL);
-
-        lv_obj_t *lbl = lv_label_create(s_obd2_chip);
-        lv_label_set_text(lbl, "Scan for OBD2");
-        lv_obj_center(lbl);
-        lv_obj_set_style_text_font(lbl, THEME_FONT_TINY, 0);
-        lv_obj_set_user_data(s_obd2_chip, lbl);
     }
 
     /* "Your car also answers OBD2": when the check after the ECU preset
-     * found readings for channels nothing feeds, the chip counts them, so
-     * the offer is on the screen where the car's channels are reviewed
-     * instead of behind a scan nobody knew to run (ADR-0074). */
+     * found readings for channels nothing feeds, the chip counts them and
+     * turns "on" (accent tint), so the offer is on the screen where the
+     * car's channels are reviewed instead of behind a scan nobody knew to
+     * run (ADR-0074). */
     {
-        lv_obj_t *lbl = (lv_obj_t *)lv_obj_get_user_data(s_obd2_chip);
         size_t n = obd2_autosetup_offer(NULL, CH_OBD2_MATCH_MAX, NULL);
-        if (lbl && lv_obj_is_valid(lbl)) {
-            char b[32];
-            if (n) snprintf(b, sizeof(b), LV_SYMBOL_PLUS " OBD2 can add %u", (unsigned)n);
-            lv_label_set_text(lbl, n ? b : "Scan for OBD2");
-        }
-        lv_obj_set_style_bg_color(s_obd2_chip,
-            n ? THEME_COLOR_GREEN : THEME_COLOR_ACCENT_BLUE, 0);
-        /* White on that green was unreadable on the panel. */
-        if (lbl && lv_obj_is_valid(lbl))
-            lv_obj_set_style_text_color(lbl,
-                n ? THEME_COLOR_BG : THEME_COLOR_TEXT_ON_ACCENT, 0);
+        char b[32];
+        if (n) snprintf(b, sizeof(b), "OBD2 can add %u", (unsigned)n);
+        uk_btn_set_text(s_obd2_chip, n ? b : "Scan for OBD2");
+        uk_btn_set_kind(s_obd2_chip, n ? UK_BTN_ON : UK_BTN_NEUTRAL);
     }
 
-    /* Sit in the header row, just left of the "Pick a channel…" text
-     * (update_layout settles SIZE_CONTENT before aligning). */
+    /* Top-right of the hero row, level with the stats line (update_layout
+     * settles SIZE_CONTENT before aligning). */
     lv_obj_update_layout(s_obd2_chip);
-    if (s_step_chip_lbl && lv_obj_is_valid(s_step_chip_lbl))
-        lv_obj_align_to(s_obd2_chip, s_step_chip_lbl, LV_ALIGN_OUT_LEFT_MID, -14, 0);
-    else
-        lv_obj_align(s_obd2_chip, LV_ALIGN_TOP_RIGHT, 0, 32);
-}
-
-/* Top-right "×" close — same teardown as the footer cancel/skip path. Used by
- * the on-device channels editor (both standalone and apply-to-widget mode) so
- * there's always a visible way out at the top of the modal. */
-static void _btn_channels_close_cb(lv_event_t *e) {
-    (void)e;
-    _close_wizard(false);
+    lv_obj_align(s_obd2_chip, LV_ALIGN_TOP_RIGHT, 0, 0);
 }
 
 /* Safety net: if the channels overlay is ever torn down by a path that does
@@ -4301,73 +4137,33 @@ static void _show_step_channels(void) {
     s_step_ecu = s_ecu_progress = s_ecu_status = s_ecu_result_card = NULL;
     s_ecu_picker_sheet = NULL;
 
-    /* Widen the wizard card to fit the split-pane layout. Restored when
-     * leaving for the WiFi step (see _show_step3). */
-    lv_obj_set_size(s_card, CH_CARD_W, CH_CARD_H);
-    lv_obj_center(s_card);
+    /* The title ("Channels"), the mode line and Close live in the kit bar;
+     * the body is already the size the split pane is laid out for. The
+     * bar's Close is shown in every mode so the editor always has a visible
+     * way out at the top — the same _close_wizard(false) the old "×" ran. */
+    _wiz_bar_set("Channels",
+                 s_apply_to_widget_mode ? "Pick a channel for this widget"
+                 : s_standalone_channels ? "Changes save automatically"
+                                         : "Step 3 of 4",
+                 true);
 
     s_step_channels = lv_obj_create(s_card);
     lv_obj_remove_style_all(s_step_channels);
-    lv_obj_set_size(s_step_channels, CH_CARD_W - 40, CH_CARD_H - 40);
+    lv_obj_set_size(s_step_channels, CH_W, CH_H);
     lv_obj_align(s_step_channels, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_obj_clear_flag(s_step_channels, LV_OBJ_FLAG_SCROLLABLE);
 
-    /* ── Hero header (full width) ─────────────────────────────────── */
-    lv_obj_t *title = lv_label_create(s_step_channels);
-    lv_label_set_text(title, "Channels");
-    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_text_font(title, THEME_FONT_LARGE, 0);
-    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
-
-    /* Top-right "×" close — always present so the editor has a visible exit at
-     * the top (matches other modals' close-btn pattern in device_settings.c).
-     * Routes through the same _close_wizard(false) path the footer uses. */
-    lv_obj_t *close_x = lv_btn_create(s_step_channels);
-    lv_obj_set_size(close_x, 28, 28);
-    lv_obj_align(close_x, LV_ALIGN_TOP_RIGHT, 0, 0);
-    lv_obj_set_style_bg_color(close_x, THEME_COLOR_BTN_CLOSE, 0);
-    lv_obj_set_style_bg_color(close_x, THEME_COLOR_BTN_CLOSE_PRESSED,
-                              LV_STATE_PRESSED);
-    lv_obj_set_style_radius(close_x, THEME_RADIUS_SMALL, 0);
-    lv_obj_set_style_shadow_width(close_x, 0, 0);
-    lv_obj_set_style_pad_all(close_x, 0, 0);
-    lv_obj_t *close_x_lbl = lv_label_create(close_x);
-    lv_label_set_text(close_x_lbl, LV_SYMBOL_CLOSE);
-    lv_obj_center(close_x_lbl);
-    lv_obj_set_style_text_font(close_x_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(close_x_lbl, THEME_COLOR_TEXT_ON_ACCENT, 0);
-    lv_obj_add_event_cb(close_x, _btn_channels_close_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t *step_chip = lv_label_create(s_step_channels);
-    lv_label_set_text(step_chip,
-                      s_apply_to_widget_mode ? "Pick a channel for this widget"
-                      : s_standalone_channels ? "Changes save automatically"
-                                              : "Step 3 of 4");
-    /* Pushed left of the close "×" (28 px + 8 px gap) so the two never overlap. */
-    lv_obj_align(step_chip, LV_ALIGN_TOP_RIGHT, -(28 + 8), 4);
-    lv_obj_set_style_text_font(step_chip, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(step_chip, THEME_COLOR_TEXT_MUTED, 0);
-    /* The "Fill N from OBD2" chip anchors to this label's left edge. */
-    s_step_chip_lbl = step_chip;
-
+    /* ── Hero line (full width) ───────────────────────────────────── */
     s_channels_stats_lbl = lv_label_create(s_step_channels);
     lv_label_set_text(s_channels_stats_lbl, "");
     /* Cap width + dot-truncate so a long stats line never runs under the
-     * OBD2 "Fill from..." chip pinned to the hero's right edge. */
+     * OBD2 chip pinned to the hero's right edge. */
     lv_label_set_long_mode(s_channels_stats_lbl, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(s_channels_stats_lbl, CH_CARD_W - 40 - 150);
-    lv_obj_align(s_channels_stats_lbl, LV_ALIGN_TOP_LEFT, 0, 32);
-    lv_obj_set_style_text_font(s_channels_stats_lbl, THEME_FONT_TINY, 0);
+    lv_obj_set_width(s_channels_stats_lbl, CH_W - 220);
+    lv_obj_align(s_channels_stats_lbl, LV_ALIGN_TOP_LEFT, 2, 7);
+    lv_obj_set_style_text_font(s_channels_stats_lbl, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(s_channels_stats_lbl,
                                 THEME_COLOR_TEXT_MUTED, 0);
-
-    /* Hairline rule across the full card under the hero. */
-    lv_obj_t *rule = lv_obj_create(s_step_channels);
-    lv_obj_remove_style_all(rule);
-    lv_obj_set_size(rule, CH_CARD_W - 40, 1);
-    lv_obj_align(rule, LV_ALIGN_TOP_LEFT, 0, CH_HERO_H - 4);
-    lv_obj_set_style_bg_color(rule, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_bg_opa(rule, LV_OPA_50, 0);
 
     /* ── LEFT pane: scrollable channel list ───────────────────────── */
     s_channels_list_box = lv_obj_create(s_step_channels);
@@ -4379,30 +4175,28 @@ static void _show_step_channels(void) {
     lv_obj_set_style_pad_row(s_channels_list_box, 4, 0);
     lv_obj_set_scroll_dir(s_channels_list_box, LV_DIR_VER);
     lv_obj_set_flex_flow(s_channels_list_box, LV_FLEX_FLOW_COLUMN);
+    uk_style_scrollbar(s_channels_list_box);
 
     /* ── RIGHT pane: detail (built by _render_detail_pane) ────────── */
+    /* A kit card (card fill, hairline, radius 10) that scrolls. Built from a
+     * plain object rather than uk_card() so it keeps the clickable +
+     * scrollable flags a drag on empty pane needs. */
     s_detail_pane = lv_obj_create(s_step_channels);
     lv_obj_remove_style_all(s_detail_pane);
     lv_obj_set_size(s_detail_pane, CH_DETAIL_W, CH_BODY_H);
     lv_obj_align(s_detail_pane, LV_ALIGN_TOP_LEFT,
                  CH_LIST_W + CH_PANE_GAP, CH_BODY_TOP);
-    lv_obj_set_style_bg_color(s_detail_pane, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(s_detail_pane, LV_OPA_30, 0);
+    lv_obj_set_style_bg_color(s_detail_pane, THEME_COLOR_PANEL, 0);   /* card */
+    lv_obj_set_style_bg_opa(s_detail_pane, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(s_detail_pane, THEME_COLOR_BORDER, 0);
     lv_obj_set_style_border_width(s_detail_pane, 1, 0);
-    lv_obj_set_style_border_opa(s_detail_pane, LV_OPA_50, 0);
-    lv_obj_set_style_radius(s_detail_pane, 6, 0);
+    lv_obj_set_style_radius(s_detail_pane, UK_R_TILE, 0);
     lv_obj_set_style_pad_all(s_detail_pane, 10, 0);
-    /* Right-pad bumped so steppers don't sit under the scrollbar. */
+    /* Right-pad bumped so controls don't sit under the scrollbar. */
     lv_obj_set_style_pad_right(s_detail_pane, 14, 0);
     lv_obj_set_scroll_dir(s_detail_pane, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(s_detail_pane, LV_SCROLLBAR_MODE_AUTO);
-    /* Slim accent-blue scrollbar that doesn't compete with content. */
-    lv_obj_set_style_bg_color(s_detail_pane, THEME_COLOR_ACCENT_BLUE,
-                              LV_PART_SCROLLBAR);
-    lv_obj_set_style_bg_opa(s_detail_pane, LV_OPA_60, LV_PART_SCROLLBAR);
-    lv_obj_set_style_width(s_detail_pane, 4, LV_PART_SCROLLBAR);
-    lv_obj_set_style_pad_right(s_detail_pane, 14, LV_PART_SCROLLBAR);
+    uk_style_scrollbar(s_detail_pane);
 
     /* ── Populate the list (canonical catalog + customs + Add button) ── */
     _populate_channels_list();
@@ -4466,55 +4260,28 @@ static void _show_step_channels(void) {
         bool has_qs = config_modal_has_content(s_apply_target_widget);
 
         if (has_qs) {
-            lv_obj_t *adv = lv_btn_create(s_step_channels);
-            lv_obj_set_size(adv, 150, BTN_H);
+            lv_obj_t *adv = uk_btn(s_step_channels, UK_ICON_GEAR, "Widget settings",
+                                   UK_BTN_NEUTRAL, _btn_widget_settings_cb, NULL);
+            lv_obj_set_size(adv, 180, BTN_H);
             lv_obj_align(adv, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-            lv_obj_set_style_bg_color(adv, THEME_COLOR_SECTION_BG, 0);
-            lv_obj_set_style_border_color(adv, THEME_COLOR_BORDER, 0);
-            lv_obj_set_style_border_width(adv, 1, 0);
-            lv_obj_set_style_radius(adv, THEME_RADIUS_NORMAL, 0);
-            lv_obj_set_style_shadow_width(adv, 0, 0);
-            lv_obj_t *adv_lbl = lv_label_create(adv);
-            lv_label_set_text(adv_lbl, "Widget settings");
-            lv_obj_center(adv_lbl);
-            lv_obj_set_style_text_font(adv_lbl, THEME_FONT_SMALL, 0);
-            lv_obj_set_style_text_color(adv_lbl, THEME_COLOR_TEXT_MUTED, 0);
-            lv_obj_add_event_cb(adv, _btn_widget_settings_cb, LV_EVENT_CLICKED, NULL);
         }
 
-        lv_obj_t *cont = lv_btn_create(s_step_channels);
-        lv_obj_set_size(cont, has_qs ? (CH_CARD_W - 40 - 150 - 8)
-                                     : (CH_CARD_W - 40), BTN_H);
+        lv_obj_t *cont = uk_btn(s_step_channels, UK_ICON_CHECK, "Apply to widget",
+                                UK_BTN_PRIMARY, _btn_apply_to_widget_cb, NULL);
+        lv_obj_set_size(cont, has_qs ? (CH_W - 180 - UK_GAP) : CH_W, BTN_H);
         lv_obj_align(cont, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
-        lv_obj_set_style_bg_color(cont, THEME_COLOR_ACCENT_BLUE, 0);
-        lv_obj_set_style_radius(cont, THEME_RADIUS_NORMAL, 0);
-        lv_obj_set_style_shadow_width(cont, 0, 0);
-        lv_obj_t *cont_lbl = lv_label_create(cont);
-        lv_label_set_text(cont_lbl, "Apply to widget");
-        lv_obj_center(cont_lbl);
-        lv_obj_set_style_text_font(cont_lbl, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(cont_lbl, THEME_COLOR_TEXT_ON_ACCENT, 0);
-        lv_obj_add_event_cb(cont, _btn_apply_to_widget_cb, LV_EVENT_CLICKED, NULL);
     } else {
-        /* Continue button — full-width along the bottom of the card. */
-        lv_obj_t *cont = lv_btn_create(s_step_channels);
-        lv_obj_set_size(cont, CH_CARD_W - 40, BTN_H);
+        /* Continue button — full-width along the bottom of the body. */
+        lv_obj_t *cont = uk_btn(s_step_channels, UK_ICON_NONE,
+                                s_standalone_channels ? "Done" : "Continue",
+                                UK_BTN_PRIMARY, _btn_channels_continue_cb, NULL);
+        lv_obj_set_size(cont, CH_W, BTN_H);
         lv_obj_align(cont, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-        lv_obj_set_style_bg_color(cont, THEME_COLOR_ACCENT_BLUE, 0);
-        lv_obj_set_style_radius(cont, THEME_RADIUS_NORMAL, 0);
-        lv_obj_set_style_shadow_width(cont, 0, 0);
-        lv_obj_t *cont_lbl = lv_label_create(cont);
-        lv_label_set_text(cont_lbl, s_standalone_channels ? "Done" : "Continue");
-        lv_obj_center(cont_lbl);
-        lv_obj_set_style_text_font(cont_lbl, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(cont_lbl, THEME_COLOR_TEXT_ON_ACCENT, 0);
-        lv_obj_add_event_cb(cont, _btn_channels_continue_cb, LV_EVENT_CLICKED,
-                            NULL);
     }
 
-    /* Optional OBD2 gap-fill chip — only appears when there are active,
-     * unbound channels with a standard OBD2 PID. Created last so it sits
-     * above the list/detail in the hero's top-right. */
+    /* The OBD2 chip ("Scan for OBD2" / "OBD2 can add N") — always offered.
+     * Created last so it sits above the list/detail in the hero's
+     * top-right. */
     s_obd2_chip = NULL;
     _obd2_chip_update();
 
@@ -4817,22 +4584,23 @@ static void _open_math_sheet(const channel_t *c) {
     if (!c || !s_overlay || !lv_obj_is_valid(s_overlay)) return;
     _close_math_sheet();
 
-    /* Operand option strings — A is channels only; B prepends "Number…". */
+    /* Operand option strings — A is channels only; B prepends "Number...".
+     * Three dots, not an ellipsis character: Montserrat has no glyph for it. */
     static EXT_RAM_BSS_ATTR char a_opts[2048];
     _math_build_channel_options(c->id, a_opts, sizeof(a_opts));
     if (s_math_id_count == 0) return;  /* nothing to derive from */
     static EXT_RAM_BSS_ATTR char b_opts[2048];
-    int bp = snprintf(b_opts, sizeof(b_opts), "Number…");
+    int bp = snprintf(b_opts, sizeof(b_opts), "Number...");
     for (uint16_t i = 0; i < s_math_id_count; i++)
         bp += snprintf(b_opts + bp, sizeof(b_opts) - bp, "\n%s",
                        /* reuse A's labels by re-reading the channel */
                        (channel_manager_get(s_math_ids[i]) ?
                         channel_manager_get(s_math_ids[i])->label : s_math_ids[i]));
 
-    /* C prepends "(none)" as well as "Number…": the third term is optional,
+    /* C prepends "(none)" as well as "Number...": the third term is optional,
      * and "(none)" IS the two-operand expression that has always been here. */
     static EXT_RAM_BSS_ATTR char c_opts[2048];
-    int cp = snprintf(c_opts, sizeof(c_opts), "(none)\nNumber…");
+    int cp = snprintf(c_opts, sizeof(c_opts), "(none)\nNumber...");
     for (uint16_t i = 0; i < s_math_id_count; i++)
         cp += snprintf(c_opts + cp, sizeof(c_opts) - cp, "\n%s",
                        (channel_manager_get(s_math_ids[i]) ?
@@ -4841,42 +4609,21 @@ static void _open_math_sheet(const channel_t *c) {
     s_math_b_const = c->math_enabled && c->math_b_is_const ? c->math_b_const : 0.0f;
     s_math_c_const = c->math_enabled && c->math_c_is_const ? c->math_c_const : 0.0f;
 
-    s_math_sheet = lv_obj_create(s_overlay);
-    lv_obj_remove_style_all(s_math_sheet);
-    lv_obj_set_size(s_math_sheet, lv_pct(100), lv_pct(100));
-    lv_obj_center(s_math_sheet);
-    lv_obj_set_style_bg_color(s_math_sheet, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(s_math_sheet, LV_OPA_70, 0);
-    lv_obj_clear_flag(s_math_sheet, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *card = lv_obj_create(s_math_sheet);
-    lv_obj_remove_style_all(card);
-    lv_obj_set_size(card, 460, 386);
-    lv_obj_center(card);
-    lv_obj_set_style_bg_color(card, THEME_COLOR_PANEL, 0);
-    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(card, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_border_width(card, 1, 0);
-    lv_obj_set_style_radius(card, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_pad_all(card, 16, 0);
-    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *title = lv_label_create(card);
+    /* Kit sheet; s_math_sheet is the backdrop _close_math_sheet deletes. */
+    #define MATH_SHEET_W 460
+    #define MATH_SHEET_H 400
+    lv_obj_t *card = NULL;
     char hdr[64]; snprintf(hdr, sizeof(hdr), "Calculate %s", c->label);
-    lv_label_set_text(title, hdr);
-    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_text_font(title, THEME_FONT_MEDIUM, 0);
-    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
+    s_math_sheet = _wiz_sheet_open(MATH_SHEET_W, MATH_SHEET_H, hdr,
+                                   _math_close_cb, false, &card);
 
-    lv_coord_t cy = 34;
+    lv_coord_t cy = 44;
     /* Operand A (channel). */
     {
-        lv_obj_t *l = lv_label_create(card); lv_label_set_text(l, "A");
-        lv_obj_align(l, LV_ALIGN_TOP_LEFT, 0, cy + 6);
-        lv_obj_set_style_text_font(l, THEME_FONT_TINY, 0);
-        lv_obj_set_style_text_color(l, THEME_COLOR_TEXT_MUTED, 0);
+        _make_row_key(card, cy - 1, "A");
         s_math_a_dd = lv_dropdown_create(card);
         lv_dropdown_set_options(s_math_a_dd, a_opts);
+        _wiz_style_dropdown(s_math_a_dd);
         lv_obj_set_size(s_math_a_dd, 360, 30);
         lv_obj_align(s_math_a_dd, LV_ALIGN_TOP_RIGHT, 0, cy);
         if (c->math_enabled && !c->math_a_is_const)
@@ -4885,42 +4632,35 @@ static void _open_math_sheet(const channel_t *c) {
     }
     /* Operator. */
     {
-        lv_obj_t *l = lv_label_create(card); lv_label_set_text(l, "Op");
-        lv_obj_align(l, LV_ALIGN_TOP_LEFT, 0, cy + 6);
-        lv_obj_set_style_text_font(l, THEME_FONT_TINY, 0);
-        lv_obj_set_style_text_color(l, THEME_COLOR_TEXT_MUTED, 0);
+        _make_row_key(card, cy - 1, "Op");
         s_math_op_dd = lv_dropdown_create(card);
         lv_dropdown_set_options(s_math_op_dd, "A + B\nA - B\nA x B\nA / B");
+        _wiz_style_dropdown(s_math_op_dd);
         lv_obj_set_size(s_math_op_dd, 360, 30);
         lv_obj_align(s_math_op_dd, LV_ALIGN_TOP_RIGHT, 0, cy);
         if (c->math_enabled) lv_dropdown_set_selected(s_math_op_dd, c->math_op & 3);
         cy += 38;
     }
-    /* Operand B (channel or Number…) + its constant value box. */
+    /* Operand B (channel or Number...) + its constant value box. */
     {
-        lv_obj_t *l = lv_label_create(card); lv_label_set_text(l, "B");
-        lv_obj_align(l, LV_ALIGN_TOP_LEFT, 0, cy + 6);
-        lv_obj_set_style_text_font(l, THEME_FONT_TINY, 0);
-        lv_obj_set_style_text_color(l, THEME_COLOR_TEXT_MUTED, 0);
+        _make_row_key(card, cy - 1, "B");
         s_math_b_dd = lv_dropdown_create(card);
         lv_dropdown_set_options(s_math_b_dd, b_opts);
+        _wiz_style_dropdown(s_math_b_dd);
         lv_obj_set_size(s_math_b_dd, 250, 30);
-        lv_obj_align(s_math_b_dd, LV_ALIGN_TOP_LEFT, 60, cy);
+        lv_obj_align(s_math_b_dd, LV_ALIGN_TOP_LEFT, 64, cy);
         if (c->math_enabled && !c->math_b_is_const)
             lv_dropdown_set_selected(s_math_b_dd, (uint16_t)(_math_id_index(c->math_b) + 1));
-        /* Number value button (used when B = "Number…", index 0). */
+        /* Number value field (used when B = "Number...", index 0). */
         lv_obj_t *vbtn = lv_btn_create(card);
+        _wiz_style_textbox(vbtn);
         lv_obj_set_size(vbtn, 96, 30);
         lv_obj_align(vbtn, LV_ALIGN_TOP_RIGHT, 0, cy);
-        lv_obj_set_style_bg_color(vbtn, THEME_COLOR_INPUT_BG, 0);
-        lv_obj_set_style_radius(vbtn, 6, 0);
-        lv_obj_set_style_shadow_width(vbtn, 0, 0);
         s_math_bval_lbl = lv_label_create(vbtn);
         char vb[24]; snprintf(vb, sizeof(vb), "%g", s_math_b_const);
         lv_label_set_text(s_math_bval_lbl, vb);
         lv_obj_center(s_math_bval_lbl);
         lv_obj_set_style_text_font(s_math_bval_lbl, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(s_math_bval_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
         lv_obj_add_event_cb(vbtn, _math_bconst_cb, LV_EVENT_CLICKED, NULL);
         cy += 44;
     }
@@ -4928,95 +4668,69 @@ static void _open_math_sheet(const channel_t *c) {
      * something other than "(none)" — cheaper to read than a control that
      * greys itself out and back. */
     {
-        lv_obj_t *l = lv_label_create(card); lv_label_set_text(l, "then");
-        lv_obj_align(l, LV_ALIGN_TOP_LEFT, 0, cy + 6);
-        lv_obj_set_style_text_font(l, THEME_FONT_TINY, 0);
-        lv_obj_set_style_text_color(l, THEME_COLOR_TEXT_MUTED, 0);
+        _make_row_key(card, cy - 1, "then");
         s_math_op2_dd = lv_dropdown_create(card);
         lv_dropdown_set_options(s_math_op2_dd, "+ C\n- C\nx C\n/ C");
+        _wiz_style_dropdown(s_math_op2_dd);
         lv_obj_set_size(s_math_op2_dd, 360, 30);
         lv_obj_align(s_math_op2_dd, LV_ALIGN_TOP_RIGHT, 0, cy);
         if (c->math_enabled && c->math_c_enabled)
             lv_dropdown_set_selected(s_math_op2_dd, c->math_op2 & 3);
         cy += 38;
     }
-    /* Operand C (none / channel / Number…) + its constant value box. */
+    /* Operand C (none / channel / Number...) + its constant value box. */
     {
-        lv_obj_t *l = lv_label_create(card); lv_label_set_text(l, "C");
-        lv_obj_align(l, LV_ALIGN_TOP_LEFT, 0, cy + 6);
-        lv_obj_set_style_text_font(l, THEME_FONT_TINY, 0);
-        lv_obj_set_style_text_color(l, THEME_COLOR_TEXT_MUTED, 0);
+        _make_row_key(card, cy - 1, "C");
         s_math_c_dd = lv_dropdown_create(card);
         lv_dropdown_set_options(s_math_c_dd, c_opts);
+        _wiz_style_dropdown(s_math_c_dd);
         lv_obj_set_size(s_math_c_dd, 250, 30);
-        lv_obj_align(s_math_c_dd, LV_ALIGN_TOP_LEFT, 60, cy);
+        lv_obj_align(s_math_c_dd, LV_ALIGN_TOP_LEFT, 64, cy);
         if (c->math_enabled && c->math_c_enabled)
             lv_dropdown_set_selected(s_math_c_dd,
                 c->math_c_is_const ? 1
                                    : (uint16_t)(_math_id_index(c->math_c) + 2));
         lv_obj_t *cbtn = lv_btn_create(card);
+        _wiz_style_textbox(cbtn);
         lv_obj_set_size(cbtn, 96, 30);
         lv_obj_align(cbtn, LV_ALIGN_TOP_RIGHT, 0, cy);
-        lv_obj_set_style_bg_color(cbtn, THEME_COLOR_INPUT_BG, 0);
-        lv_obj_set_style_radius(cbtn, 6, 0);
-        lv_obj_set_style_shadow_width(cbtn, 0, 0);
         s_math_cval_lbl = lv_label_create(cbtn);
         char cvb[24]; snprintf(cvb, sizeof(cvb), "%g", s_math_c_const);
         lv_label_set_text(s_math_cval_lbl, cvb);
         lv_obj_center(s_math_cval_lbl);
         lv_obj_set_style_text_font(s_math_cval_lbl, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(s_math_cval_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
         lv_obj_add_event_cb(cbtn, _math_cconst_cb, LV_EVENT_CLICKED, NULL);
         cy += 44;
     }
 
     lv_obj_t *hint = lv_label_create(card);
     lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(hint, 428);
+    lv_obj_set_width(hint, MATH_SHEET_W - 2 * SHEET_PAD);
     lv_label_set_text(hint,
-        "Runs left to right: (A op B) then op C. \"Number…\" uses the typed "
+        "Runs left to right: (A op B) then op C. \"Number...\" uses the typed "
         "value. Leave C on \"(none)\" for a two-part sum. Litres/100km is "
         "fuel flow / speed, then x 100.");
     lv_obj_align(hint, LV_ALIGN_TOP_LEFT, 0, cy);
     lv_obj_set_style_text_font(hint, THEME_FONT_TINY, 0);
     lv_obj_set_style_text_color(hint, THEME_COLOR_TEXT_MUTED, 0);
 
-    /* Footer buttons: Cancel · (Clear if math) · Apply. */
-    lv_obj_t *apply = lv_btn_create(card);
-    lv_obj_set_size(apply, 110, 34);
+    /* Footer buttons: Cancel, (Clear if math), Apply. */
+    lv_obj_t *apply = uk_btn(card, UK_ICON_CHECK, "Apply", UK_BTN_PRIMARY,
+                             _math_apply_cb, NULL);
+    lv_obj_set_size(apply, 116, BTN_H);
     lv_obj_align(apply, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
-    lv_obj_set_style_bg_color(apply, THEME_COLOR_ACCENT_BLUE, 0);
-    lv_obj_set_style_radius(apply, 4, 0);
-    lv_obj_set_style_shadow_width(apply, 0, 0);
-    lv_obj_t *al = lv_label_create(apply); lv_label_set_text(al, "Apply");
-    lv_obj_center(al);
-    lv_obj_set_style_text_color(al, THEME_COLOR_TEXT_ON_ACCENT, 0);
-    lv_obj_add_event_cb(apply, _math_apply_cb, LV_EVENT_CLICKED, NULL);
 
-    lv_obj_t *cancel = lv_btn_create(card);
-    lv_obj_set_size(cancel, 100, 34);
+    lv_obj_t *cancel = uk_btn(card, UK_ICON_NONE, "Cancel", UK_BTN_GHOST,
+                              _math_close_cb, NULL);
+    lv_obj_set_size(cancel, 100, BTN_H);
     lv_obj_align(cancel, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-    lv_obj_set_style_bg_color(cancel, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_radius(cancel, 4, 0);
-    lv_obj_set_style_shadow_width(cancel, 0, 0);
-    lv_obj_t *cnl = lv_label_create(cancel); lv_label_set_text(cnl, "Cancel");
-    lv_obj_center(cnl);
-    lv_obj_set_style_text_color(cnl, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_add_event_cb(cancel, _math_close_cb, LV_EVENT_CLICKED, NULL);
 
     if (c->math_enabled) {
-        lv_obj_t *clr = lv_btn_create(card);
-        lv_obj_set_size(clr, 110, 34);
+        /* Clear wipes the formula: the kit's danger button. */
+        lv_obj_t *clr = uk_btn(card, UK_ICON_NONE, "Clear", UK_BTN_DANGER,
+                               _math_clear_cb, NULL);
+        lv_obj_set_size(clr, 110, BTN_H);
         lv_obj_align(clr, LV_ALIGN_BOTTOM_MID, 0, 0);
-        lv_obj_set_style_bg_color(clr, THEME_COLOR_SECTION_BG, 0);
-        lv_obj_set_style_border_color(clr, THEME_COLOR_STATUS_WARN, 0);
-        lv_obj_set_style_border_width(clr, 1, 0);
-        lv_obj_set_style_radius(clr, 4, 0);
-        lv_obj_set_style_shadow_width(clr, 0, 0);
-        lv_obj_t *crl = lv_label_create(clr); lv_label_set_text(crl, "Clear");
-        lv_obj_center(crl);
-        lv_obj_set_style_text_color(crl, THEME_COLOR_STATUS_WARN, 0);
-        lv_obj_add_event_cb(clr, _math_clear_cb, LV_EVENT_CLICKED, NULL);
     }
 }
 
@@ -5040,62 +4754,28 @@ static void _open_bind_sheet(const channel_t *c) {
         s_channels_refresh_timer = NULL;
     }
 
-    /* Full-overlay backdrop over the wizard card. Owned by s_overlay so
-     * it inherits the wizard's lifecycle (closes automatically when the
-     * wizard closes). LV_OPA_COVER (was 80) so the channels list
-     * behind it doesn't get redrawn every frame for the alpha blend. */
-    s_bind_sheet = lv_obj_create(s_overlay);
-    lv_obj_remove_style_all(s_bind_sheet);
-    lv_obj_set_size(s_bind_sheet, lv_pct(100), lv_pct(100));
-    lv_obj_center(s_bind_sheet);
-    lv_obj_set_style_bg_color(s_bind_sheet, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(s_bind_sheet, LV_OPA_COVER, 0);
-    lv_obj_clear_flag(s_bind_sheet, LV_OBJ_FLAG_SCROLLABLE);
-
-    /* Sheet card — matches the widened channels card so the picker
-     * has room for the 3-column ECU/Version/Signal browser. */
-    lv_obj_t *card = lv_obj_create(s_bind_sheet);
-    lv_obj_remove_style_all(card);
-    lv_obj_set_size(card, CH_CARD_W, CH_CARD_H);
-    lv_obj_center(card);
-    lv_obj_set_style_bg_color(card, THEME_COLOR_PANEL, 0);
-    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(card, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_border_width(card, 1, 0);
-    lv_obj_set_style_radius(card, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_pad_all(card, 16, 0);
-    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-
-    /* Header: "Pick a source for <channel>" + close X */
-    lv_obj_t *title = lv_label_create(card);
+    /* Kit sheet over the wizard. Owned by s_overlay so it inherits the
+     * wizard's lifecycle (closes automatically when the wizard closes). The
+     * backdrop is OPAQUE (it was 80 % before) so the channels list behind it
+     * doesn't get redrawn every frame for the alpha blend. The card is
+     * nearly the glass so the picker has room for the 3-column
+     * ECU/Version/Signal browser. */
+    lv_obj_t *card = NULL;
     char header[64];
     snprintf(header, sizeof(header), "Pick a source for %s", c->label);
-    lv_label_set_text(title, header);
-    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_text_font(title, THEME_FONT_MEDIUM, 0);
-    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
+    s_bind_sheet = _wiz_sheet_open(SHEET_W, SHEET_H, header,
+                                   _bind_sheet_close_cb, true, &card);
 
-    lv_obj_t *close_btn = lv_btn_create(card);
-    lv_obj_set_size(close_btn, 32, 28);
-    lv_obj_align(close_btn, LV_ALIGN_TOP_RIGHT, 0, -4);
-    lv_obj_set_style_bg_color(close_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_radius(close_btn, 4, 0);
-    lv_obj_set_style_shadow_width(close_btn, 0, 0);
-    lv_obj_t *xlbl = lv_label_create(close_btn);
-    lv_label_set_text(xlbl, LV_SYMBOL_CLOSE);
-    lv_obj_center(xlbl);
-    lv_obj_set_style_text_color(xlbl, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_add_event_cb(close_btn, _bind_sheet_close_cb, LV_EVENT_CLICKED, NULL);
-
-    /* Embedded preset picker — fills the rest of the card. Calls back
-     * with the picked preconfig_item_t. */
+    /* Embedded preset picker — fills the rest of the card under the
+     * header. Calls back with the picked preconfig_item_t. */
+    const lv_coord_t host_w = SHEET_W - 2 * SHEET_PAD;
+    const lv_coord_t host_h = SHEET_H - 2 * SHEET_PAD - 48;
     lv_obj_t *picker_host = lv_obj_create(card);
     lv_obj_remove_style_all(picker_host);
-    lv_obj_set_size(picker_host, CH_CARD_W - 32, CH_CARD_H - 64);
-    lv_obj_align(picker_host, LV_ALIGN_TOP_MID, 0, 36);
+    lv_obj_set_size(picker_host, host_w, host_h);
+    lv_obj_align(picker_host, LV_ALIGN_TOP_MID, 0, 48);
     lv_obj_clear_flag(picker_host, LV_OBJ_FLAG_SCROLLABLE);
-    build_preset_picker_embedded(picker_host, CH_CARD_W - 32,
-                                 CH_CARD_H - 64,
+    build_preset_picker_embedded(picker_host, host_w, host_h,
                                  _bind_sheet_apply_cb, NULL);
 }
 
@@ -5119,12 +4799,8 @@ static void _show_step3(void) {
     s_step_channels      = NULL;
     s_channels_list_box  = NULL;
 
-    /* Restore the wizard card to its original CARD_W/H — the WiFi step
-     * is laid out around BTN_W=500 inside CARD_W=560. */
-    if (s_card && lv_obj_is_valid(s_card)) {
-        lv_obj_set_size(s_card, CARD_W, CARD_H);
-        lv_obj_center(s_card);
-    }
+    /* The body under the bar is a fixed size; the WiFi step lays out around
+     * BTN_W=500 centred in it. */
     for (int i = 0; i < WIZ_CH_MAX_ROWS; i++) {
         s_channels_value_lbls[i] = NULL;
         s_channels_rows[i]       = NULL;
@@ -5140,50 +4816,46 @@ static void _show_step3(void) {
     lv_obj_center(s_step3);
     lv_obj_clear_flag(s_step3, LV_OBJ_FLAG_SCROLLABLE);
 
-    /* Title */
-    lv_obj_t *title = lv_label_create(s_step3);
-    lv_label_set_text(title, "Connect Your Device");
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_text_font(title, THEME_FONT_LARGE, 0);
-    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
+    _wiz_bar_set("WiFi", "Step 4 of 4", false);
 
-    lv_obj_t *sub = lv_label_create(s_step3);
-    lv_label_set_text(sub, "Step 4 of 4  -  pick how to connect");
-    lv_obj_align(sub, LV_ALIGN_TOP_MID, 0, 34);
-    lv_obj_set_style_text_font(sub, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(sub, THEME_COLOR_TEXT_MUTED, 0);
+    /* Each way to connect is a kit card: caps name, one line on what it
+     * does, its button. Card inner width (pad 14) is BTN_W. */
+    const lv_coord_t opt_w = BTN_W + 28;
 
     /* ── Option 1 (Recommended): Join WiFi network ─────────────────── */
-    lv_obj_t *opt1_label = lv_label_create(s_step3);
-    lv_label_set_text(opt1_label, "1.  WiFi  (recommended)");
-    lv_obj_align(opt1_label, LV_ALIGN_TOP_LEFT, 30, 66);
-    lv_obj_set_style_text_font(opt1_label, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(opt1_label, THEME_COLOR_ACCENT_BLUE, 0);
+    lv_obj_t *opt1 = uk_card(s_step3);
+    lv_obj_set_size(opt1, opt_w, 114);
+    lv_obj_align(opt1, LV_ALIGN_TOP_MID, 0, 0);
 
-    lv_obj_t *opt1_sub = lv_label_create(s_step3);
+    lv_obj_t *opt1_label = uk_label(opt1, "1.  WiFi  (recommended)",
+                                    UK_FONT_LABEL, UK_TONE_TEXT);
+    lv_obj_align(opt1_label, LV_ALIGN_TOP_LEFT, 0, -2);
+
+    lv_obj_t *opt1_sub = lv_label_create(opt1);
     lv_label_set_text(opt1_sub,
         "Join your home/shop WiFi - dash will show its IP in Device Settings");
-    lv_obj_align(opt1_sub, LV_ALIGN_TOP_LEFT, 30, 86);
-    lv_obj_set_style_text_font(opt1_sub, THEME_FONT_TINY, 0);
+    lv_obj_align(opt1_sub, LV_ALIGN_TOP_LEFT, 0, 20);
+    lv_obj_set_style_text_font(opt1_sub, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(opt1_sub, THEME_COLOR_TEXT_MUTED, 0);
 
-    _make_btn(s_step3, "Join a WiFi Network",
-              THEME_COLOR_ACCENT_BLUE, THEME_COLOR_TEXT_ON_ACCENT,
-              false, 108, _btn_wifi_join_cb);
+    _make_btn(opt1, UK_ICON_WIFI, "Join a WiFi Network",
+              UK_BTN_NEUTRAL, 46, _btn_wifi_join_cb);
 
     /* ── Option 2: Hotspot fallback ─────────────────────────────────── */
     const char *ap_ssid = wifi_manager_get_ap_ssid();
     const char *ap_ip   = wifi_manager_get_ap_ip();
 
-    lv_obj_t *opt2_label = lv_label_create(s_step3);
-    lv_label_set_text(opt2_label, "2.  Hotspot  (fallback, no WiFi needed)");
-    lv_obj_align(opt2_label, LV_ALIGN_TOP_LEFT, 30, 170);
-    lv_obj_set_style_text_font(opt2_label, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(opt2_label, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_t *opt2 = uk_card(s_step3);
+    lv_obj_set_size(opt2, opt_w, 144);
+    lv_obj_align(opt2, LV_ALIGN_TOP_MID, 0, 124);
 
-    lv_obj_t *opt2_sub = lv_label_create(s_step3);
+    lv_obj_t *opt2_label = uk_label(opt2, "2.  Hotspot  (fallback, no WiFi needed)",
+                                    UK_FONT_LABEL, UK_TONE_TEXT);
+    lv_obj_align(opt2_label, LV_ALIGN_TOP_LEFT, 0, -2);
+
+    lv_obj_t *opt2_sub = lv_label_create(opt2);
     lv_label_set_long_mode(opt2_sub, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(opt2_sub, BTN_W - 30);
+    lv_obj_set_width(opt2_sub, BTN_W);
     /* Show the unit's ACTUAL hotspot password — per-device since 2026-06,
      * so the old hardcoded "rdm7dash" string would mislead every new unit. */
     rdm_ap_config_t ap_cfg;
@@ -5194,21 +4866,19 @@ static void _show_step3(void) {
         ap_ssid ? ap_ssid : "RDM7-????",
         ap_cfg.password,
         ap_ip   ? ap_ip   : "192.168.4.1");
-    lv_obj_align(opt2_sub, LV_ALIGN_TOP_LEFT, 30, 190);
-    lv_obj_set_style_text_font(opt2_sub, THEME_FONT_TINY, 0);
+    lv_obj_align(opt2_sub, LV_ALIGN_TOP_LEFT, 0, 20);
+    lv_obj_set_style_text_font(opt2_sub, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(opt2_sub, THEME_COLOR_TEXT_MUTED, 0);
 
     /* Start Hotspot button — flips runtime to AP mode AND persists
      * hotspot-on-boot, then drops the user into the WiFi screen so they
      * can see the SSID/IP/password live. */
-    _make_btn(s_step3, "Start Hotspot",
-              THEME_COLOR_SECTION_BG, THEME_COLOR_TEXT_PRIMARY,
-              true, 234, _btn_hotspot_start_cb);
+    _make_btn(opt2, UK_ICON_HOTSPOT, "Start Hotspot",
+              UK_BTN_NEUTRAL, 76, _btn_hotspot_start_cb);
 
-    /* Finish button */
-    _make_btn(s_step3, "Finish Setup",
-              lv_color_black(), THEME_COLOR_TEXT_MUTED,
-              false, 300, _btn_finish_cb);
+    /* Finish button — the step's one primary action */
+    _make_btn(s_step3, UK_ICON_CHECK, "Finish Setup",
+              UK_BTN_PRIMARY, 290, _btn_finish_cb);
 }
 
 /* ── Step 1: CAN scan ─────────────────────────────────────────────────── */
@@ -5220,113 +4890,102 @@ static void _build_step1(void) {
     lv_obj_center(s_step1);
     lv_obj_clear_flag(s_step1, LV_OBJ_FLAG_SCROLLABLE);
 
-    /* Title */
-    lv_obj_t *title = lv_label_create(s_step1);
-    lv_label_set_text(title, "CAN Bus Setup");
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_text_font(title, THEME_FONT_LARGE, 0);
-    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
+    _wiz_bar_set("CAN bus", "Step 1 of 4", false);
 
-    lv_obj_t *sub = lv_label_create(s_step1);
-    lv_label_set_text(sub, "Step 1 of 4  -  Scanning all bitrates...");
-    lv_obj_align(sub, LV_ALIGN_TOP_MID, 0, 34);
-    lv_obj_set_style_text_font(sub, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(sub, THEME_COLOR_TEXT_MUTED, 0);
+    /* The scan's read-out in a kit card (inner width BTN_W); the buttons
+     * sit under it in the body. */
+    lv_obj_t *scan_card = uk_card(s_step1);
+    lv_obj_set_size(scan_card, BTN_W + 28, 204);
+    lv_obj_align(scan_card, LV_ALIGN_TOP_MID, 0, 0);
 
     /* Status label */
-    s_scan_status = lv_label_create(s_step1);
+    s_scan_status = lv_label_create(scan_card);
     lv_label_set_text(s_scan_status, "Starting scan...");
-    lv_obj_align(s_scan_status, LV_ALIGN_TOP_MID, 0, 62);
-    lv_obj_set_style_text_font(s_scan_status, THEME_FONT_SMALL, 0);
+    lv_obj_align(s_scan_status, LV_ALIGN_TOP_MID, 0, -2);
+    lv_obj_set_style_text_font(s_scan_status, THEME_FONT_BODY, 0);
     lv_obj_set_style_text_color(s_scan_status, THEME_COLOR_TEXT_PRIMARY, 0);
 
     /* Progress bar */
-    s_scan_bar = lv_bar_create(s_step1);
-    lv_obj_set_size(s_scan_bar, BTN_W, 8);
-    lv_obj_align(s_scan_bar, LV_ALIGN_TOP_MID, 0, 86);
+    s_scan_bar = lv_bar_create(scan_card);
+    lv_obj_set_size(s_scan_bar, BTN_W, 6);
+    lv_obj_align(s_scan_bar, LV_ALIGN_TOP_MID, 0, 24);
     lv_bar_set_range(s_scan_bar, 0, 100);
     lv_bar_set_value(s_scan_bar, 0, LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(s_scan_bar, THEME_COLOR_SECTION_BG, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(s_scan_bar, THEME_COLOR_ACCENT_BLUE, LV_PART_INDICATOR);
-    lv_obj_set_style_radius(s_scan_bar, 4, LV_PART_MAIN);
-    lv_obj_set_style_radius(s_scan_bar, 4, LV_PART_INDICATOR);
+    _wiz_style_bar(s_scan_bar);
 
     /* Progress text */
-    s_scan_progress = lv_label_create(s_step1);
+    s_scan_progress = lv_label_create(scan_card);
     lv_label_set_text(s_scan_progress, "");
-    lv_obj_align(s_scan_progress, LV_ALIGN_TOP_MID, 0, 100);
+    lv_obj_align(s_scan_progress, LV_ALIGN_TOP_MID, 0, 34);
     lv_obj_set_style_text_font(s_scan_progress, THEME_FONT_TINY, 0);
     lv_obj_set_style_text_color(s_scan_progress, THEME_COLOR_TEXT_MUTED, 0);
 
     /* Per-bitrate result lines */
     for (int i = 0; i < 4; i++) {
-        s_scan_results[i] = lv_label_create(s_step1);
+        s_scan_results[i] = lv_label_create(scan_card);
         lv_label_set_text_fmt(s_scan_results[i], "%s  --  ...", BR_NAMES[i]);
-        lv_obj_align(s_scan_results[i], LV_ALIGN_TOP_LEFT, 20, 122 + i * 22);
+        lv_obj_align(s_scan_results[i], LV_ALIGN_TOP_LEFT, 20, 52 + i * 20);
         lv_obj_set_style_text_font(s_scan_results[i], THEME_FONT_SMALL, 0);
         lv_obj_set_style_text_color(s_scan_results[i], THEME_COLOR_TEXT_MUTED, 0);
     }
 
     /* Detail label */
-    s_scan_detail = lv_label_create(s_step1);
+    s_scan_detail = lv_label_create(scan_card);
     lv_label_set_text(s_scan_detail, "");
     lv_label_set_long_mode(s_scan_detail, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(s_scan_detail, lv_pct(90));
-    lv_obj_align(s_scan_detail, LV_ALIGN_TOP_MID, 0, 216);
+    lv_obj_set_width(s_scan_detail, lv_pct(100));
+    lv_obj_align(s_scan_detail, LV_ALIGN_TOP_MID, 0, 138);
     lv_obj_set_style_text_font(s_scan_detail, THEME_FONT_TINY, 0);
     lv_obj_set_style_text_color(s_scan_detail, THEME_COLOR_TEXT_MUTED, 0);
     lv_obj_set_style_text_align(s_scan_detail, LV_TEXT_ALIGN_CENTER, 0);
 
-    /* Row 1 (Y=248): primary forward action — Apply (with traffic) OR
-     * Continue without CAN (no traffic). Mutually exclusive, share Y. */
-    s_btn_apply = _make_btn(s_step1, "Apply & Continue",
-                            THEME_COLOR_ACCENT_BLUE, THEME_COLOR_TEXT_ON_ACCENT,
-                            false, 248, _btn_apply_cb);
+    /* Row 1 (Y=214): forward action — Apply (with traffic) OR Continue
+     * without CAN (no traffic). Mutually exclusive, share Y. Apply is the
+     * step's primary; continuing without CAN is a neutral fallback. */
+    s_btn_apply = _make_btn(s_step1, UK_ICON_CHECK, "Apply & Continue",
+                            UK_BTN_PRIMARY, 214, _btn_apply_cb);
     lv_obj_add_flag(s_btn_apply, LV_OBJ_FLAG_HIDDEN);
 
-    s_btn_next1 = _make_btn(s_step1, "Continue without CAN",
-                            THEME_COLOR_SECTION_BG, THEME_COLOR_TEXT_MUTED,
-                            true, 248, _btn_next1_cb);
+    s_btn_next1 = _make_btn(s_step1, UK_ICON_RIGHT, "Continue without CAN",
+                            UK_BTN_NEUTRAL, 214, _btn_next1_cb);
     lv_obj_add_flag(s_btn_next1, LV_OBJ_FLAG_HIDDEN);
 
-    /* Row 2 (Y=296): scan control — Cancel (while running) OR
+    /* Row 2 (Y=262): scan control — Cancel (while running) OR
      * Start/Re-scan (idle/complete/error). Mutually exclusive, share Y. */
-    s_btn_cancel = _make_btn(s_step1, "Cancel Scan",
-                             THEME_COLOR_SECTION_BG, THEME_COLOR_TEXT_MUTED,
-                             true, 296, _btn_cancel_scan_cb);
+    s_btn_cancel = _make_btn(s_step1, UK_ICON_STOP, "Cancel Scan",
+                             UK_BTN_NEUTRAL, 262, _btn_cancel_scan_cb);
 
-    s_btn_start = _make_btn(s_step1, "Start Scan",
-                            THEME_COLOR_SECTION_BG, THEME_COLOR_TEXT_PRIMARY,
-                            true, 296, _btn_start_scan_cb);
+    s_btn_start = _make_btn(s_step1, UK_ICON_RESET, "Start Scan",
+                            UK_BTN_NEUTRAL, 262, _btn_start_scan_cb);
     lv_obj_add_flag(s_btn_start, LV_OBJ_FLAG_HIDDEN);
 
-    /* Row 3 (Y=340): Skip for now — wizard returns on next boot */
-    _make_btn(s_step1, "Skip for now  (ask again next boot)",
-              lv_color_black(), THEME_COLOR_TEXT_MUTED,
-              false, 340, _btn_skip_cb);
+    /* Row 3 (Y=310): Skip for now — wizard returns on next boot */
+    _make_btn(s_step1, UK_ICON_NONE, "Skip for now  (ask again next boot)",
+              UK_BTN_GHOST, 310, _btn_skip_cb);
 
-    /* Row 4 (Y=384): Skip for good — never show again.
+    /* Row 4 (Y=358): Skip for good — never show again.
      * The same setup screens stay reachable from Device Settings, so
      * this is non-destructive — just dismisses the boot prompt forever. */
-    _make_btn(s_step1, "Skip for good  (don't show again)",
-              lv_color_black(), THEME_COLOR_TEXT_MUTED,
-              false, 384, _btn_skip_forever_cb);
+    _make_btn(s_step1, UK_ICON_NONE, "Skip for good  (don't show again)",
+              UK_BTN_GHOST, 358, _btn_skip_forever_cb);
 }
 
 /* ── Public entry point ───────────────────────────────────────────────── */
 
-void show_first_run_wizard(void) {
-    if (s_overlay && lv_obj_is_valid(s_overlay)) return;
-    s_standalone_channels = false;  /* full onboarding flow, not channels-only */
-
-    /* Full-screen translucent overlay */
+/* The kit page every entry point builds on: an opaque overlay on the
+ * palette background over the active screen (nothing behind it redraws),
+ * the brand bar across the top, and s_card as the body under it. Each step
+ * repaints the bar's title / step / Close via _wiz_bar_set. */
+static void _wiz_build_shell(void) {
     lv_obj_t *scr = lv_scr_act();
     s_overlay = lv_obj_create(scr);
     lv_obj_remove_style_all(s_overlay);
     lv_obj_set_size(s_overlay, lv_pct(100), lv_pct(100));
     lv_obj_align(s_overlay, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(s_overlay, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(s_overlay, LV_OPA_80, 0);
+    lv_obj_set_style_bg_color(s_overlay, THEME_COLOR_BG, 0);
+    lv_obj_set_style_bg_opa(s_overlay, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(s_overlay, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_style_text_font(s_overlay, THEME_FONT_BODY, 0);
     lv_obj_clear_flag(s_overlay, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(s_overlay, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_move_foreground(s_overlay);
@@ -5335,17 +4994,28 @@ void show_first_run_wizard(void) {
     lv_obj_add_event_cb(s_overlay, _channels_overlay_delete_cb,
                         LV_EVENT_DELETE, NULL);
 
-    /* Card */
+    /* Brand bar. Created with Close so the button exists; each step shows or
+     * hides it. Children: logo 0, title 1, status strip 2, Close 3. */
+    s_bar = uk_bar(s_overlay, "Setup", UK_BAR_CLOSE, _bar_close_cb, NULL);
+    s_bar_title  = lv_obj_get_child(s_bar, 1);
+    s_bar_close  = lv_obj_get_child(s_bar, 3);
+    s_bar_status = uk_bar_status(s_bar, false, UK_TONE_MUTED, "");
+    if (s_bar_close) lv_obj_add_flag(s_bar_close, LV_OBJ_FLAG_HIDDEN);
+
+    /* Body: transparent, the full width under the bar inset by the kit's
+     * padding. Steps position themselves absolutely inside it. */
     s_card = lv_obj_create(s_overlay);
-    lv_obj_set_size(s_card, CARD_W, CARD_H);
-    lv_obj_center(s_card);
-    lv_obj_set_style_bg_color(s_card, THEME_COLOR_PANEL, 0);
-    lv_obj_set_style_bg_opa(s_card, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(s_card, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_border_width(s_card, 1, 0);
-    lv_obj_set_style_radius(s_card, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_pad_all(s_card, 20, 0);
+    lv_obj_remove_style_all(s_card);
+    lv_obj_set_size(s_card, WIZ_BODY_W, WIZ_BODY_H);
+    lv_obj_align(s_card, LV_ALIGN_TOP_LEFT, UK_PAD, UK_BAR_H + UK_PAD);
     lv_obj_clear_flag(s_card, LV_OBJ_FLAG_SCROLLABLE);
+}
+
+void show_first_run_wizard(void) {
+    if (s_overlay && lv_obj_is_valid(s_overlay)) return;
+    s_standalone_channels = false;  /* full onboarding flow, not channels-only */
+
+    _wiz_build_shell();
 
     /* Build step 1 (CAN scan) and auto-start. _try_start_scan handles the
      * common race where the user re-runs the wizard while a previous scan
@@ -5367,32 +5037,7 @@ void show_first_run_wizard(void) {
  * / s_apply_target_widget) and any preselection first; this builds the modal
  * over the active screen and jumps straight to the split-pane channels step. */
 static void _build_channels_overlay(void) {
-    lv_obj_t *scr = lv_scr_act();
-    s_overlay = lv_obj_create(scr);
-    lv_obj_remove_style_all(s_overlay);
-    lv_obj_set_size(s_overlay, lv_pct(100), lv_pct(100));
-    lv_obj_align(s_overlay, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(s_overlay, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(s_overlay, LV_OPA_80, 0);
-    lv_obj_clear_flag(s_overlay, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(s_overlay, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_move_foreground(s_overlay);
-    /* Kill the refresh timer if the overlay is ever deleted without going
-     * through _close_wizard (see _channels_overlay_delete_cb). */
-    lv_obj_add_event_cb(s_overlay, _channels_overlay_delete_cb,
-                        LV_EVENT_DELETE, NULL);
-
-    s_card = lv_obj_create(s_overlay);
-    lv_obj_set_size(s_card, CARD_W, CARD_H);  /* _show_step_channels widens it */
-    lv_obj_center(s_card);
-    lv_obj_set_style_bg_color(s_card, THEME_COLOR_PANEL, 0);
-    lv_obj_set_style_bg_opa(s_card, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(s_card, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_border_width(s_card, 1, 0);
-    lv_obj_set_style_radius(s_card, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_pad_all(s_card, 20, 0);
-    lv_obj_clear_flag(s_card, LV_OBJ_FLAG_SCROLLABLE);
-
+    _wiz_build_shell();
     _show_step_channels();
 }
 
