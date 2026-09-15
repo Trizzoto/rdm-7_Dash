@@ -170,9 +170,16 @@ void apply_common_roller_styles(lv_obj_t *roller) {
 }
 
 // Initialize styles
+//
+// Both styles are rebuilt on EVERY dashboard reload (ui_Screen3_screen_init)
+// and when the indicator/warning config menus open. lv_style_init() only
+// zeroes the struct — it does not free the property array a style with more
+// than one property owns — so re-initing leaked it: 60 + 66 bytes plus heap
+// headers, 136 B per layout.set. lv_style_reset() frees first, and on the
+// zeroed static at boot (prop_cnt 0) it frees nothing.
 void init_styles(void) {
 	// Box Style
-	lv_style_init(&box_style);
+	lv_style_reset(&box_style);
 	lv_style_set_radius(&box_style, 7);
 	lv_style_set_bg_color(&box_style,
 						  WIDGET_COLOR_BG); // Black background
@@ -187,7 +194,7 @@ void init_styles(void) {
 }
 
 void init_common_style(void) {
-	lv_style_init(&common_style);
+	lv_style_reset(&common_style);
 	lv_style_set_radius(&common_style, 7);
 	lv_style_set_pad_all(&common_style, 8); // 7px padding on all sides
 	lv_style_set_bg_color(&common_style,
