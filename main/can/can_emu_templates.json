@@ -1,0 +1,145 @@
+{
+  "v": 1,
+  "templates": [
+    {
+      "id": "haltech_cruise",
+      "name": "Haltech cruise buttons",
+      "maker": "Haltech",
+      "pretends": "Haltech IO 12 Expander",
+      "blurb": "Cruise control buttons on the screen. The ECU reads them as one analog input with a different voltage per button, plus an on/off switch.",
+      "variants": [
+        { "key": "A", "name": "IO Box A", "id_offset": 0 },
+        { "key": "B", "name": "IO Box B", "id_offset": 1 }
+      ],
+      "device": {
+        "id": "cruise_{v}",
+        "name": "Cruise buttons, Box {V}",
+        "template": "haltech_cruise",
+        "bitrate": 1000,
+        "controls": [
+          { "id": "cruise", "name": "Cruise buttons", "kind": "select",
+            "states": ["idle", "set", "resume", "cancel"] },
+          { "id": "cruise_on", "name": "Cruise on/off", "kind": "latch" }
+        ],
+        "send": [
+          { "can_id": 704, "dlc": 8, "every_ms": 20, "fields": [
+            { "bit_start": 0, "bit_length": 16, "endian": 0, "scale": 0.001221001, "min": 0, "max": 5, "unit": "V",
+              "control": "cruise", "values": [0, 5, 2.5, 4.29] }
+          ] },
+          { "can_id": 706, "dlc": 8, "every_ms": 20, "fields": [
+            { "bit_start": 0, "bit_length": 8, "endian": 0, "control": "cruise_on", "values": [0, 250] }
+          ] },
+          { "can_id": 708, "dlc": 8, "every_ms": 20 },
+          { "can_id": 710, "dlc": 5, "every_ms": 100, "data": "10090D0100" }
+        ],
+        "listen": [
+          { "can_id": 720, "channels": [
+            { "name": "IO{V}_DPO1", "bit_start": 0, "bit_length": 8, "endian": 0, "scale": 0.4, "unit": "%" },
+            { "name": "IO{V}_DPO2", "bit_start": 32, "bit_length": 8, "endian": 0, "scale": 0.4, "unit": "%" }
+          ] }
+        ]
+      },
+      "labels": {
+        "704": "Analog inputs 1-4",
+        "706": "Switch inputs 1-2",
+        "708": "Switch inputs 3-4",
+        "710": "Keep-alive",
+        "720": "Outputs 1-2 from the ECU"
+      },
+      "guide": [
+        "In NSP, open the IO 12 Expander and tick Box {V}.",
+        "Set Analog Input 1 to Cruise Control multi-button. Set Switch Input 1 to Cruise Control enable.",
+        "For each button: hold it on the dash, and while holding it click Calibrate for that function in NSP.",
+        "Cruise control also needs drive-by-wire and a vehicle speed input set up, and a clutch switch on a manual.",
+        "Optional: set Output 1 to the cruise active lamp. The dash shows it as channel IO{V}_DPO1."
+      ]
+    },
+    {
+      "id": "haltech_io12",
+      "name": "Haltech IO 12 Expander",
+      "maker": "Haltech",
+      "pretends": "Haltech IO 12 Expander",
+      "blurb": "4 analog inputs, 4 switch inputs, and the 4 outputs the ECU sends back. Give each input any buttons and voltages you like.",
+      "variants": [
+        { "key": "A", "name": "IO Box A", "id_offset": 0 },
+        { "key": "B", "name": "IO Box B", "id_offset": 1 }
+      ],
+      "device": {
+        "id": "iobox_{v}",
+        "name": "IO Box {V}",
+        "template": "haltech_io12",
+        "bitrate": 1000,
+        "controls": [
+          { "id": "avi1", "name": "Analog 1", "kind": "select", "states": ["idle", "pressed"] },
+          { "id": "avi2", "name": "Analog 2", "kind": "select", "states": ["idle", "pressed"] },
+          { "id": "avi3", "name": "Analog 3", "kind": "select", "states": ["idle", "pressed"] },
+          { "id": "avi4", "name": "Analog 4", "kind": "select", "states": ["idle", "pressed"] },
+          { "id": "dpi1", "name": "Switch 1", "kind": "latch" },
+          { "id": "dpi2", "name": "Switch 2", "kind": "latch" },
+          { "id": "dpi3", "name": "Switch 3", "kind": "latch" },
+          { "id": "dpi4", "name": "Switch 4", "kind": "latch" }
+        ],
+        "send": [
+          { "can_id": 704, "dlc": 8, "every_ms": 20, "fields": [
+            { "bit_start": 0,  "bit_length": 16, "endian": 0, "scale": 0.001221001, "min": 0, "max": 5, "unit": "V", "control": "avi1", "values": [0, 5] },
+            { "bit_start": 16, "bit_length": 16, "endian": 0, "scale": 0.001221001, "min": 0, "max": 5, "unit": "V", "control": "avi2", "values": [0, 5] },
+            { "bit_start": 32, "bit_length": 16, "endian": 0, "scale": 0.001221001, "min": 0, "max": 5, "unit": "V", "control": "avi3", "values": [0, 5] },
+            { "bit_start": 48, "bit_length": 16, "endian": 0, "scale": 0.001221001, "min": 0, "max": 5, "unit": "V", "control": "avi4", "values": [0, 5] }
+          ] },
+          { "can_id": 706, "dlc": 8, "every_ms": 20, "fields": [
+            { "bit_start": 0,  "bit_length": 8, "endian": 0, "control": "dpi1", "values": [0, 250] },
+            { "bit_start": 32, "bit_length": 8, "endian": 0, "control": "dpi2", "values": [0, 250] }
+          ] },
+          { "can_id": 708, "dlc": 8, "every_ms": 20, "fields": [
+            { "bit_start": 0,  "bit_length": 8, "endian": 0, "control": "dpi3", "values": [0, 250] },
+            { "bit_start": 32, "bit_length": 8, "endian": 0, "control": "dpi4", "values": [0, 250] }
+          ] },
+          { "can_id": 710, "dlc": 5, "every_ms": 100, "data": "10090D0100" }
+        ],
+        "listen": [
+          { "can_id": 720, "channels": [
+            { "name": "IO{V}_DPO1", "bit_start": 0,  "bit_length": 8, "endian": 0, "scale": 0.4, "unit": "%" },
+            { "name": "IO{V}_DPO2", "bit_start": 32, "bit_length": 8, "endian": 0, "scale": 0.4, "unit": "%" }
+          ] },
+          { "can_id": 722, "channels": [
+            { "name": "IO{V}_DPO3", "bit_start": 0,  "bit_length": 8, "endian": 0, "scale": 0.4, "unit": "%" },
+            { "name": "IO{V}_DPO4", "bit_start": 32, "bit_length": 8, "endian": 0, "scale": 0.4, "unit": "%" }
+          ] }
+        ]
+      },
+      "labels": {
+        "704": "Analog inputs 1-4",
+        "706": "Switch inputs 1-2",
+        "708": "Switch inputs 3-4",
+        "710": "Keep-alive",
+        "720": "Outputs 1-2 from the ECU",
+        "722": "Outputs 3-4 from the ECU"
+      },
+      "guide": [
+        "In NSP, open the IO 12 Expander and tick Box {V}.",
+        "Give each analog or switch input its function in NSP, the same as a wired input.",
+        "An analog input with several buttons: hold each button on the dash and click Calibrate for it in NSP.",
+        "Outputs the ECU drives show on the dash as channels IO{V}_DPO1 to IO{V}_DPO4 (0-100 %)."
+      ]
+    },
+    {
+      "id": "blank",
+      "name": "My own spec",
+      "maker": "",
+      "pretends": "Anything with a CAN spec",
+      "blurb": "Start empty and describe the frames yourself, from a PDF, a DBC or a capture.",
+      "variants": [],
+      "device": {
+        "id": "custom",
+        "name": "Custom device",
+        "template": "blank",
+        "bitrate": 0,
+        "controls": [],
+        "send": [],
+        "listen": []
+      },
+      "labels": {},
+      "guide": []
+    }
+  ]
+}

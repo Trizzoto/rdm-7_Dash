@@ -8,6 +8,36 @@ This file starts tracking from **1.1.11** (the first release-tracked build, 2026
 
 Changes that have landed on `master` since the last tagged version.
 
+### Added
+- **The dash can be a keypad or IO box for your ECU.** (ADR-0077) Buttons on the
+  screen reach the ECU as inputs it already understands. First case: cruise
+  control buttons that a Haltech reads as its own IO 12 Expander, one analog
+  input with a voltage per button.
+  - Built-in devices: **Haltech cruise buttons** and **Haltech IO 12 Expander**,
+    each as Box A or Box B; or **your own spec**, written as frames and bits.
+  - Dash: Device Settings, Your car, **Keypads & IO**. Switch devices on and
+    off, add one, hold its buttons to test them, and see the bytes it sends and
+    what the ECU sends back.
+  - Web editor and Studio: Setup, **Keypads & IO boxes**. A table per device
+    lets you set each button's value in volts; warns when two buttons sit
+    under 0.3 V apart; gives the NSP setup steps; and has a JSON editor for
+    any spec.
+  - Button and toggle widgets have a new **Presses** field that picks the
+    device button they press.
+  - Stays off the bus when the bitrate is wrong, stands down if a real box is
+    already sending its IDs, never sends simulated data, and lets go of a
+    button when its widget goes away.
+  - A full-dashboard `.rdm` includes the devices; importing one asks before
+    replacing yours.
+  - API: `GET/POST /api/can/emu`; serial RPC `can.emu`.
+
+### Fixed
+- **Two buttons or toggles on one CAN ID no longer wipe each other's bits.**
+  Each used to send a frame with only its own bit set. Frames are now built
+  per ID, from every widget that writes into them.
+- **A latched button looks pressed while it is on.** It used to look the same
+  as off once the finger lifted.
+
 ### Changed
 - **A Toyota 86 / Subaru BRZ gets OBD2 set up automatically, like a Falcon.**
   (ADR-0074) Its factory bus has RPM, throttle, speed, coolant and oil temp;

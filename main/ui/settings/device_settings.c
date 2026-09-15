@@ -56,6 +56,7 @@
 
 #include "net/wifi_manager.h"
 #include "kit/ui_kit.h"
+#include "settings/can_emu_settings.h"
 #include "menu/main_menu.h"
 #include "system/rdm_lv_async.h"
 
@@ -781,9 +782,27 @@ static void save_dimmer_config_cb(lv_event_t * e) {
 
 /* The CAN bus tile's stat is the only live thing left on the Your car page
  * that this timer paints (the old health panel went with the card grid). */
+/* Keypads & IO boxes tile: repainted with the CAN tile, so a device that
+ * stops (a real IO box turned up on the bus) shows on the page at once. */
+static lv_obj_t *s_emu_tile = NULL;
+
+static void _refresh_emu_tile(void) {
+    if (!s_emu_tile || !lv_obj_is_valid(s_emu_tile)) return;
+    char stat[24];
+    uk_tone_t tone;
+    can_emu_settings_stat(stat, sizeof(stat), &tone);
+    uk_tile_set_status(s_emu_tile, stat, NULL, tone);
+}
+
+static void _emu_card_cb(lv_event_t *e) {
+    (void)e;
+    can_emu_settings_open();
+}
+
 static void refresh_can_diag_timer_cb(lv_timer_t* timer) {
     (void)timer;
     _refresh_can_bitrate_stat();
+    _refresh_emu_tile();
 }
 
 /* _view_peaks_btn_cb tears down the Recording popup before swapping
@@ -2004,6 +2023,12 @@ static void _build_car_page(lv_obj_t *body) {
     _make_setup_card(grid, UK_ICON_ROUTE, "Odometer",
         "Total distance, counted from your speed reading.",
         "km", _odo_popup_open, UK_TILE_NORMAL);
+
+    /* The dash playing a CAN keypad or IO box for the ECU (ADR-0077). */
+    s_emu_tile = _make_setup_card(grid, UK_ICON_KEYPAD, "Keypads & IO",
+        "Buttons on this screen your ECU reads as its own keypad or IO box.",
+        " ", _emu_card_cb, UK_TILE_NORMAL).card;
+    _refresh_emu_tile();
     uk_grid_fill_row(grid);
 }
 
@@ -2263,6 +2288,8 @@ static void _settings_screen_delete_cb(lv_event_t *e) {
     _logger_popup_close(NULL);
     _can_bus_popup_close(NULL);
     _odo_popup_close(NULL);
+    can_emu_settings_close();
+    s_emu_tile           = NULL;
 
     wifi_status_label    = NULL;
     web_status_label     = NULL;

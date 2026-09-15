@@ -113,6 +113,28 @@ esp_err_t can_transmit_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc);
 esp_err_t can_try_transmit_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc);
 
 /**
+ * can_try_transmit_frame with a frame format and a choice of single shot.
+ *
+ * Periodic senders (can_emu devices) pass single_shot=true: a missed slot is
+ * resent by the next period, and nothing retransmits forever onto a bus with
+ * no one to ACK it. Event senders whose one frame matters (a button's OFF
+ * burst) pass false and keep the controller's automatic retransmission, while
+ * still never waiting for a queue slot on the render thread.
+ */
+esp_err_t can_try_transmit_frame_ext(uint32_t can_id, bool extd,
+                                     const uint8_t *data, uint8_t dlc,
+                                     bool single_shot);
+
+/**
+ * Why the dash will not transmit on this ID, in a sentence for the user — or
+ * NULL when it may. Refuses the RDM device-bus block and discovery ID (a stray
+ * frame there is a well-formed message to our own protocol) and the OBD2
+ * request IDs (it would land inside the dash's own polling transaction).
+ * Shared by /api/can/send and can_emu devices.
+ */
+const char *can_tx_refused_reason(uint32_t can_id, bool extd);
+
+/**
  * Transmit a single CAN frame with explicit frame format.
  * Same semantics as can_transmit_frame but supports extended (29-bit)
  * identifiers — required for 29-bit ISO 15765-4 OBD2 addressing

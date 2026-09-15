@@ -112,7 +112,8 @@
             "can_id",
             "gradient_stops",
             "anim_frames",
-            "track_picker"
+            "track_picker",
+            "device_control"
           ]
         },
         "default": {

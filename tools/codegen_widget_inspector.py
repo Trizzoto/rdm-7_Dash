@@ -46,7 +46,7 @@ SCHEMA_TYPE_TO_WF = {
 # editor is a Photoshop-style web control; on-device the rpm_bar uses a
 # hand-written STYLE tab and bar/arc simply omit it, matching pre-schema
 # behaviour.)
-WEB_ONLY_TYPES = {"gradient_stops", "anim_frames"}
+WEB_ONLY_TYPES = {"gradient_stops", "anim_frames", "device_control"}
 
 SCHEMA_CAT_TO_WF = {
     "data":        "WF_CAT_DATA",

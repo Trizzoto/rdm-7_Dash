@@ -9,8 +9,7 @@
 #include "widget_rules.h"
 #include "system/night_mode.h"
 #include "ui/menu/edit_mode.h"
-#include "can/can_decode.h"
-#include "can/can_manager.h"
+#include "can/can_emu.h"
 #include "storage/config_store.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
@@ -56,8 +55,6 @@ static lv_text_align_t _to_lv_align(uint8_t a) {
 }
 
 /* ── Forward declarations ─────────────────────────────────────────────────── */
-static void _btn_start_tx_timer(widget_t *w);
-static void _btn_stop_tx_timer(button_data_t *d);
 static void _btn_set_pressed_visual(button_data_t *d, bool pressed_state);
 static void _btn_activate(widget_t *w);
 static void _btn_deactivate(widget_t *w);
@@ -66,22 +63,16 @@ static void _button_night_cb(bool active, void *user_data);
 
 /* ── LVGL callbacks ───────────────────────────────────────────────────────── */
 
-static void _btn_send(button_data_t *d, bool on) {
+/* The raw tx_* output. Frames are built and sent by can_emu (per CAN ID, so
+ * two buttons on one frame keep each other's bits), on its own 10 ms clock:
+ * ON now and every 1/tx_rate_hz while active, and TX_OFF_BURST OFF frames
+ * when it stops — a single dropped frame on a busy bus can't strand a driven
+ * output ON. */
+static void _btn_output(widget_t *w, bool on) {
+    button_data_t *d = (button_data_t *)w->type_data;
     if (d->tx_can_id == 0) return;
-    uint8_t frame[8] = {0};
-    uint32_t val = on ? (d->tx_bit_length >= 32 ? 0xFFFFFFFFu : ((1u << d->tx_bit_length) - 1u)) : 0u;
-    can_pack_bits(frame, d->tx_bit_start, d->tx_bit_length, val, d->tx_endian);
-    esp_err_t err = can_transmit_frame(d->tx_can_id, frame, 8);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "TX failed (id=0x%03X): %s",
-                 (unsigned)d->tx_can_id, esp_err_to_name(err));
-    }
-}
-
-/* Drive the output OFF with a short burst so a single dropped frame can't
- * leave a momentary/latch stranded ON. Safe to call when already off. */
-static void _btn_send_off_burst(button_data_t *d) {
-    for (int i = 0; i < TX_OFF_BURST; i++) _btn_send(d, false);
+    can_emu_legacy_set(w, d->tx_can_id, d->tx_bit_start, d->tx_bit_length,
+                       d->tx_endian, d->tx_rate_hz, on);
 }
 
 /* Persist (or forget) the latch state for this output when remember_state is
@@ -103,33 +94,52 @@ static void _btn_activate(widget_t *w) {
     button_data_t *d = (button_data_t *)w->type_data;
     if (!d || d->tx_active) return;
     d->tx_active = true;
-    _btn_send(d, true);
-    _btn_start_tx_timer(w);
+    _btn_output(w, true);
 }
 
 static void _btn_deactivate(widget_t *w) {
     button_data_t *d = (button_data_t *)w->type_data;
     if (!d) return;
-    _btn_stop_tx_timer(d);
     if (d->tx_active) {
         d->tx_active = false;
-        _btn_send_off_burst(d);
+        _btn_output(w, false);
     }
+}
+
+/* The device control this button presses, if any. A latch control keeps its
+ * own state in the engine (and remembers it across power-off when the device
+ * says so); anything else is held while the finger is down — or, on a latch
+ * button, until the next press. */
+static void _btn_control(button_data_t *d, bool down) {
+    if (!d->control[0]) return;
+    if (can_emu_ref_is_latch(d->control)) {
+        if (d->latch) can_emu_set_latch(d->control, down);
+        else if (down) can_emu_press(d->control);   /* each tap flips it */
+        return;
+    }
+    if (down && !d->control_held) d->control_held = can_emu_press(d->control);
+    else if (!down && d->control_held) { can_emu_release(d->control); d->control_held = false; }
 }
 
 /* Called from create() for latch buttons: restore the persisted on/off state
  * (when remember_state is set) and, if ON, re-assert the output + keepalive so
- * a CAN-controlled load comes back to its last commanded state after a reboot. */
+ * a CAN-controlled load comes back to its last commanded state after a reboot.
+ * A latch control's state lives in can_emu, so the button just shows it. */
 static void _btn_restore_latch(widget_t *w) {
     button_data_t *d = (button_data_t *)w->type_data;
     if (!d || !d->latch) return;
-    if (d->remember_state && d->tx_can_id != 0) {
+    if (d->control[0] && can_emu_ref_is_latch(d->control)) {
+        d->latch_state = can_emu_is_active(d->control);
+    } else if (d->remember_state && d->tx_can_id != 0) {
         bool on = false;
         if (config_store_load_widget_latch(d->tx_can_id, d->tx_bit_start, &on) == ESP_OK)
             d->latch_state = on;
     }
     _btn_set_pressed_visual(d, d->latch_state);
-    if (d->latch_state) _btn_activate(w);
+    if (d->latch_state) {
+        _btn_activate(w);
+        if (d->control[0] && !can_emu_ref_is_latch(d->control)) _btn_control(d, true);
+    }
 }
 
 /* Toggle pressed/normal visual state for image-mode and btn-mode buttons.
@@ -137,6 +147,12 @@ static void _btn_restore_latch(widget_t *w) {
  * For single-image mode: applies a dim overlay on press as fallback feedback.
  * For btn_obj mode: not called — LVGL handles LV_STATE_PRESSED natively. */
 static void _btn_set_pressed_visual(button_data_t *d, bool pressed_state) {
+    /* A latched-on normal button used to look exactly like an off one once
+     * the finger lifted. CHECKED carries pressed_color while it is on. */
+    if (d->latch && d->btn_obj && lv_obj_is_valid(d->btn_obj)) {
+        if (pressed_state) lv_obj_add_state(d->btn_obj, LV_STATE_CHECKED);
+        else               lv_obj_clear_state(d->btn_obj, LV_STATE_CHECKED);
+    }
     if (d->img_obj && lv_obj_is_valid(d->img_obj)) {
         if (d->pressed_img_obj && lv_obj_is_valid(d->pressed_img_obj)) {
             if (pressed_state) {
@@ -171,10 +187,12 @@ static void _btn_pressed_cb(lv_event_t *e) {
         _btn_set_pressed_visual(d, d->latch_state);
         if (d->latch_state) _btn_activate(w);
         else                _btn_deactivate(w);
+        _btn_control(d, d->latch_state);
         _btn_persist_latch(d);
     } else {
         _btn_set_pressed_visual(d, true);
         _btn_activate(w);
+        _btn_control(d, true);
     }
 }
 
@@ -191,29 +209,7 @@ static void _btn_release_or_lost(lv_event_t *e) {
     if (d->latch) return;            /* latch holds until the next press */
     _btn_set_pressed_visual(d, false);
     _btn_deactivate(w);
-}
-
-/* ── Periodic TX timer ────────────────────────────────────────────────────── */
-
-static void _btn_tx_timer_cb(lv_timer_t *t) {
-    widget_t *w = (widget_t *)t->user_data;
-    if (!w || !w->type_data) return;
-    button_data_t *d = (button_data_t *)w->type_data;
-    _btn_send(d, true);
-}
-
-static void _btn_start_tx_timer(widget_t *w) {
-    button_data_t *d = (button_data_t *)w->type_data;
-    if (!d || d->tx_timer || d->tx_can_id == 0 || d->tx_rate_hz == 0) return;
-    uint32_t period = 1000 / d->tx_rate_hz;
-    d->tx_timer = lv_timer_create(_btn_tx_timer_cb, period, w);
-}
-
-static void _btn_stop_tx_timer(button_data_t *d) {
-    if (d->tx_timer) {
-        lv_timer_del(d->tx_timer);
-        d->tx_timer = NULL;
-    }
+    _btn_control(d, false);
 }
 
 /* ── vtable: create ───────────────────────────────────────────────────────── */
@@ -312,8 +308,9 @@ static void _button_create(widget_t *w, lv_obj_t *parent) {
     lv_obj_set_style_bg_color(btn, d->bg_color, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(btn, d->border_radius, LV_PART_MAIN | LV_STATE_DEFAULT);
 
-    /* Pressed state style */
+    /* Pressed state style — and a latch that is on looks pressed */
     lv_obj_set_style_bg_color(btn, d->pressed_color, LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(btn, d->pressed_color, LV_PART_MAIN | LV_STATE_CHECKED);
 
     /* Label */
     if (d->show_label) {
@@ -385,6 +382,9 @@ static void _button_to_json(widget_t *w, cJSON *out) {
     /* Label -- always write (no sensible "empty" default) */
     if (strcmp(d->label, DEF_LABEL) != 0)
         cJSON_AddStringToObject(cfg, "label", d->label);
+
+    if (d->control[0] != '\0')
+        cJSON_AddStringToObject(cfg, "control", d->control);
 
     /* CAN TX config */
     if (d->tx_can_id != DEF_TX_CAN_ID)
@@ -462,6 +462,11 @@ static void _button_from_json(widget_t *w, cJSON *in) {
     item = cJSON_GetObjectItemCaseSensitive(cfg, "label");
     if (cJSON_IsString(item) && item->valuestring) {
         safe_strncpy(d->label, item->valuestring, sizeof(d->label));
+    }
+
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "control");
+    if (cJSON_IsString(item) && item->valuestring) {
+        safe_strncpy(d->control, item->valuestring, sizeof(d->control));
     }
 
     /* CAN TX */
@@ -542,13 +547,13 @@ static void _button_destroy(widget_t *w) {
     if (!w) return;
     if (w->type_data) {
         button_data_t *d = (button_data_t *)w->type_data;
-        _btn_stop_tx_timer(d);
         /* Don't strand a driven output ON when the widget goes away (layout
          * reload, delete). Exception: a persisted latch stays asserted so a
          * hot-reload doesn't blink the load off — the recreated widget restores
          * it from NVS. */
-        if (d->tx_active && !(d->latch && d->remember_state))
-            _btn_send_off_burst(d);
+        can_emu_legacy_forget(w, d->tx_active && !(d->latch && d->remember_state));
+        /* Nor a device control held by a finger that no longer has a button. */
+        if (d->control_held) { can_emu_release(d->control); d->control_held = false; }
         rdm_image_free((lv_img_dsc_t *)d->img_dsc);
         rdm_image_free((lv_img_dsc_t *)d->pressed_img_dsc);
     }
@@ -589,6 +594,7 @@ static void _button_apply_overrides(widget_t *w, const rule_override_t *ov, uint
     if (d->btn_obj && lv_obj_is_valid(d->btn_obj)) {
         lv_obj_set_style_bg_color(d->btn_obj, bg, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_bg_color(d->btn_obj, pressed, LV_PART_MAIN | LV_STATE_PRESSED);
+        lv_obj_set_style_bg_color(d->btn_obj, pressed, LV_PART_MAIN | LV_STATE_CHECKED);
     }
     if (d->label_obj && lv_obj_is_valid(d->label_obj)) {
         lv_obj_set_style_text_color(d->label_obj, txt, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -611,6 +617,7 @@ static void _button_apply_night_mode(widget_t *w, bool active) {
     if (d->btn_obj && lv_obj_is_valid(d->btn_obj)) {
         lv_obj_set_style_bg_color(d->btn_obj, bg,      LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_bg_color(d->btn_obj, pressed, LV_PART_MAIN | LV_STATE_PRESSED);
+        lv_obj_set_style_bg_color(d->btn_obj, pressed, LV_PART_MAIN | LV_STATE_CHECKED);
     }
     if (d->img_obj && lv_obj_is_valid(d->img_obj)) {
         /* Swap image source if a night override image is set */
@@ -654,6 +661,7 @@ static bool _button_inspector_get(const widget_t *w, const char *name,
 	const button_data_t *d = (const button_data_t *)w->type_data;
 
 	if (strcmp(name, "label") == 0)           { out->str = d->label;       return true; }
+	if (strcmp(name, "control") == 0)         { out->str = d->control;     return true; }
 	if (strcmp(name, "font") == 0)            { out->str = d->font;        return true; }
 	if (strcmp(name, "image_name") == 0)      { out->str = d->image_name;  return true; }
 	if (strcmp(name, "show_label") == 0)      { out->b = d->show_label;    return true; }
@@ -683,6 +691,11 @@ static bool _button_inspector_set(widget_t *w, const char *name,
 		safe_strncpy(d->label, in->str, sizeof(d->label));
 		if (d->label_obj && lv_obj_is_valid(d->label_obj))
 			lv_label_set_text(d->label_obj, d->label);
+		return true;
+	}
+	if (strcmp(name, "control") == 0 && in->str) {
+		if (d->control_held) { can_emu_release(d->control); d->control_held = false; }
+		safe_strncpy(d->control, in->str, sizeof(d->control));
 		return true;
 	}
 	if (strcmp(name, "font") == 0 && in->str) {

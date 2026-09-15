@@ -4120,6 +4120,15 @@
           "help": "Icon shown on the switch."
         },
         {
+          "name": "control",
+          "label": "Presses",
+          "type": "device_control",
+          "default": "",
+          "category": "data",
+          "group": "CAN device",
+          "help": "A button on one of the dash's CAN devices - a Haltech IO box, a keypad (Setup - Keypads & IO boxes). Switched on, it holds that button; an on/off control follows the switch."
+        },
+        {
           "name": "tx_can_id",
           "label": "CAN ID",
           "type": "can_id",
@@ -4350,6 +4359,15 @@
           "enabled_by": "latch",
           "group": "Behaviour",
           "help": "Latch only: remember on/off across a reboot so the output comes back the way you left it."
+        },
+        {
+          "name": "control",
+          "label": "Presses",
+          "type": "device_control",
+          "default": "",
+          "category": "data",
+          "group": "CAN device",
+          "help": "A button on one of the dash's CAN devices - a Haltech IO box, a keypad (Setup - Keypads & IO boxes). Holding this button holds that one; an on/off control flips each press."
         },
         {
           "name": "tx_can_id",

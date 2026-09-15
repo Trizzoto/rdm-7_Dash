@@ -18,6 +18,11 @@ typedef struct {
 
 typedef struct {
     char       label[32];
+    /* A control on one of the dash's CAN devices (can_emu.h): "device:control"
+     * or "device:control:state". A switch sets a latch control to its own
+     * position, or holds any other control while it is on. Empty = none. */
+    char       control[48];
+    bool       control_held;        /* runtime */
     bool       momentary;           /* hold-to-activate: press=TX 1, release=TX 0 */
     bool       current_state;       /* runtime: ON/OFF */
     /* Signal (optional) */

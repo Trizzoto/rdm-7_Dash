@@ -28,6 +28,7 @@
 #include "web_server_internal.h"
 #include "cJSON.h"
 #include "can/can_manager.h"
+#include "can/can_emu.h"
 #include "can/can_id_tracker.h"
 #include "can/rdm_bus.h"
 #include "can/rdm_bus_proto.h"
@@ -92,31 +93,9 @@ static int _parse_hex_byte(const char *p) {
  * reason is sent to the caller verbatim — Studio shows it to the user, so
  * it says what and why, not "forbidden".
  */
-static const char *_tx_refused_reason(uint32_t id, bool extd) {
-	if (extd) {
-		if (id > 0x1FFFFFFFu) return "Extended IDs are 29-bit — 0x1FFFFFFF is the highest.";
-		/* The RDM device bus and OBD2 request ranges below are 11-bit
-		 * standard IDs. A 29-bit frame cannot collide with them. */
-		return NULL;
-	}
-	if (id > 0x7FFu)
-		return "Standard IDs are 11-bit — set \"extd\": true for a 29-bit ID.";
-
-	if (id == RDM_BUS_DISCOVERY_ID)
-		return "That is the RDM device-bus discovery ID — the dash and the GPS "
-		       "puck find each other on it.";
-
-	uint16_t base = rdm_bus_get_base();
-	if (id >= base && id < (uint32_t)base + 16u)
-		return "That is inside the RDM device-bus block the dash and the GPS "
-		       "puck talk on. Move the device off it, or move the RDM block.";
-
-	if (id == 0x7DFu || (id >= 0x7E0u && id <= 0x7E7u))
-		return "That is an OBD2 request ID. If the dash is polling the car, a "
-		       "frame there lands in the middle of its own transaction.";
-
-	return NULL;
-}
+/* The rules moved to can_manager (can_tx_refused_reason) when the dash's own
+ * CAN devices started transmitting too (can_emu.c) — one list, two senders. */
+#define _tx_refused_reason can_tx_refused_reason
 
 /* ── Rate cap ────────────────────────────────────────────────────────────
  *
@@ -301,6 +280,66 @@ static esp_err_t _can_promiscuous_handler(httpd_req_t *req) {
 	return _send_json(req, resp);
 }
 
+/* ── GET/POST /api/can/emu — the dash's own CAN devices ──────────────────
+ *
+ * The dash pretending to be a Haltech IO Box, a keypad, or anything else a
+ * spec describes (can_emu.h, ADR-0077). Two handlers, deliberately — URI
+ * slots are a shared budget, so everything that isn't "read it" is a POST:
+ *
+ *   GET  → { ok, bitrate_k, file: {v, devices:[…]}, status: [live per device],
+ *            templates: {…} (only with ?templates=1) }
+ *   POST a whole file            → validate, store, apply; 400 + "error" in words
+ *   POST {"action":"test","control":"dev:ctl:state","held":true|false}
+ *        hold-to-test: keeps holding for 1.5 s after the last held:true
+ *   POST {"action":"set","control":"dev:ctl","on":true|false}   a latch
+ *   POST {"action":"add","template":"haltech_cruise","variant":"A"}
+ *   POST {"action":"enable","device":"cruise_a","enabled":false}
+ *   POST {"action":"remove","device":"cruise_a"}
+ *   POST {"action":"release_all"}
+ */
+static esp_err_t _emu_reply(httpd_req_t *req, bool ok, const char *err, bool templates) {
+	cJSON *resp = can_emu_report(ok, err, templates);
+	if (!ok) httpd_resp_set_status(req, "400 Bad Request");
+	return _send_json(req, resp);
+}
+
+static esp_err_t _can_emu_get_handler(httpd_req_t *req) {
+	char q[32] = "";
+	bool templates = httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK &&
+	                 strstr(q, "templates=1");
+	return _emu_reply(req, true, NULL, templates);
+}
+
+static esp_err_t _can_emu_post_handler(httpd_req_t *req) {
+	int total = req->content_len;
+	if (total <= 0 || total > CAN_EMU_MAX_BYTES)
+		return _send_status(req, "400 Bad Request", "size",
+		                    "A device file is 1 byte to 24 kB.");
+	char *buf = malloc((size_t)total + 1);
+	if (!buf) return _send_status(req, "500 Internal Server Error", "memory", NULL);
+	int got = 0;
+	while (got < total) {
+		int r = httpd_req_recv(req, buf + got, total - got);
+		if (r <= 0) { free(buf); return _send_status(req, "408 Request Timeout", "receive", NULL); }
+		got += r;
+	}
+	buf[got] = '\0';
+
+	char err[160] = "";
+	cJSON *root = cJSON_Parse(buf);
+	bool ok = can_emu_request(root, buf, err, sizeof(err));
+	cJSON_Delete(root);
+	free(buf);
+	return _emu_reply(req, ok, err, false);
+}
+
+static const httpd_uri_t can_emu_get_uri = {
+	.uri = "/api/can/emu", .method = HTTP_GET,
+	.handler = _can_emu_get_handler, .user_ctx = NULL};
+static const httpd_uri_t can_emu_post_uri = {
+	.uri = "/api/can/emu", .method = HTTP_POST,
+	.handler = _can_emu_post_handler, .user_ctx = NULL};
+
 static const httpd_uri_t can_send_uri = {
 	.uri = "/api/can/send", .method = HTTP_POST,
 	.handler = _can_send_handler, .user_ctx = NULL};
@@ -315,4 +354,6 @@ void web_server_can_register(httpd_handle_t server) {
 	REGISTER_URI(server, &can_send_uri);
 	REGISTER_URI(server, &can_monitor_reset_uri);
 	REGISTER_URI(server, &can_promiscuous_uri);
+	REGISTER_URI(server, &can_emu_get_uri);
+	REGISTER_URI(server, &can_emu_post_uri);
 }

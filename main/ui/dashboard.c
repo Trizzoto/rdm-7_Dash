@@ -26,6 +26,7 @@
 #include "data/channel_math.h"
 #include "data/fuel_stoich.h"
 #include "io/can_forward.h"
+#include "can/can_emu.h"
 #include "lap/lap_engine.h"
 
 #include "esp_log.h"
@@ -293,6 +294,10 @@ void dashboard_init(lv_obj_t *parent) {
 	 * an explicit registry reset on ECU switch. dtc_monitor_start handles
 	 * both cases (register-if-missing) and re-primes the cached count. */
 	dtc_monitor_start();
+	/* The dash's own CAN devices (a Haltech IO box, a keypad — can_emu.h).
+	 * Loads once and keeps its clock across layout reloads; every call
+	 * re-registers the channels they listen to, before widgets bind by name. */
+	can_emu_init();
 	widget_registry_reset();
 	widget_warning_reset();
 	widget_indicator_reset();

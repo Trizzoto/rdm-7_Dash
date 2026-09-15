@@ -5125,6 +5125,14 @@
                 <div class="card-body">Total distance, counted from the speed signal. Set it to match the car.</div>
                 <div class="card-stat" id="setupOdoStat">—</div>
             </div>
+            <!-- The dash playing a CAN keypad or IO box for the ECU (ADR-0077):
+                 cruise buttons a Haltech reads as its own IO box, or any
+                 spec a customer brings. -->
+            <div class="setup-card" onclick="openCanEmu && openCanEmu()">
+                <div class="card-title"><svg viewBox="0 0 24 24"><rect x="2.5" y="5" width="19" height="14" rx="2.5"/><circle cx="7.5" cy="9.7" r="1.6"/><circle cx="12" cy="9.7" r="1.6"/><circle cx="16.5" cy="9.7" r="1.6"/><circle cx="7.5" cy="14.3" r="1.6"/><circle cx="12" cy="14.3" r="1.6"/><circle cx="16.5" cy="14.3" r="1.6" fill="currentColor" stroke="none"/></svg>Keypads &amp; IO boxes</div>
+                <div class="card-body">Buttons on the screen that your ECU reads as its own keypad or IO box &mdash; cruise control on a Haltech, for one.</div>
+                <div class="card-stat" id="setupEmuStat">&mdash;</div>
+            </div>
         </div>
 
         <!-- ── This dash ──────────────────────────────────────────────────
@@ -5802,6 +5810,23 @@
          the bus speed only from the dash's own touchscreen. Someone whose
          readings were all dashes had nowhere to go and check (ADR-0039).
          ──────────────────────────────────────────────────────────────── -->
+    <!-- ──────────────────────────────────────────────────────────────────
+         Keypads & IO boxes (ADR-0077). The dash pretends to be a CAN device
+         the ECU already understands. Everything on this page is the file
+         /api/can/emu keeps; the tables are a plain view of it, and "Edit as
+         JSON" is the whole truth for a spec the tables don't cover.
+         ────────────────────────────────────────────────────────────────── -->
+    <div id="canEmuModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;" onclick="closeCanEmu()">
+        <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; width:840px; max-width:96vw; max-height:92vh; overflow-y:auto; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <span style="font-weight:600; font-size:14px;">Keypads &amp; IO boxes</span>
+                <button class="close-btn" onclick="closeCanEmu()" style="font-size:18px;">&times;</button>
+            </div>
+            <div style="font-size:11px; color:var(--text-muted); margin-bottom:14px;">The dash pretends to be a CAN keypad or IO box, so your ECU reads buttons on the screen as its own inputs.</div>
+            <div id="canEmuBody"><div style="font-size:12px; color:var(--text-muted);">Loading&hellip;</div></div>
+        </div>
+    </div>
+
     <div id="canSetupModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;" onclick="closeCanSetup()">
         <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; width:520px; max-width:95vw; max-height:90vh; overflow-y:auto; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
@@ -9536,6 +9561,7 @@
                             { name: "label_x", label: "Label X Offset", type: "stepper", def: 0, cat: "appearance", group: "Text", help: "Nudge the text left or right.", min: -400, max: 400, enabledBy: "show_label" },
                             { name: "label_y", label: "Label Y Offset", type: "stepper", def: 0, cat: "appearance", group: "Text", help: "Nudge the text up or down.", min: -240, max: 240, enabledBy: "show_label" },
                             { name: "image_name", label: "Image", type: "image_picker", def: "", cat: "data", group: "Image", help: "Icon shown on the switch.", nightOverridable: true },
+                            { name: "control", label: "Presses", type: "device_control", def: "", cat: "data", group: "CAN device", help: "A button on one of the dash's CAN devices - a Haltech IO box, a keypad (Setup - Keypads & IO boxes). Switched on, it holds that button; an on/off control follows the switch." },
                             { name: "tx_can_id", label: "CAN ID", type: "can_id", def: 0, cat: "data", group: "CAN TX", help: "Advanced: the CAN message ID this switch sends. Leave alone unless you're wiring it to the car's CAN bus." },
                             { name: "tx_bit_start", label: "Bit Start", type: "select", def: 0, cat: "data", group: "CAN TX", help: "Advanced: which bit in the CAN message to set.", options: Array.from({length:64},(_,i)=>({v:i,l:String(i)})) },
                             { name: "tx_bit_length", label: "Bit Length", type: "select", def: 1, cat: "data", group: "CAN TX", help: "Advanced: how many bits to send.", options: Array.from({length:32},(_,i)=>({v:i+1,l:String(i+1)})) },
@@ -9569,6 +9595,7 @@
                             { name: "image_name", label: "Image", type: "image_picker", def: "", cat: "appearance", group: "Image", help: "Icon shown on the button.", nightOverridable: true },
                             { name: "latch", label: "Latch (Toggle)", type: "checkbox", def: false, cat: "data", group: "Behaviour", help: "Stay on after a press (toggle) instead of only while held. Momentary always sends OFF when you let go." },
                             { name: "remember_state", label: "Remember State", type: "checkbox", def: false, cat: "data", group: "Behaviour", help: "Latch only: remember on/off across a reboot so the output comes back the way you left it.", enabledBy: "latch" },
+                            { name: "control", label: "Presses", type: "device_control", def: "", cat: "data", group: "CAN device", help: "A button on one of the dash's CAN devices - a Haltech IO box, a keypad (Setup - Keypads & IO boxes). Holding this button holds that one; an on/off control flips each press." },
                             { name: "tx_can_id", label: "CAN ID", type: "can_id", def: 0, cat: "data", group: "CAN TX", help: "Advanced: the CAN message ID this button sends. Leave alone unless wiring it to the car's CAN bus." },
                             { name: "tx_bit_start", label: "Bit Start", type: "select", def: 0, cat: "data", group: "CAN TX", help: "Advanced: which bit in the CAN message to set.", options: Array.from({length:64},(_,i)=>({v:i,l:String(i)})) },
                             { name: "tx_bit_length", label: "Bit Length", type: "select", def: 1, cat: "data", group: "CAN TX", help: "Advanced: how many bits to send.", options: Array.from({length:32},(_,i)=>({v:i+1,l:String(i+1)})) },
@@ -13518,6 +13545,12 @@
                  * regardless of whether the field's default was passed. */
                 html += `<div id="gradEdit_${uid}" class="grad-editor" data-field="${f.name}"></div>`;
                 setTimeout(() => _setupGradientEditor('gradEdit_' + uid, f.name, stops, disabledAttr.length > 0), 0);
+            } else if (f.type === 'device_control') {
+                const sid = 'emuCtl_' + Math.random().toString(36).substring(2, 7);
+                html += `<select id="${sid}" data-val="${_emuEsc(String(val || ''))}" onchange="updateWidgetConfigField('${f.name}', this.value, false)" ${disabledAttr}
+                           style="width:100%; padding:5px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
+                           ${_emuControlOptionsHtml(val)}</select>`;
+                setTimeout(() => _emuFillControlSelect(sid), 0);
             } else if (f.type === 'can_id') {
                 const hexVal = val ? '0x' + Number(val).toString(16).toUpperCase().padStart(3, '0') : '0x';
                 html += `<input type="text" value="${hexVal}" placeholder="0x" spellcheck="false" style="font-family:'JetBrains Mono',monospace; width:90px;"
@@ -19253,7 +19286,11 @@
          *                           carries both pictures. The dash has no HUD:
          *                           it reads this entry and does nothing with
          *                           it, which is the graceful skip above being
-         *                           used on purpose rather than by accident)
+         *                           used on purpose rather than by accident,
+         *                           5 = can_emu.json — the dash's Keypads & IO
+         *                           boxes (ADR-0077), dashboard flavour only:
+         *                           a button that presses "cruise_a:cruise:set"
+         *                           means nothing without the device)
          *     [1]       Name length: uint8
          *     [2..N]    Name: UTF-8 (name_length bytes)
          *     [N..N+4]  Data length: uint32 LE
@@ -19353,19 +19390,33 @@
                 updateStatus('Warning: channel setup not included (offline?)', true);
             }
 
+            /* Keypads & IO boxes (ADR-0077) — per car, like the channels. Only
+             * when there is a device: an empty entry would only make an older
+             * dash's import say something about a feature it doesn't have. */
+            let emuBytes = null;
+            if (!isLayout) try {
+                const resp = await fetch('/api/can/emu');
+                const j = resp.ok ? await resp.json() : null;
+                if (j && j.file && Array.isArray(j.file.devices) && j.file.devices.length)
+                    emuBytes = new TextEncoder().encode(JSON.stringify(j.file));
+            } catch (e) { /* offline, or firmware without it */ }
+
             /* Serialize layout as firmware-ready JSON (RGB565, signal_name mapped) */
             const payload = buildFirmwarePayload();
             const layoutJson = JSON.stringify(payload, null, 2);
             const layoutBytes = new TextEncoder().encode(layoutJson);
 
             /* Calculate total size */
-            const entryCount = 1 + images.length + fonts.length + (channelsBytes ? 1 : 0);
+            const entryCount = 1 + images.length + fonts.length + (channelsBytes ? 1 : 0) + (emuBytes ? 1 : 0);
             let totalSize = 16; /* header */
             const nameBytes = new TextEncoder().encode(name);
             totalSize += 1 + 1 + nameBytes.length + 4 + layoutBytes.length;
             const channelsNameBytes = new TextEncoder().encode('channels.json');
             if (channelsBytes)
                 totalSize += 1 + 1 + channelsNameBytes.length + 4 + channelsBytes.length;
+            const emuNameBytes = new TextEncoder().encode('can_emu.json');
+            if (emuBytes)
+                totalSize += 1 + 1 + emuNameBytes.length + 4 + emuBytes.length;
             const imageEntries = images.map(img => {
                 const nb = new TextEncoder().encode(img.name);
                 return { nameBytes: nb, data: img.data };
@@ -19428,6 +19479,15 @@
                 u8.set(channelsBytes, off); off += channelsBytes.length;
             }
 
+            /* Keypads & IO boxes entry */
+            if (emuBytes) {
+                u8[off++] = 5; /* type = can_emu.json */
+                u8[off++] = emuNameBytes.length;
+                u8.set(emuNameBytes, off); off += emuNameBytes.length;
+                view.setUint32(off, emuBytes.length, true); off += 4;
+                u8.set(emuBytes, off); off += emuBytes.length;
+            }
+
             /* Download */
             const blob = new Blob([buf], { type: 'application/octet-stream' });
             const url = URL.createObjectURL(blob);
@@ -19440,6 +19500,7 @@
             if (images.length > 0) parts.push(`${images.length} image${images.length > 1 ? 's' : ''}`);
             if (fonts.length > 0) parts.push(`${fonts.length} font${fonts.length > 1 ? 's' : ''}`);
             if (channelsBytes) parts.push('channel setup');
+            if (emuBytes) parts.push('keypads & IO boxes');
             const assetMsg = parts.length > 0 ? ` with ${parts.join(', ')}` : '';
             updateStatus(`Exported ${fileName}${assetMsg}`);
             showToast(`Exported ${fileName}${assetMsg}`, 'success');
@@ -19478,6 +19539,7 @@
                     const fonts = [];
                     let channelsData = null;
                     let overlayData = null;   /* type 4, Studio-side only */
+                    let emuData = null;       /* type 5, Keypads & IO boxes */
 
                     /* Parse entries */
                     for (let i = 0; i < entryCount; i++) {
@@ -19510,6 +19572,8 @@
                                no HUD to put it on. Studio's overlay reads it
                                from here. */
                             overlayData = data;
+                        } else if (entryType === 5) {
+                            emuData = data;
                         }
                     }
 
@@ -19639,6 +19703,29 @@
                     const assetMsg = parts.length > 0 ? ` + ${parts.join(', ')}` : '';
                     updateStatus(`Imported ${file.name}${assetMsg}`);
                     showToast(`Imported ${file.name}${assetMsg}`, 'success');
+
+                    /* Keypads & IO boxes travel too (type 5, ADR-0077). Asked
+                     * before the channel setup, because restoring that reboots
+                     * the dash. Replacing them changes what the ECU sees on its
+                     * bus, so it is a question, never automatic. */
+                    if (emuData && emuData.length) {
+                        let emuFile = null;
+                        try { emuFile = JSON.parse(new TextDecoder().decode(emuData)); } catch (e) {}
+                        const n = emuFile && Array.isArray(emuFile.devices) ? emuFile.devices.length : 0;
+                        if (n && await confirmAsync('Keypads & IO boxes',
+                                `This bundle includes ${n} keypad/IO box device${n > 1 ? 's' : ''} (${emuFile.devices.map(d => d.name || d.id).join(', ')}). ` +
+                                'Using them REPLACES this dash’s Keypads & IO boxes, and the ECU will see them on its bus. Use them?',
+                                'Use them')) {
+                            try {
+                                const r = await fetch('/api/can/emu', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(emuFile) });
+                                const j = await r.json().catch(() => null);
+                                if (r.ok && j && j.ok) showToast('Keypads & IO boxes restored', 'success');
+                                else showToast('Keypads & IO boxes not restored: ' + ((j && j.error) || r.status), 'error');
+                            } catch (e) {
+                                showToast('Keypads & IO boxes not restored (device offline?)', 'error');
+                            }
+                        }
+                    }
 
                     /* Channel setup travels in the bundle too (type 3). Offer
                      * it LAST — restoring replaces the dash's channels.json
@@ -21878,6 +21965,524 @@
          * existed; none of them were in the same place (ADR-0039). */
         let _canSetupTimer = null;
 
+
+        /* ══════════════════════════════════════════════════════════════════
+         * Keypads & IO boxes — the dash plays a CAN device (ADR-0077)
+         *
+         * The dash owns the file (/api/can/emu). This page reads it, shows
+         * it as plain tables — one row per button, the value it puts on the
+         * wire in the ECU's own units — and writes the whole file back on
+         * Save. Hold-to-test goes straight to the dash and needs no save.
+         * ══════════════════════════════════════════════════════════════════ */
+        let _emu = { file: null, status: [], templates: [], bitrate: 0, dirty: false,
+                     timer: null, holds: {}, json: {}, error: '' };
+
+        async function _emuFetch(body) {
+            let r;
+            try {
+                r = await fetch('/api/can/emu' + (body ? '' : '?templates=1'), body
+                    ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+                    : undefined);
+            } catch (e) { throw new Error('No reply from the dash.'); }
+            let j = null;
+            try { j = await r.json(); } catch (e) {}
+            if (!j) throw new Error(r.status === 404
+                ? "This dash's firmware doesn't have Keypads & IO boxes yet. Update the dash first."
+                : 'No reply from the dash.');
+            return j;
+        }
+
+        function _emuTake(j, keepFile) {
+            if (!keepFile || !_emu.file) _emu.file = j.file && Array.isArray(j.file.devices) ? j.file : { v: 1, devices: [] };
+            _emu.status = j.status || [];
+            _emu.bitrate = j.bitrate_k || 0;
+            if (j.templates && Array.isArray(j.templates.templates)) _emu.templates = j.templates.templates;
+        }
+
+        async function openCanEmu() {
+            const m = document.getElementById('canEmuModal');
+            if (!m) return;
+            m.style.display = 'flex';
+            _emu.dirty = false; _emu.error = ''; _emu.json = {};
+            try { _emuTake(await _emuFetch(null)); } catch (e) { _emu.error = e.message; }
+            _emuRender();
+            const tick = async () => {
+                if (m.style.display === 'none') return;
+                try { _emuTake(await (await fetch('/api/can/emu')).json(), _emu.dirty); _emuRenderLive(); } catch (e) {}
+                if (m.style.display !== 'none') _emu.timer = setTimeout(tick, 1000);
+            };
+            if (_emu.timer) clearTimeout(_emu.timer);
+            _emu.timer = setTimeout(tick, 1000);
+        }
+
+        /* No confirm(): in RDM Studio's webview it returns a Promise, which is
+         * always truthy, so it can't guard anything. Closing with unsaved
+         * changes asks by saying so, and a second close within 4 s means it. */
+        function closeCanEmu() {
+            if (_emu.dirty && !(_emu.closeArmed > Date.now())) {
+                _emu.closeArmed = Date.now() + 4000;
+                const bar = document.getElementById('canEmuSaveBar');
+                const msg = bar && bar.querySelector('span');
+                if (msg) { msg.textContent = 'Not saved to the dash. Close again to throw the changes away.'; msg.style.color = 'var(--warning, #f0a020)'; }
+                if (bar) bar.scrollIntoView({ block: 'nearest' });
+                return;
+            }
+            _emu.closeArmed = 0;
+            const m = document.getElementById('canEmuModal');
+            if (m) m.style.display = 'none';
+            if (_emu.timer) { clearTimeout(_emu.timer); _emu.timer = null; }
+            Object.keys(_emu.holds).forEach(_emuLetGo);
+            _emu.dirty = false;
+            _emuControlCache = null;
+        }
+
+        const _emuEsc = (t) => String(t == null ? '' : t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        const _emuHex = (n) => '0x' + Number(n).toString(16).toUpperCase().padStart(3, '0');
+        const _emuPretty = (t) => { t = String(t || '').replace(/_/g, ' '); return t.charAt(0).toUpperCase() + t.slice(1); };
+
+        /* "bytes 1-2" when a field sits on byte edges, else "bits 4-11" —
+         * counted from 1, the way a spec sheet counts. */
+        function _emuWhere(f) {
+            const bs = f.bit_start | 0, bl = f.bit_length | 0;
+            if (bs % 8 === 0 && bl % 8 === 0) {
+                const a = bs / 8 + 1, b = (bs + bl) / 8;
+                return a === b ? `byte ${a}` : `bytes ${a}-${b}`;
+            }
+            return bl === 1 ? `bit ${bs}` : `bits ${bs}-${bs + bl - 1}`;
+        }
+
+        function _emuTemplate(d) { return _emu.templates.find(t => t.id === d.template) || null; }
+        function _emuVariantKey(d) {
+            if (d.variant) return d.variant;
+            const m = /_([a-z])$/i.exec(d.id || '');
+            return m ? m[1].toUpperCase() : '';
+        }
+        function _emuStatusOf(d) { return _emu.status.find(x => x.id === d.id) || null; }
+
+        function _emuWord(st) {
+            const s = st && st.status;
+            return s === 'sending' ? ['On the bus', 'var(--success, #4caf50)']
+                 : s === 'waiting' ? ['Starting', 'var(--text-muted)']
+                 : s === 'paused'  ? ['Paused', 'var(--warning, #f0a020)']
+                 : s === 'refused' ? ['Stopped', 'var(--danger, #e53935)']
+                 : ['Off', 'var(--text-muted)'];
+        }
+
+        /* Fields that carry a control, so a button's row can say where it goes
+         * and what it sends. */
+        function _emuFieldsFor(d, ctlId) {
+            const out = [];
+            (d.send || []).forEach(fr => (fr.fields || []).forEach(f => { if (f.control === ctlId) out.push({ fr, f }); }));
+            return out;
+        }
+
+        function _emuStates(c) {
+            return c.kind === 'select' ? (c.states || []) : ['off', 'on'];
+        }
+
+        function _emuMark() {
+            _emu.dirty = true;
+            const bar = document.getElementById('canEmuSaveBar');
+            if (bar) bar.style.display = 'flex';
+        }
+
+        const _emuTh = 'text-align:left; font-weight:500; color:var(--text-muted); padding:5px 8px; border-bottom:1px solid var(--border); font-size:11px;';
+        const _emuTd = 'padding:5px 8px; border-bottom:1px solid var(--border); vertical-align:middle;';
+        const _emuIn = 'padding:4px 6px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;';
+
+        function _emuRender() {
+            const body = document.getElementById('canEmuBody');
+            if (!body) return;
+            if (_emu.error) {
+                body.innerHTML = `<div style="font-size:12px; color:var(--danger, #e53935); padding:12px; border:1px solid var(--border); border-radius:var(--radius-md);">${_emuEsc(_emu.error)}</div>`;
+                return;
+            }
+            const devs = _emu.file.devices;
+            let h = '';
+            h += `<div id="canEmuSaveBar" style="display:${_emu.dirty ? 'flex' : 'none'}; position:sticky; top:-20px; z-index:2; align-items:center; gap:10px; padding:10px 12px; margin:-4px 0 12px; background:var(--panel-elevated); border:1px solid var(--accent, #e53935); border-radius:var(--radius-md);">
+                    <span style="flex:1; font-size:12px;">Changes not on the dash yet.</span>
+                    <button class="btn" onclick="_emuDiscard()">Discard</button>
+                    <button class="btn btn-primary" onclick="_emuSave()">Save to the dash</button>
+                  </div>`;
+            if (!devs.length)
+                h += `<div style="font-size:12px; color:var(--text-muted); padding:12px; border:1px dashed var(--border); border-radius:var(--radius-md); margin-bottom:14px;">No devices yet. Add one below &mdash; then put a button on a layout and pick it under <b>Presses</b>.</div>`;
+            devs.forEach((d, di) => { h += _emuDeviceHtml(d, di); });
+            h += _emuAddHtml();
+            h += `<details style="margin-top:14px; font-size:12px;"><summary style="cursor:pointer; color:var(--text-muted);">All devices as JSON &mdash; copy, paste, share</summary>
+                    <textarea id="canEmuAllJson" spellcheck="false" style="${_emuIn} width:100%; height:220px; margin-top:8px; font-family:'JetBrains Mono', monospace; font-size:11px;">${_emuEsc(JSON.stringify(_emu.file, null, 2))}</textarea>
+                    <div style="display:flex; gap:8px; margin-top:6px;"><button class="btn" onclick="_emuApplyAllJson()">Use this JSON</button>
+                    <span id="canEmuAllJsonErr" style="font-size:11px; color:var(--danger, #e53935); align-self:center;"></span></div>
+                  </details>`;
+            body.innerHTML = h;
+            _emuRenderLive();
+        }
+
+        function _emuDeviceHtml(d, di) {
+            const tpl = _emuTemplate(d);
+            const vk = _emuVariantKey(d);
+            const variant = tpl && (tpl.variants || []).find(v => v.key === vk);
+            const pretends = tpl ? `${tpl.pretends || tpl.name}${variant ? ', ' + variant.name : ''}` : 'Your own spec';
+            const labels = (tpl && tpl.labels) || {};
+            const off = variant ? (variant.id_offset | 0) : 0;
+            const frameLabel = (id) => labels[String(id - off)] || '';
+            let h = `<div style="border:1px solid var(--border); border-radius:var(--radius-md); padding:14px; margin-bottom:14px; background:var(--bg);">`;
+            h += `<div style="display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; margin-bottom:4px;">
+                    <input value="${_emuEsc(d.name)}" oninput="_emu.file.devices[${di}].name=this.value; _emuMark()" style="${_emuIn} font-size:13px; font-weight:600; flex:0 1 240px; min-width:0;">
+                    <span style="font-size:11px; color:var(--text-muted); flex:1 1 220px;">pretends to be ${_emuEsc(pretends)}${d.bitrate ? ` &middot; needs ${d.bitrate >= 1000 ? d.bitrate / 1000 + ' Mbps' : d.bitrate + ' kbps'}` : ''}</span>
+                    <span id="emuState_${di}" style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.04em;"></span>
+                    <label style="display:flex; align-items:center; gap:6px; font-size:12px;"><input type="checkbox" ${d.enabled !== false ? 'checked' : ''} onchange="_emuSetEnabled(${di}, this.checked)">On</label>
+                  </div>
+                  <div id="emuReason_${di}" style="font-size:11px; color:var(--danger, #e53935); min-height:14px; margin-bottom:6px;"></div>`;
+
+            /* Buttons */
+            h += `<div style="font-size:11px; font-weight:600; margin:6px 0 4px;">Buttons</div>
+                  <div style="overflow-x:auto;"><table style="width:100%; min-width:560px; border-collapse:collapse; font-size:12px;">
+                  <tr><th style="${_emuTh}">Input</th><th style="${_emuTh}">Button</th><th style="${_emuTh}">Goes to</th><th style="${_emuTh}">Sends</th><th style="${_emuTh}"></th></tr>`;
+            if (!(d.controls || []).length)
+                h += `<tr><td colspan="5" style="${_emuTd} color:var(--text-muted);">No buttons &mdash; add them in the JSON below.</td></tr>`;
+            (d.controls || []).forEach((c, ci) => {
+                const uses = _emuFieldsFor(d, c.id);
+                const use = uses[0];
+                const unit = use && use.f.unit ? use.f.unit : '';
+                const where = use ? `${_emuHex(use.fr.can_id)} ${_emuWhere(use.f)}${frameLabel(use.fr.can_id) ? `<div style="color:var(--text-muted); font-size:10px;">${_emuEsc(frameLabel(use.fr.can_id))}</div>` : ''}` : '<span style="color:var(--text-muted);">not in any frame</span>';
+                const states = _emuStates(c);
+                const kindWord = c.kind === 'select' ? 'one input, a value per button' : c.kind === 'latch' ? 'on/off switch' : 'held while pressed';
+                states.forEach((st, si) => {
+                    const first = si === 0;
+                    const val = use ? (Array.isArray(use.f.values) ? use.f.values[si] : (si ? '' : 0)) : '';
+                    const ref = c.kind === 'select' ? `${d.id}:${c.id}:${st}` : `${d.id}:${c.id}`;
+                    const rest = si === 0;
+                    let label;
+                    if (c.kind === 'select') {
+                        label = rest ? `<span style="color:var(--text-muted);">Nothing pressed</span>`
+                              : `<input value="${_emuEsc(st)}" onchange="_emuRenameState(${di},${ci},${si},this.value)" style="${_emuIn} width:110px;">`;
+                    } else label = rest ? '<span style="color:var(--text-muted);">Off</span>' : 'On';
+                    const test = rest ? '' : (c.kind === 'latch'
+                        ? `<button class="btn" style="padding:3px 10px; font-size:11px;" onclick="_emuFlip('${_emuEsc(ref)}')">Flip</button>`
+                        : `<button class="btn" style="padding:3px 10px; font-size:11px; touch-action:none;" onpointerdown="_emuHold(event,'${_emuEsc(ref)}')" onpointerup="_emuLetGo('${_emuEsc(ref)}')" onpointerleave="_emuLetGo('${_emuEsc(ref)}')" onpointercancel="_emuLetGo('${_emuEsc(ref)}')">Hold to test</button>`);
+                    const remove = c.kind === 'select' && !rest && states.length > 2
+                        ? `<button class="btn" title="Remove this button" style="padding:3px 8px; font-size:11px;" onclick="_emuRemoveState(${di},${ci},${si})">&times;</button>` : '';
+                    h += `<tr>
+                        <td style="${_emuTd}">${first ? `<input value="${_emuEsc(c.name || c.id)}" oninput="_emu.file.devices[${di}].controls[${ci}].name=this.value; _emuMark()" style="${_emuIn} width:130px;"><div style="color:var(--text-muted); font-size:10px; margin-top:2px;">${kindWord}</div>` : ''}</td>
+                        <td style="${_emuTd}">${label}</td>
+                        <td style="${_emuTd} font-family:'JetBrains Mono', monospace; font-size:11px;">${first ? where : ''}</td>
+                        <td style="${_emuTd} white-space:nowrap;">${use ? `<input type="number" step="any" value="${_emuEsc(val)}" onchange="_emuSetValue(${di},'${_emuEsc(c.id)}',${si},this.value)" style="${_emuIn} width:78px;"> ${_emuEsc(unit)}` : ''}</td>
+                        <td style="${_emuTd} white-space:nowrap; text-align:right;">${test} ${remove}</td></tr>`;
+                });
+                if (c.kind === 'select' && states.length < 8)
+                    h += `<tr><td style="${_emuTd}"></td><td colspan="4" style="${_emuTd}"><button class="btn" style="padding:3px 10px; font-size:11px;" onclick="_emuAddState(${di},${ci})">+ Add a button to ${_emuEsc(c.name || c.id)}</button></td></tr>`;
+                const warn = _emuLadderWarning(c, use);
+                if (warn) h += `<tr><td></td><td colspan="4" style="padding:4px 8px; font-size:11px; color:var(--warning, #f0a020);">${_emuEsc(warn)}</td></tr>`;
+            });
+            h += `</table></div>`;
+
+            /* What it sends */
+            h += `<div style="font-size:11px; font-weight:600; margin:14px 0 4px;">What it sends</div>
+                  <div style="overflow-x:auto;"><table style="width:100%; min-width:560px; border-collapse:collapse; font-size:12px;">
+                  <tr><th style="${_emuTh}">Frame</th><th style="${_emuTh}">What it is</th><th style="${_emuTh}">Every</th><th style="${_emuTh}">Right now</th><th style="${_emuTh}">Sent</th></tr>`;
+            (d.send || []).forEach((fr, i) => {
+                h += `<tr><td style="${_emuTd} font-family:'JetBrains Mono', monospace;">${_emuHex(fr.can_id)}</td>
+                          <td style="${_emuTd}">${_emuEsc(frameLabel(fr.can_id) || ((fr.fields || []).length ? '' : 'Fixed bytes'))}</td>
+                          <td style="${_emuTd}">${fr.every_ms || 100} ms</td>
+                          <td id="emuBytes_${di}_${i}" style="${_emuTd} font-family:'JetBrains Mono', monospace; font-size:11px;"></td>
+                          <td id="emuSent_${di}_${i}" style="${_emuTd}"></td></tr>`;
+            });
+            h += `</table></div>`;
+
+            /* What the ECU sends back */
+            const chans = [];
+            (d.listen || []).forEach(l => (l.channels || []).forEach(c => chans.push({ l, c })));
+            if (chans.length) {
+                h += `<div style="font-size:11px; font-weight:600; margin:14px 0 4px;">What the ECU sends back <span style="font-weight:400; color:var(--text-muted);">&mdash; ordinary channels: colour a button with a rule on one</span></div>
+                      <div style="overflow-x:auto;"><table style="width:100%; min-width:560px; border-collapse:collapse; font-size:12px;">
+                      <tr><th style="${_emuTh}">Channel</th><th style="${_emuTh}">From</th><th style="${_emuTh}">Now</th></tr>`;
+                chans.forEach(({ l, c }) => {
+                    h += `<tr><td style="${_emuTd} font-family:'JetBrains Mono', monospace;">${_emuEsc(c.name)}</td>
+                              <td style="${_emuTd} font-family:'JetBrains Mono', monospace; font-size:11px;">${_emuHex(l.can_id)} ${_emuWhere(c)}${frameLabel(l.can_id) ? ` <span style="color:var(--text-muted); font-family:inherit;">${_emuEsc(frameLabel(l.can_id))}</span>` : ''}</td>
+                              <td id="emuChan_${di}_${_emuEsc(c.name)}" style="${_emuTd}"></td></tr>`;
+                });
+                h += `</table></div>`;
+            }
+
+            /* Set up the ECU */
+            if (tpl && (tpl.guide || []).length) {
+                h += `<div style="font-size:11px; font-weight:600; margin:14px 0 4px;">Set up the ECU</div><ol style="margin:0; padding-left:20px; font-size:12px; line-height:1.7;">`;
+                tpl.guide.forEach(g => { h += `<li>${_emuEsc(String(g).replace(/\{V\}/g, vk).replace(/\{v\}/g, vk.toLowerCase()))}</li>`; });
+                h += `</ol><div style="font-size:10px; color:var(--text-muted); margin-top:4px;">Written from the ECU maker's documentation; menu names can differ between software versions.</div>`;
+            }
+
+            h += `<details style="margin-top:12px; font-size:12px;" ${_emu.json[di] ? 'open' : ''} ontoggle="_emu.json[${di}]=this.open">
+                    <summary style="cursor:pointer; color:var(--text-muted);">Edit this device as JSON &mdash; frames, bit positions, your own spec</summary>
+                    <textarea id="emuJson_${di}" spellcheck="false" style="${_emuIn} width:100%; height:240px; margin-top:8px; font-family:'JetBrains Mono', monospace; font-size:11px;">${_emuEsc(JSON.stringify(d, null, 2))}</textarea>
+                    <div style="display:flex; gap:8px; margin-top:6px; align-items:center;"><button class="btn" onclick="_emuApplyDeviceJson(${di})">Use this JSON</button>
+                    <span id="emuJsonErr_${di}" style="font-size:11px; color:var(--danger, #e53935);"></span></div>
+                  </details>
+                  <div style="display:flex; justify-content:flex-end; margin-top:10px;"><button class="btn" onclick="_emuRemoveDevice(${di}, this)">Remove this device</button></div>`;
+            h += `</div>`;
+            return h;
+        }
+
+        /* Haltech reads a cruise ladder by voltage bands; two buttons closer
+         * than 0.1 V can't both calibrate, and a tight pair is one noisy
+         * reading from being taken for the other. */
+        function _emuLadderWarning(c, use) {
+            if (!use || c.kind !== 'select' || !Array.isArray(use.f.values)) return '';
+            const vals = use.f.values.map(Number);
+            const [min, max] = _emuRange(use.f);
+            for (let i = 0; i < vals.length; i++) {
+                if (vals[i] > max + 1e-6) return `${_emuPretty(c.states[i])} is above the most this input carries (${+max.toFixed(2)} ${use.f.unit || ''}). The dash will send ${+max.toFixed(2)}.`;
+                if (vals[i] < min - 1e-6) return `${_emuPretty(c.states[i])} is below the least this input carries (${+min.toFixed(2)} ${use.f.unit || ''}).`;
+            }
+            if ((use.f.unit || '') !== 'V') return '';
+            for (let i = 0; i < vals.length; i++)
+                for (let k = i + 1; k < vals.length; k++)
+                    if (Math.abs(vals[i] - vals[k]) < 0.3)
+                        return `${_emuPretty(c.states[i])} and ${_emuPretty(c.states[k])} are only ${Math.abs(vals[i] - vals[k]).toFixed(2)} V apart. Keep buttons at least 0.3 V apart so the ECU never mistakes one for the other.`;
+            return '';
+        }
+
+        /* The span a field really carries: its own min/max when the spec
+         * gives one (a 0-5 V analog input in a 16-bit slot), else everything
+         * its bits can hold. Same rule as the dash's _range(). */
+        function _emuRange(f) {
+            const lo = f.min != null ? Number(f.min) : Number(f.offset || 0);
+            const full = (Math.pow(2, f.bit_length | 0) - 1) * Number(f.scale || 1) + Number(f.offset || 0);
+            return [lo, f.max != null ? Number(f.max) : full];
+        }
+
+        function _emuAddHtml() {
+            let h = `<div style="font-size:11px; font-weight:600; margin:18px 0 6px;">Add a device</div>
+                     <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); gap:10px;">`;
+            _emu.templates.forEach(t => {
+                const vars = (t.variants || []);
+                h += `<div style="border:1px solid var(--border); border-radius:var(--radius-md); padding:12px; display:flex; flex-direction:column; gap:6px;">
+                        <div style="font-size:12px; font-weight:600;">${_emuEsc(t.name)}</div>
+                        <div style="font-size:11px; color:var(--text-muted); flex:1;">${_emuEsc(t.blurb || '')}</div>
+                        <div style="display:flex; gap:6px; flex-wrap:wrap;">${vars.length
+                            ? vars.map(v => `<button class="btn" style="padding:4px 10px; font-size:11px;" onclick="_emuAdd('${_emuEsc(t.id)}','${_emuEsc(v.key)}')">+ ${_emuEsc(v.name)}</button>`).join('')
+                            : `<button class="btn" style="padding:4px 10px; font-size:11px;" onclick="_emuAdd('${_emuEsc(t.id)}','')">+ Start</button>`}</div>
+                      </div>`;
+            });
+            h += `</div>`;
+            return h;
+        }
+
+        /* Live numbers only — never rebuilds inputs someone is typing into. */
+        function _emuRenderLive() {
+            if (!_emu.file) return;
+            _emu.file.devices.forEach((d, di) => {
+                const st = _emuStatusOf(d);
+                const [word, col] = _emuWord(st);
+                const se = document.getElementById('emuState_' + di);
+                if (se) { se.textContent = _emu.dirty && !st ? 'Not saved' : word; se.style.color = col; }
+                const re = document.getElementById('emuReason_' + di);
+                if (re) re.textContent = st && st.status !== 'sending' ? (st.reason || '') : '';
+                (d.send || []).forEach((fr, i) => {
+                    const f = st && (st.frames || [])[i];
+                    const b = document.getElementById(`emuBytes_${di}_${i}`);
+                    const n = document.getElementById(`emuSent_${di}_${i}`);
+                    if (b) b.textContent = f && f.can_id === fr.can_id ? (f.bytes || '').replace(/(..)(?!$)/g, '$1 ') : '';
+                    if (n) n.textContent = f && f.can_id === fr.can_id ? `${f.sent}${f.failed ? ` (${f.failed} failed)` : ''}` : '';
+                });
+                (d.listen || []).forEach(l => (l.channels || []).forEach(c => {
+                    const e = document.getElementById(`emuChan_${di}_${c.name}`);
+                    if (!e) return;
+                    const v = st && st.channels ? st.channels[c.name] : undefined;
+                    e.textContent = v == null ? 'no data' : `${Number(v).toFixed(0)} ${c.unit || ''}`;
+                }));
+            });
+        }
+
+        /* ── edits ── */
+        function _emuSetValue(di, ctlId, si, v) {
+            const n = Number(v);
+            if (!isFinite(n)) return;
+            _emuFieldsFor(_emu.file.devices[di], ctlId).forEach(({ f }) => {
+                const c = _emu.file.devices[di].controls.find(x => x.id === ctlId);
+                const count = _emuStates(c).length;
+                if (!Array.isArray(f.values)) f.values = Array.from({ length: count }, (_, i) => i ? (Math.pow(2, f.bit_length) - 1) * (f.scale || 1) : 0);
+                f.values[si] = n;
+            });
+            _emuMark();
+            _emuRender();
+        }
+        function _emuRenameState(di, ci, si, name) {
+            name = String(name || '').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '_').slice(0, 11);
+            const c = _emu.file.devices[di].controls[ci];
+            if (!name || c.states.some((s, i) => i !== si && s === name)) { _emuRender(); return; }
+            c.states[si] = name;
+            _emuMark();
+            _emuRender();
+        }
+        function _emuAddState(di, ci) {
+            const d = _emu.file.devices[di], c = d.controls[ci];
+            let k = c.states.length, name = 'button' + k;
+            while (c.states.includes(name)) name = 'button' + (++k);
+            c.states.push(name);
+            /* A new button goes in the middle of the widest free gap on the
+             * input, so it never starts out reading as one that exists. */
+            _emuFieldsFor(d, c.id).forEach(({ f }) => {
+                if (!Array.isArray(f.values)) return;
+                const [lo, hi] = _emuRange(f);
+                const pts = f.values.map(Number).concat([lo, hi]).sort((a, b) => a - b);
+                let best = hi, gap = -1;
+                for (let i = 1; i < pts.length; i++) if (pts[i] - pts[i - 1] > gap) { gap = pts[i] - pts[i - 1]; best = (pts[i] + pts[i - 1]) / 2; }
+                f.values.push(Math.round(best * 100) / 100);
+            });
+            _emuMark();
+            _emuRender();
+        }
+        function _emuRemoveState(di, ci, si) {
+            const d = _emu.file.devices[di], c = d.controls[ci];
+            c.states.splice(si, 1);
+            _emuFieldsFor(d, c.id).forEach(({ f }) => { if (Array.isArray(f.values)) f.values.splice(si, 1); });
+            _emuMark();
+            _emuRender();
+        }
+        function _emuSetEnabled(di, on) {
+            _emu.file.devices[di].enabled = !!on;
+            if (_emu.dirty) { _emuMark(); return; }
+            _emuFetch({ action: 'enable', device: _emu.file.devices[di].id, enabled: !!on })
+                .then(j => { _emuTake(j); _emuRenderLive(); }).catch(e => alert(e.message));
+        }
+        function _emuRemoveDevice(di, btn) {
+            if (btn && btn.dataset.armed !== '1') {
+                btn.dataset.armed = '1';
+                btn.textContent = 'Remove it? The ECU will see it disappear. Click again';
+                setTimeout(() => { if (btn.isConnected) { btn.dataset.armed = '0'; btn.textContent = 'Remove this device'; } }, 3500);
+                return;
+            }
+            _emu.file.devices.splice(di, 1);
+            _emu.json = {};
+            _emuMark();
+            _emuRender();
+        }
+        function _emuApplyDeviceJson(di) {
+            const ta = document.getElementById('emuJson_' + di), err = document.getElementById('emuJsonErr_' + di);
+            try {
+                const d = JSON.parse(ta.value);
+                if (!d || typeof d !== 'object' || Array.isArray(d)) throw new Error('A device is one JSON object.');
+                _emu.file.devices[di] = d;
+                _emuMark();
+                _emuRender();
+            } catch (e) { if (err) err.textContent = e.message; }
+        }
+        function _emuApplyAllJson() {
+            const ta = document.getElementById('canEmuAllJson'), err = document.getElementById('canEmuAllJsonErr');
+            try {
+                const f = JSON.parse(ta.value);
+                if (!f || !Array.isArray(f.devices)) throw new Error('Needs a "devices" list.');
+                _emu.file = f;
+                _emu.json = {};
+                _emuMark();
+                _emuRender();
+            } catch (e) { if (err) err.textContent = e.message; }
+        }
+        function _emuDiscard() {
+            _emu.dirty = false;
+            _emu.file = null;
+            openCanEmu();
+        }
+        async function _emuSave() {
+            const bar = document.getElementById('canEmuSaveBar');
+            try {
+                const j = await _emuFetch(_emu.file);
+                if (!j.ok) throw new Error(j.error || 'The dash refused that.');
+                _emu.dirty = false;
+                _emu.file = null;
+                _emuTake(j);
+                _emuControlCache = null;
+                _emuRender();
+            } catch (e) {
+                if (bar) {
+                    bar.querySelector('span').textContent = e.message;
+                    bar.querySelector('span').style.color = 'var(--danger, #e53935)';
+                }
+            }
+        }
+
+        /* A template instance, exactly as the dash's own cemu_template_device()
+         * makes one: {V}/{v} become the variant key, every can_id moves by the
+         * variant's offset. */
+        function _emuFromTemplate(t, key) {
+            const v = (t.variants || []).find(x => x.key === key);
+            const up = v ? v.key : '', lo = up.toLowerCase();
+            const walk = (o) => {
+                if (typeof o === 'string') return o.replace(/\{V\}/g, up).replace(/\{v\}/g, lo);
+                if (Array.isArray(o)) return o.map(walk);
+                if (o && typeof o === 'object') { const r = {}; Object.keys(o).forEach(k => r[k] = walk(o[k])); return r; }
+                return o;
+            };
+            const d = walk(JSON.parse(JSON.stringify(t.device)));
+            const off = v ? (v.id_offset | 0) : 0;
+            (d.send || []).concat(d.listen || []).forEach(fr => { fr.can_id = Number(fr.can_id) + off; });
+            if (up) d.variant = up;
+            d.enabled = true;
+            let id = d.id, n = 2;
+            while (_emu.file.devices.some(x => x.id === id)) id = `${d.id.slice(0, 12)}_${n++}`;
+            d.id = id;
+            return d;
+        }
+        function _emuAdd(tplId, key) {
+            const t = _emu.templates.find(x => x.id === tplId);
+            if (!t) return;
+            const d = _emuFromTemplate(t, key);
+            _emu.file.devices.push(d);
+            if (tplId === 'blank') _emu.json[_emu.file.devices.length - 1] = true;
+            _emuMark();
+            _emuRender();
+        }
+
+        /* ── hold to test: the dash holds it for 1.5 s after the last "held",
+         * so a closed tab can never leave a button pressed ── */
+        function _emuHold(ev, ref) {
+            if (ev) { ev.preventDefault(); try { ev.target.setPointerCapture(ev.pointerId); } catch (e) {} }
+            if (_emu.holds[ref]) return;
+            const send = () => _emuFetch({ action: 'test', control: ref, held: true }).catch(() => {});
+            send();
+            _emu.holds[ref] = setInterval(send, 600);
+        }
+        function _emuLetGo(ref) {
+            if (!_emu.holds[ref]) return;
+            clearInterval(_emu.holds[ref]);
+            delete _emu.holds[ref];
+            _emuFetch({ action: 'test', control: ref, held: false }).catch(() => {});
+        }
+        function _emuFlip(ref) {
+            _emuFetch({ action: 'test', control: ref, held: true }).then(j => { _emuTake(j, _emu.dirty); _emuRenderLive(); }).catch(e => alert(e.message));
+        }
+
+        /* ── the inspector's "Presses" picker ── */
+        let _emuControlCache = null;
+        function _emuControlOptions() {
+            const out = [];
+            const devs = (_emuControlCache && _emuControlCache.devices) || [];
+            devs.forEach(d => (d.controls || []).forEach(c => {
+                if (c.kind === 'select')
+                    (c.states || []).slice(1).forEach(s => out.push({ v: `${d.id}:${c.id}:${s}`, t: `${d.name}: ${_emuPretty(s)}` }));
+                else out.push({ v: `${d.id}:${c.id}`, t: `${d.name}: ${c.name || c.id}` });
+            }));
+            return out;
+        }
+        function _emuControlOptionsHtml(val) {
+            const opts = _emuControlOptions();
+            let h = `<option value="">Nothing</option>`;
+            if (val && !opts.some(o => o.v === val)) h += `<option value="${_emuEsc(val)}" selected>${_emuEsc(val)} (not on this dash)</option>`;
+            opts.forEach(o => { h += `<option value="${_emuEsc(o.v)}" ${o.v === val ? 'selected' : ''}>${_emuEsc(o.t)}</option>`; });
+            return h;
+        }
+        async function _emuFillControlSelect(id) {
+            if (!_emuControlCache) {
+                try {
+                    const r = await fetch('/api/can/emu');
+                    const j = r.ok ? await r.json() : null;
+                    _emuControlCache = (j && j.file) || { devices: [] };
+                } catch (e) { _emuControlCache = { devices: [] }; }
+            }
+            const el = document.getElementById(id);
+            if (el) el.innerHTML = _emuControlOptionsHtml(el.dataset.val || '');
+        }
+
         async function openCanSetup() {
             const m = document.getElementById('canSetupModal');
             if (!m) return;
@@ -22978,6 +23583,18 @@
                     const l = await r.json();
                     const name = [l.ecu, l.ecu_version].filter(Boolean).join(' ');
                     setStat('setupCanStat', name || 'No preset set');
+                }
+            } catch(e) {}
+            /* Keypads & IO boxes */
+            try {
+                const r = await fetch('/api/can/emu');
+                if (r.ok) {
+                    const d = await r.json();
+                    const st = d.status || [];
+                    const bad = st.filter(x => x.status === 'refused').length;
+                    const on = st.filter(x => x.status === 'sending').length;
+                    setStat('setupEmuStat', !st.length ? 'None yet' : bad ? `${bad} stopped`
+                        : on ? `${on} on the bus` : `${st.length} set up`);
                 }
             } catch(e) {}
             /* Odometer */

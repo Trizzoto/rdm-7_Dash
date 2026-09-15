@@ -9,6 +9,8 @@ idf_component_register(
         "can/can_sim.c"
         "can/can_id_tracker.c"
         "can/keypad_lights.c"
+        "can/can_emu.c"
+        "can/can_emu_core.c"
         "can/obd2.c"
         "can/obd2_pids.c"
         "can/obd2_dtc_db.c"
@@ -86,6 +88,7 @@ idf_component_register(
         "ui/settings/preset_picker.c"
         "ui/settings/preset_picker_data.c"
         "ui/settings/device_settings.c"
+        "ui/settings/can_emu_settings.c"
         "ui/settings/settings_panel.c"
         "ui/settings/ui_gear_setup.c"
         "ui/components/ui_comp.c"
@@ -213,6 +216,7 @@ idf_component_register(
     # should be something a person chose. See main/bootloader_image/README.md.
     EMBED_FILES "embed/RDM.rdmimg" "web/favicon.ico" "bootloader_image/bootloader.bin" "${CMAKE_CURRENT_BINARY_DIR}/index.html.gz"
                 "embed/fonts/montserrat.ttf" "embed/fonts/fugaz_one.ttf" "embed/fonts/manrope_bold.ttf" "embed/fonts/barlow_ui.ttf" "embed/fonts/glass_symbols.ttf"
+    EMBED_TXTFILES "${CMAKE_CURRENT_BINARY_DIR}/can_emu_templates.min.json"
 )
 
 # ─── Gzip the web editor at configure time ─────────────────────────────────
@@ -273,6 +277,24 @@ if(NOT _rdm_gzip_result EQUAL 0)
             "  python: ${_RDM_PYTHON}\n"
             "  result: ${_rdm_gzip_result}\n"
             "  stderr: ${_rdm_gzip_stderr}")
+endif()
+
+# The CAN device templates (can/can_emu_templates.json) are written to be read
+# by people; the firmware embeds them with the whitespace taken out, which is
+# a third of the file on an app partition with little room left. Same
+# configure-time pattern as index.html.gz above, and for the same reasons.
+set(_RDM_EMU_TPL_SRC "${CMAKE_CURRENT_SOURCE_DIR}/can/can_emu_templates.json")
+set(_RDM_EMU_TPL_MIN "${CMAKE_CURRENT_BINARY_DIR}/can_emu_templates.min.json")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_RDM_EMU_TPL_SRC}")
+execute_process(
+    COMMAND "${_RDM_PYTHON}" -c
+        "import json,sys; open(sys.argv[2],'w',encoding='utf-8').write(json.dumps(json.load(open(sys.argv[1],encoding='utf-8')),separators=(',',':'),ensure_ascii=False))"
+        "${_RDM_EMU_TPL_SRC}" "${_RDM_EMU_TPL_MIN}"
+    RESULT_VARIABLE _rdm_tpl_result
+    ERROR_VARIABLE  _rdm_tpl_stderr
+)
+if(NOT _rdm_tpl_result EQUAL 0)
+    message(FATAL_ERROR "Failed to minify ${_RDM_EMU_TPL_SRC}: ${_rdm_tpl_stderr}")
 endif()
 
 target_compile_definitions(${COMPONENT_LIB} PUBLIC "-DLV_CONF_INCLUDE_SIMPLE")

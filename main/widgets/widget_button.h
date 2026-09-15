@@ -18,6 +18,11 @@ typedef struct {
 
 typedef struct {
     char       label[32];          /* button text, default: "BTN" */
+    /* A control on one of the dash's CAN devices (can_emu.h), as
+     * "device:control" or "device:control:state" — e.g. "cruise_a:cruise:set".
+     * Empty = none. Works alongside the raw tx_* output below. */
+    char       control[48];
+    bool       control_held;       /* runtime: this widget is holding the control */
     /* CAN TX */
     uint32_t   tx_can_id;          /* 0 = disabled */
     uint8_t    tx_bit_start;       /* bit position (0-63, default: 0) */

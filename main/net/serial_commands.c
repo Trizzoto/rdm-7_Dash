@@ -248,6 +248,7 @@ void _handle_screenshot(int id, cJSON *params);
 void _handle_touch(int id, cJSON *params);
 void _handle_obd2_sim(int id, cJSON *params);
 void _handle_can_sim(int id, cJSON *params);
+void _handle_can_emu(int id, cJSON *params);
 
 void _handle_upload_start(int id, cJSON *params);
 void _handle_upload_finish(int id, cJSON *params);
@@ -327,6 +328,7 @@ static const cmd_entry_t s_dispatch_table[] = {
     { "touch",              _handle_touch },
     { "obd2.sim",           _handle_obd2_sim },
     { "can.sim",            _handle_can_sim },
+    { "can.emu",            _handle_can_emu },
     /* Chunked uploads */
     { "upload.start",       _handle_upload_start },
     { "upload.finish",      _handle_upload_finish },

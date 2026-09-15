@@ -8,8 +8,7 @@
 #include "widget_rules.h"
 #include "system/night_mode.h"
 #include "ui/menu/edit_mode.h"
-#include "can/can_decode.h"
-#include "can/can_manager.h"
+#include "can/can_emu.h"
 #include "storage/config_store.h"
 #include "signal.h"
 #include "cJSON.h"
@@ -110,18 +109,23 @@ static void _toggle_on_signal(float value, bool is_stale, void *user_data) {
 
 /* ── CAN TX helpers ────────────────────────────────────────────────────── */
 
-static void _toggle_send(toggle_data_t *d, bool on) {
+/* The raw tx_* output, built and sent by can_emu per CAN ID (so a switch and
+ * a button on one frame keep each other's bits) on its own 10 ms clock: ON
+ * now and every 1/tx_rate_hz while on, TX_OFF_BURST OFF frames when it stops. */
+static void _toggle_output(widget_t *w, bool on) {
+    toggle_data_t *d = (toggle_data_t *)w->type_data;
     if (d->tx_can_id == 0) return;
-    uint8_t frame[8] = {0};
-    uint32_t val = on ? (d->tx_bit_length >= 32 ? 0xFFFFFFFFu : ((1u << d->tx_bit_length) - 1u)) : 0u;
-    can_pack_bits(frame, d->tx_bit_start, d->tx_bit_length, val, d->tx_endian);
-    can_transmit_frame(d->tx_can_id, frame, 8);
+    can_emu_legacy_set(w, d->tx_can_id, d->tx_bit_start, d->tx_bit_length,
+                       d->tx_endian, d->tx_rate_hz, on);
 }
 
-/* Drive OFF with a short burst so a single dropped frame can't strand the
- * output ON. Safe to call when already off. */
-static void _toggle_send_off_burst(toggle_data_t *d) {
-    for (int i = 0; i < TX_OFF_BURST; i++) _toggle_send(d, false);
+/* The device control this switch drives: a latch control follows the switch's
+ * position; any other control is held while the switch is on. */
+static void _toggle_control(toggle_data_t *d, bool on) {
+    if (!d->control[0]) return;
+    if (can_emu_ref_is_latch(d->control)) { can_emu_set_latch(d->control, on); return; }
+    if (on && !d->control_held) d->control_held = can_emu_press(d->control);
+    else if (!on && d->control_held) { can_emu_release(d->control); d->control_held = false; }
 }
 
 /* Persist the latched state (non-momentary, remember_state on), keyed by the
@@ -129,30 +133,6 @@ static void _toggle_send_off_burst(toggle_data_t *d) {
 static void _toggle_persist(toggle_data_t *d) {
     if (!d->remember_state || d->momentary || d->tx_can_id == 0) return;
     config_store_save_widget_latch(d->tx_can_id, d->tx_bit_start, d->current_state);
-}
-
-/* ── Periodic TX timer ─────────────────────────────────────────────────── */
-
-static void _toggle_tx_timer_cb(lv_timer_t *t) {
-    widget_t *w = (widget_t *)t->user_data;
-    if (!w || !w->type_data) return;
-    toggle_data_t *d = (toggle_data_t *)w->type_data;
-    if (!d->tx_active) return;
-    _toggle_send(d, true);
-}
-
-static void _toggle_start_tx_timer(widget_t *w) {
-    toggle_data_t *d = (toggle_data_t *)w->type_data;
-    if (!d || d->tx_timer || d->tx_can_id == 0 || d->tx_rate_hz == 0) return;
-    uint32_t period = 1000 / d->tx_rate_hz;
-    d->tx_timer = lv_timer_create(_toggle_tx_timer_cb, period, w);
-}
-
-static void _toggle_stop_tx_timer(toggle_data_t *d) {
-    if (d->tx_timer) {
-        lv_timer_del(d->tx_timer);
-        d->tx_timer = NULL;
-    }
 }
 
 /* ── Activate / deactivate (shared by switch + momentary) ────────────────────
@@ -163,17 +143,15 @@ static void _toggle_activate(widget_t *w) {
     toggle_data_t *d = (toggle_data_t *)w->type_data;
     if (!d || d->tx_active) return;
     d->tx_active = true;
-    _toggle_send(d, true);
-    _toggle_start_tx_timer(w);
+    _toggle_output(w, true);
 }
 
 static void _toggle_deactivate(widget_t *w) {
     toggle_data_t *d = (toggle_data_t *)w->type_data;
     if (!d) return;
-    _toggle_stop_tx_timer(d);
     if (d->tx_active) {
         d->tx_active = false;
-        _toggle_send_off_burst(d);
+        _toggle_output(w, false);
     }
 }
 
@@ -182,7 +160,9 @@ static void _toggle_deactivate(widget_t *w) {
 static void _toggle_restore_state(widget_t *w) {
     toggle_data_t *d = (toggle_data_t *)w->type_data;
     if (!d || d->momentary) return;
-    if (d->remember_state && d->tx_can_id != 0) {
+    if (d->control[0] && can_emu_ref_is_latch(d->control)) {
+        d->current_state = can_emu_is_active(d->control);   /* the engine remembers */
+    } else if (d->remember_state && d->tx_can_id != 0) {
         bool on = false;
         if (config_store_load_widget_latch(d->tx_can_id, d->tx_bit_start, &on) == ESP_OK)
             d->current_state = on;
@@ -192,7 +172,10 @@ static void _toggle_restore_state(widget_t *w) {
         else                  lv_obj_clear_state(d->sw_obj, LV_STATE_CHECKED);
     }
     _toggle_apply_image_state(d);
-    if (d->current_state) _toggle_activate(w);
+    if (d->current_state) {
+        _toggle_activate(w);
+        if (d->control[0] && !can_emu_ref_is_latch(d->control)) _toggle_control(d, true);
+    }
 }
 
 /* ── Toggle clicked event callback ──────────────────────────────────────── */
@@ -219,6 +202,7 @@ static void _toggle_clicked_cb(lv_event_t *e) {
      * tx_rate_hz; deactivate drives OFF with a burst. Persist if remembered. */
     if (checked) _toggle_activate(w);
     else         _toggle_deactivate(w);
+    _toggle_control(d, checked);
     _toggle_persist(d);
 
     /* Update image styling if in image mode */
@@ -240,6 +224,7 @@ static void _toggle_momentary_pressed_cb(lv_event_t *e) {
         lv_obj_add_state(d->sw_obj, LV_STATE_CHECKED);
 
     _toggle_activate(w);
+    _toggle_control(d, true);
     _toggle_apply_image_state(d);
 }
 
@@ -257,6 +242,7 @@ static void _toggle_momentary_release_or_lost(lv_event_t *e) {
         lv_obj_clear_state(d->sw_obj, LV_STATE_CHECKED);
 
     _toggle_deactivate(w);
+    _toggle_control(d, false);
     _toggle_apply_image_state(d);
 }
 
@@ -442,6 +428,9 @@ static void _toggle_to_json(widget_t *w, cJSON *out) {
     if (d->momentary != DEF_MOMENTARY)
         cJSON_AddBoolToObject(cfg, "momentary", d->momentary);
 
+    if (d->control[0] != '\0')
+        cJSON_AddStringToObject(cfg, "control", d->control);
+
     /* CAN TX */
     if (d->tx_can_id != 0)
         cJSON_AddNumberToObject(cfg, "tx_can_id", d->tx_can_id);
@@ -535,6 +524,11 @@ static void _toggle_from_json(widget_t *w, cJSON *in) {
     item = cJSON_GetObjectItemCaseSensitive(cfg, "momentary");
     if (cJSON_IsBool(item)) d->momentary = cJSON_IsTrue(item);
 
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "control");
+    if (cJSON_IsString(item) && item->valuestring) {
+        safe_strncpy(d->control, item->valuestring, sizeof(d->control));
+    }
+
     /* CAN TX */
     item = cJSON_GetObjectItemCaseSensitive(cfg, "tx_can_id");
     if (cJSON_IsNumber(item)) d->tx_can_id = (uint32_t)item->valueint;
@@ -608,12 +602,11 @@ static void _toggle_destroy(widget_t *w) {
     if (!w) return;
     toggle_data_t *d = (toggle_data_t *)w->type_data;
     if (d) {
-        _toggle_stop_tx_timer(d);
         /* Don't strand a driven output ON when the widget goes away. Exception:
          * a persisted switch stays asserted across a hot-reload (recreate
          * restores it from NVS). */
-        if (d->tx_active && !(d->remember_state && !d->momentary))
-            _toggle_send_off_burst(d);
+        can_emu_legacy_forget(w, d->tx_active && !(d->remember_state && !d->momentary));
+        if (d->control_held) { can_emu_release(d->control); d->control_held = false; }
         if (d->signal_index >= 0)
             signal_unsubscribe(d->signal_index, _toggle_on_signal, w);
     }
@@ -731,6 +724,7 @@ static bool _toggle_inspector_get(const widget_t *w, const char *name,
 
 	if (strcmp(name, "signal_name") == 0)         { out->str = d->signal_name;  return true; }
 	if (strcmp(name, "label") == 0)               { out->str = d->label;        return true; }
+	if (strcmp(name, "control") == 0)             { out->str = d->control;      return true; }
 	if (strcmp(name, "font") == 0)                { out->str = d->font;         return true; }
 	if (strcmp(name, "image_name") == 0)          { out->str = d->image_name;   return true; }
 	if (strcmp(name, "show_label") == 0)          { out->b = d->show_label;     return true; }
@@ -773,6 +767,11 @@ static bool _toggle_inspector_set(widget_t *w, const char *name,
 		safe_strncpy(d->label, in->str, sizeof(d->label));
 		if (d->label_obj && lv_obj_is_valid(d->label_obj))
 			lv_label_set_text(d->label_obj, d->label);
+		return true;
+	}
+	if (strcmp(name, "control") == 0 && in->str) {
+		if (d->control_held) { can_emu_release(d->control); d->control_held = false; }
+		safe_strncpy(d->control, in->str, sizeof(d->control));
 		return true;
 	}
 	if (strcmp(name, "font") == 0 && in->str) {

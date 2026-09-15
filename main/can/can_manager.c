@@ -7,6 +7,8 @@
  */
 #include "can_manager.h"
 #include "rdm_bus.h"
+#include "rdm_bus_proto.h"
+#include "can_emu.h"
 #include "can_decode.h"
 #include "can_id_tracker.h"
 #include "obd2.h"
@@ -457,6 +459,32 @@ void build_twai_filter_from_signals(twai_filter_config_t *out_filter) {
 		}
 	}
 
+	/* The IDs the dash's own CAN devices send (can_emu). The dash never hears
+	 * its own frames, so a frame on one of these IDs is something else — a
+	 * real IO box already fitted — and the device must stand down. It can only
+	 * hear that if the filter lets the ID in. */
+	{
+		uint32_t emu[CEMU_FILTER_MAX];
+		bool emu_ext = false;
+		int n = can_emu_filter_ids(emu, CEMU_FILTER_MAX, &emu_ext);
+		if (emu_ext) {
+			*out_filter = (twai_filter_config_t)TWAI_FILTER_CONFIG_ACCEPT_ALL();
+			return;
+		}
+		for (int e = 0; e < n; e++) {
+			uint32_t id = emu[e] & 0x7FFu;
+			bool dup = false;
+			for (int j = 0; j < count; j++)
+				if (ids[j] == id) { dup = true; break; }
+			if (dup) continue;
+			if (count >= 64) {
+				*out_filter = (twai_filter_config_t)TWAI_FILTER_CONFIG_ACCEPT_ALL();
+				return;
+			}
+			ids[count++] = id;
+		}
+	}
+
 	if (count == 0) {
 		*out_filter = (twai_filter_config_t)TWAI_FILTER_CONFIG_ACCEPT_ALL();
 		return;
@@ -533,6 +561,11 @@ static esp_err_t _install_twai_with_retry(const char *ctx) {
 	 * path routes through (init, filter rebuild, promiscuous toggle, bitrate
 	 * change) — so no path can end up back on the IDF default of 5. */
 	g_config.rx_queue_len = CAN_RX_QUEUE_LEN;
+	/* The IDF default of 5 is one Haltech IO box's worth of frames in a single
+	 * 20 ms tick (can_emu). Transmits are non-blocking from the render thread,
+	 * so a full queue is a dropped frame, not a wait. 16 × ~20 B of internal
+	 * RAM — kept small because internal RAM belongs to WiFi. */
+	g_config.tx_queue_len = 16;
 
 	esp_err_t err = ESP_FAIL;
 	for (int attempt = 0; attempt < 3; attempt++) {
@@ -977,6 +1010,48 @@ esp_err_t can_transmit_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc) 
 	return can_transmit_frame_ext(can_id, false, data, dlc);
 }
 
+esp_err_t can_try_transmit_frame_ext(uint32_t can_id, bool extd,
+                                     const uint8_t *data, uint8_t dlc,
+                                     bool single_shot) {
+	/* See can_try_transmit_frame for why a render-thread sender must never
+	 * wait for a slot, and why single shot is what keeps an unACKed periodic
+	 * frame from becoming a permanent error-flag storm. */
+	twai_message_t msg = {0};
+	msg.identifier = extd ? (can_id & 0x1FFFFFFFu) : (can_id & 0x7FFu);
+	msg.extd = extd ? 1 : 0;
+	if (single_shot) msg.flags |= TWAI_MSG_FLAG_SS;
+	msg.data_length_code = dlc > 8 ? 8 : dlc;
+	if (data && msg.data_length_code)
+		memcpy(msg.data, data, msg.data_length_code);
+	return twai_transmit(&msg, 0);
+}
+
+const char *can_tx_refused_reason(uint32_t id, bool extd) {
+	if (extd) {
+		if (id > 0x1FFFFFFFu) return "Extended IDs are 29-bit — 0x1FFFFFFF is the highest.";
+		/* The RDM device bus and OBD2 request ranges below are 11-bit
+		 * standard IDs. A 29-bit frame cannot collide with them. */
+		return NULL;
+	}
+	if (id > 0x7FFu)
+		return "Standard IDs are 11-bit — set \"extd\": true for a 29-bit ID.";
+
+	if (id == RDM_BUS_DISCOVERY_ID)
+		return "That is the RDM device-bus discovery ID — the dash and the GPS "
+		       "puck find each other on it.";
+
+	uint16_t base = rdm_bus_get_base();
+	if (id >= base && id < (uint32_t)base + 16u)
+		return "That is inside the RDM device-bus block the dash and the GPS "
+		       "puck talk on. Move the device off it, or move the RDM block.";
+
+	if (id == 0x7DFu || (id >= 0x7E0u && id <= 0x7E7u))
+		return "That is an OBD2 request ID. If the dash is polling the car, a "
+		       "frame there lands in the middle of its own transaction.";
+
+	return NULL;
+}
+
 void can_set_obd_extended(bool extended) {
 	s_obd_extended = extended;
 }
@@ -1133,6 +1208,9 @@ void can_process_queued_frames(void) {
 			 * per batch — it would silently eat the payload. */
 			rdm_bus_on_can_frame(msg.identifier, msg.extd != 0, msg.data,
 			                     msg.data_length_code);
+			/* A frame on an ID one of the dash's own CAN devices sends means
+			 * the real device is on the bus too (see can_emu.h). */
+			can_emu_on_can_frame(msg.identifier, msg.extd != 0);
 		}
 		processed++;
 	}

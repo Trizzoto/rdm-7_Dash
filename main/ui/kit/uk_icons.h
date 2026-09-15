@@ -43,6 +43,7 @@ typedef enum {
     UK_ICON_CLOCK,
     UK_ICON_HOTSPOT,
     UK_ICON_TRASH,
+    UK_ICON_KEYPAD,
     UK_ICON__COUNT,
     UK_ICON_NONE = -1,
 } uk_icon_t;

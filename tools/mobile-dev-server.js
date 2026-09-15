@@ -403,6 +403,8 @@ function loadChannelStore() {
 }
 const FUEL_STOICH = { petrol: 14.7, e10: 14.1, e85: 9.81, e100: 9.0, methanol: 6.4, flex: 14.7 };
 const fuelStub = { fuel: 'petrol', stoich: 14.7 };
+/* /api/can/emu — the dash's own CAN devices, in memory. */
+const emuStub = { file: { v: 1, devices: [] }, holds: {}, latch: {}, t0: Date.now() };
 let channelStore = loadChannelStore();
 function persistChannelStore() {
   try {
@@ -556,6 +558,77 @@ const server = http.createServer((req, res) => {
           fs.writeFileSync(path.join(dir, d.name), Buffer.from(b64, 'base64'));
           sendJson(res, { ok: true, bytes: Buffer.from(b64, 'base64').length });
         } catch (e) { sendJson(res, { ok: false, error: e.message }, 400); }
+      });
+    }
+    /* Keypads & IO boxes (main/can/can_emu.c, ADR-0077). In memory; the
+     * bytes are a small JS twin of cemu_compose so the page's "Right now"
+     * column moves when a button is held. Templates are the firmware's file. */
+    if (url === '/api/can/emu') {
+      const reply = (ok, error) => {
+        const now = Date.now();
+        Object.keys(emuStub.holds).forEach(k => { if (emuStub.holds[k] < now) delete emuStub.holds[k]; });
+        const status = emuStub.file.devices.map(d => {
+          const ctl = {};
+          (d.controls || []).forEach(c => {
+            const states = c.kind === 'select' ? c.states : ['off', 'on'];
+            let st = 0;
+            if (c.kind === 'latch') st = emuStub.latch[`${d.id}:${c.id}`] ? 1 : 0;
+            else states.forEach((s, i) => { if (i && (emuStub.holds[`${d.id}:${c.id}:${s}`] || (c.kind !== 'select' && emuStub.holds[`${d.id}:${c.id}`]))) st = i; });
+            ctl[c.id] = { st, name: states[st] };
+          });
+          const frames = (d.send || []).map(fr => {
+            const b = Array.from({ length: fr.dlc || 8 }, (_, i) => parseInt(String(fr.data || '').substr(i * 2, 2) || '00', 16) || 0);
+            (fr.fields || []).forEach(f => {
+              let v = f.value || 0;
+              if (f.control && ctl[f.control]) v = Array.isArray(f.values) ? f.values[ctl[f.control].st] : (ctl[f.control].st ? Math.pow(2, f.bit_length) - 1 : 0);
+              let raw = Math.max(0, Math.min(Math.pow(2, f.bit_length) - 1, Math.round((v - (f.offset || 0)) / (f.scale || 1))));
+              for (let i = 0; i < f.bit_length; i++) {           /* whole-byte fields are all the templates use */
+                const bit = f.endian ? f.bit_start + i : f.bit_start + f.bit_length - 1 - i;
+                const byte = bit >> 3, sh = f.endian ? bit % 8 : 7 - (bit % 8);
+                if (byte < b.length && (raw >> i) & 1) b[byte] |= 1 << sh;
+              }
+            });
+            return { can_id: fr.can_id, sent: Math.floor((now - emuStub.t0) / (fr.every_ms || 100)), failed: 0,
+                     bytes: b.map(x => x.toString(16).toUpperCase().padStart(2, '0')).join('') };
+          });
+          const channels = {};
+          (d.listen || []).forEach(l => (l.channels || []).forEach(c => { channels[c.name] = null; }));
+          const controls = {};
+          Object.keys(ctl).forEach(k => { controls[k] = ctl[k].name; });
+          const on = d.enabled !== false;
+          return { id: d.id, name: d.name, status: !on ? 'off' : (d.bitrate && d.bitrate !== 1000 ? 'refused' : 'sending'),
+                   reason: on && d.bitrate && d.bitrate !== 1000 ? `Needs the bus at ${d.bitrate} kbit/s; this dash is set to 1000.` : undefined,
+                   frames, controls, channels };
+        });
+        const out = { ok, error, bitrate_k: 1000, file: emuStub.file, status };
+        if (/templates=1/.test(req.url)) {
+          try { out.templates = JSON.parse(fs.readFileSync(path.join(ROOT, 'main', 'can', 'can_emu_templates.json'), 'utf8')); } catch (e) {}
+        }
+        sendJson(res, out, ok ? 200 : 400);
+      };
+      if (req.method === 'GET') return reply(true);
+      return readBody(req, (body) => {
+        let j;
+        try { j = JSON.parse(body || '{}'); } catch (e) { return reply(false, "That isn't valid JSON."); }
+        if (!j.action) {
+          if (!Array.isArray(j.devices)) return reply(false, '"devices" must be a list.');
+          emuStub.file = j;
+          return reply(true);
+        }
+        const d = emuStub.file.devices.find(x => x.id === j.device);
+        if (j.action === 'test') {
+          const parts = String(j.control || '').split(':');
+          const dev = emuStub.file.devices.find(x => x.id === parts[0]);
+          const c = dev && (dev.controls || []).find(x => x.id === parts[1]);
+          if (!c) return reply(false, `There's no control "${j.control}".`);
+          if (c.kind === 'latch') { if (j.held) emuStub.latch[`${parts[0]}:${parts[1]}`] = !emuStub.latch[`${parts[0]}:${parts[1]}`]; }
+          else if (j.held) emuStub.holds[j.control] = Date.now() + 1500;
+          else delete emuStub.holds[j.control];
+          return reply(true);
+        }
+        if (j.action === 'enable' && d) { d.enabled = !!j.enabled; return reply(true); }
+        if (j.action === 'remove' && d) { emuStub.file.devices = emuStub.file.devices.filter(x => x !== d); return reply(true); }
+        return reply(false, `Unknown action "${j.action}".`);
       });
     }
     /* Channels — explicit handlers (need body + the persisted store). */

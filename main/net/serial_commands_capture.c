@@ -11,6 +11,7 @@
 #include "system/remote_touch.h"
 #include "can/obd2.h"
 #include "can/can_sim.h"
+#include "can/can_emu.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "display_capture.h"
@@ -80,6 +81,21 @@ void _handle_obd2_sim(int id, cJSON *params)
     rdm_lvgl_unlock();
     cJSON *r = cJSON_CreateObject();
     cJSON_AddBoolToObject(r, "sim", sim_on);
+    _send_response(id, r, NULL);
+}
+
+/* can.emu — the dash's own CAN devices over USB (the twin of /api/can/emu).
+ * No params: the report. {"templates":true}: with templates. {"action":…} or
+ * a whole file {"devices":[…]}: do it, then the report. */
+void _handle_can_emu(int id, cJSON *params)
+{
+    char err[160] = "";
+    bool ok = true;
+    if (params && (cJSON_GetObjectItemCaseSensitive(params, "action") ||
+                   cJSON_GetObjectItemCaseSensitive(params, "devices")))
+        ok = can_emu_request(params, NULL, err, sizeof(err));
+    bool templates = params && cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(params, "templates"));
+    cJSON *r = can_emu_report(ok, err, templates);
     _send_response(id, r, NULL);
 }
 

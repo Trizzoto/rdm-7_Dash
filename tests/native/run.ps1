@@ -49,6 +49,7 @@ function Get-ExtraSources($name) {
 		"test_can_mux"           { return @("../../main/ui/settings/preset_picker_data.c") }
 		"test_can_mux_focus"     { return @("../../main/can/can_decode.c") }
 		"test_keypad_lights"     { return @("cjson/cJSON.c", "../../main/can/keypad_lights.c") }
+		"test_can_emu"           { return @("cjson/cJSON.c", "../../main/can/can_emu_core.c", "../../main/can/can_decode.c") }
 		default                  { return @() }
 	}
 }
@@ -66,6 +67,7 @@ function Get-ExtraIncludes($name) {
 		"test_can_mux"           { return @("-Imocks", "-I../../main", "-I../../main/ui/settings") }
 		"test_can_mux_focus"     { return @("-Imocks", "-I../../main", "-I../../main/can") }
 		"test_keypad_lights"     { return @("-Imocks", "-Icjson", "-I.", "-I../../main") }
+		"test_can_emu"           { return @("-Icjson", "-I.", "-I../../main") }
 		default                  { return @() }
 	}
 }
