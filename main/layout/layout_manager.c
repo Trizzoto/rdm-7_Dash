@@ -1318,22 +1318,29 @@ esp_err_t layout_manager_load(const char *name, lv_obj_t *parent) {
 		s_layout_ecu_version[0] = '\0';
 	}
 
-	/* Sync the NVS cache so every downstream consumer (web /api/ecu/get,
-	 * device_settings ECU label, preset_picker/ui_ecu_picker auto-select)
-	 * stays in lockstep with the active layout. Without this the layout
-	 * field and NVS could drift — e.g. user uploads a Haltech layout but
-	 * NVS still says MaxxECU until they re-run the picker.
+	/* Seed the dash's ECU (NVS — read by /api/ecu/current, the device
+	 * settings label and the picker's auto-select) from a layout that names
+	 * one, so a fresh dash loading a tagged layout knows its car.
 	 *
-	 * Only writes when the value actually changed: NVS wear-leveling
-	 * tolerates the occasional write but a no-op skip keeps things tidy
-	 * over many layout switches per session. */
-	char prev_make[32] = "";
-	char prev_ver[24] = "";
-	config_store_load_ecu(prev_make, sizeof(prev_make),
-	                      prev_ver,  sizeof(prev_ver));
-	if (strcmp(prev_make, s_layout_ecu)         != 0 ||
-	    strcmp(prev_ver,  s_layout_ecu_version) != 0) {
-		config_store_save_ecu(s_layout_ecu, s_layout_ecu_version);
+	 * A layout's tag only fills an EMPTY slot — it never replaces an ECU
+	 * the dash already has. The decode lives in the channel registry
+	 * (ADR-0005/0006), so switching the look rebinds nothing: letting the
+	 * tag win relabelled a Haltech car "MaxxECU" the moment it showed a
+	 * layout authored on a MaxxECU dash, and a portable layout with no tag
+	 * blanked the ECU so every screen said "no preset" while the channels
+	 * stayed bound. Picking or clearing the ECU is the wizard's and the
+	 * picker's job; both write NVS themselves.
+	 *
+	 * Only writes when the slot is empty, so repeated layout switches never
+	 * touch NVS. */
+	if (s_layout_ecu[0]) {
+		char prev_make[32] = "";
+		char prev_ver[24] = "";
+		config_store_load_ecu(prev_make, sizeof(prev_make),
+		                      prev_ver,  sizeof(prev_ver));
+		if (!prev_make[0]) {
+			config_store_save_ecu(s_layout_ecu, s_layout_ecu_version);
+		}
 	}
 
 	/* ── Optional night-mode CAN trigger ── */

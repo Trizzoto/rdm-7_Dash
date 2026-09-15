@@ -23565,14 +23565,15 @@
                         `${sigs.length} defined · ${live} live`;
                 }
             } catch(e) {}
-            /* ECU preset + bus verdict, for the "ECU & CAN bus" card. The
-             * preset lives on the layout; the verdict is the same
-             * plain-words rule the modal uses. */
+            /* ECU preset for the "ECU & CAN bus" card. The dash's ECU, not the
+             * active layout's tag: a portable layout names no ECU, and reading
+             * it here said "No preset set" on a car whose channels were bound
+             * to one. Same source as the Channels context strip. */
             try {
-                const r = await fetch('/api/layout/current');
+                const r = await fetch('/api/ecu/current');
                 if (r.ok) {
-                    const l = await r.json();
-                    const name = [l.ecu, l.ecu_version].filter(Boolean).join(' ');
+                    const d = await r.json();
+                    const name = [d.make, d.version].filter(Boolean).join(' ');
                     setStat('setupCanStat', name || 'No preset set');
                 }
             } catch(e) {}
