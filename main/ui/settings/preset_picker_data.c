@@ -108,6 +108,13 @@ const preconfig_item_t preconfig_items[] = {
 { "Haltech", "Nexus", "INTAKE CAM 2",       "370", 0, 48, 16, 0.1, 0, 1, true },
 { "Haltech", "Nexus", "KNOCK LEVEL 1",      "36A", 0, 0, 16, 0.01, 0, 2, false },
 { "Haltech", "Nexus", "KNOCK LEVEL 2",      "36A", 0, 16, 16, 0.01, 0, 2, false },
+/* The wideband sensors again, as lambda (the protocol's own unit, 0.001/bit):
+ * the AFR rows below feed Wideband 1/2, and nothing fed Lambda Bank 1 — the
+ * channel the default dashboard's LAMBDA tile shows. Left empty, an OBD2 scan
+ * offered to fill it from PID 0x44 (the ECU's COMMANDED ratio), so the tile
+ * switched from the car's wideband to OBD2 (seen on the dash, 2026-09-15). */
+{ "Haltech", "Nexus", "LAMBDA 1",           "368", 0, 0, 16, 0.001, 0, 2, false },
+{ "Haltech", "Nexus", "LAMBDA 2",           "368", 0, 16, 16, 0.001, 0, 2, false },
 { "Haltech", "Nexus", "LATERAL G",          "36B", 0, 48, 16, 0.1, 0, 1, true },
 { "Haltech", "Nexus", "LAUNCH END RPM",     "363", 0, 48, 16, 1.0, 0, 0, false },
 { "Haltech", "Nexus", "LC FUEL ENRICH",     "36E", 0, 32, 16, 0.1, 0, 1, true },

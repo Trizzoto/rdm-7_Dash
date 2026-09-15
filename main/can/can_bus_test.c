@@ -10,6 +10,7 @@
 #include "can_bus_test.h"
 #include "system/rdm_lv_async.h"
 #include "can_manager.h"
+#include "can_sim.h"
 
 #include <string.h>
 
@@ -157,6 +158,19 @@ static void _listen_for_traffic(can_scan_bitrate_result_t *result) {
     result->traffic_detected = false;
 
     TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(LISTEN_DURATION_MS);
+
+    /* Bench ECU (can_sim): its frames never touch the wire, so the scan
+     * hears what that ECU would put on the bus at this rate instead. */
+    if (can_sim_active()) {
+        while (xTaskGetTickCount() < deadline && !s_cancel) vTaskDelay(pdMS_TO_TICKS(LISTEN_POLL_MS));
+        uint32_t ids[32];
+        uint8_t n = 0;
+        result->frames_received = can_sim_scan_frames(result->bitrate_index, LISTEN_DURATION_MS,
+                                                      ids, 32, &n);
+        result->traffic_detected = result->frames_received > 0;
+        for (uint8_t i = 0; i < n; i++) _track_unique_id(result, ids[i]);
+        return;
+    }
 
     while (xTaskGetTickCount() < deadline && !s_cancel) {
         twai_message_t msg;

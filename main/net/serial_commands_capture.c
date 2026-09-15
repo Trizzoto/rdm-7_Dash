@@ -10,6 +10,7 @@
 #include "cJSON.h"
 #include "system/remote_touch.h"
 #include "can/obd2.h"
+#include "can/can_sim.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "display_capture.h"
@@ -79,6 +80,31 @@ void _handle_obd2_sim(int id, cJSON *params)
     rdm_lvgl_unlock();
     cJSON *r = cJSON_CreateObject();
     cJSON_AddBoolToObject(r, "sim", sim_on);
+    _send_response(id, r, NULL);
+}
+
+/* can.sim {"on":true,"ecu":"Haltech","version":"Nexus"} — a bench ECU that
+ * broadcasts that preset's CAN stream into the receive path (can_sim.h). */
+void _handle_can_sim(int id, cJSON *params)
+{
+    cJSON *on = params ? cJSON_GetObjectItemCaseSensitive(params, "on") : NULL;
+    if (cJSON_IsBool(on)) {
+        if (cJSON_IsTrue(on)) {
+            cJSON *ecu = cJSON_GetObjectItemCaseSensitive(params, "ecu");
+            cJSON *ver = cJSON_GetObjectItemCaseSensitive(params, "version");
+            if (!can_sim_start(cJSON_IsString(ecu) ? ecu->valuestring : "Haltech",
+                               cJSON_IsString(ver) ? ver->valuestring : "Nexus")) {
+                _send_error(id, "No CAN preset by that ECU and version");
+                return;
+            }
+        } else {
+            can_sim_stop();
+        }
+    }
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddBoolToObject(r, "sim", can_sim_active());
+    cJSON_AddStringToObject(r, "ecu", can_sim_ecu());
+    cJSON_AddStringToObject(r, "version", can_sim_version());
     _send_response(id, r, NULL);
 }
 

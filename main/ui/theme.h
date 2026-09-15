@@ -174,26 +174,31 @@ ui_theme_id_t ui_theme_get(void);
 #define THEME_COLOR_PINK                lv_color_hex(0xF81490)
 
 /* =========================================================================
- * FONTS — system (lv_font_montserrat_*)
+ * FONTS — system (Montserrat, with a symbol fallback)
  * ========================================================================= */
 
+/** Montserrat at px (10, 12 … 22), with λ, μ, Δ, ±, ×, — and friends drawn
+ *  from a DejaVu fallback once uk_init() has run (ui_kit.c). Before that it
+ *  is the plain built-in face. */
+const lv_font_t *ui_theme_font(uint8_t px);
+
 /** Tiny — warning circles, instruction text, preview text. */
-#define THEME_FONT_TINY                 (&lv_font_montserrat_10)
+#define THEME_FONT_TINY                 ui_theme_font(10)
 
 /** Small — unit labels, CAN config labels, indicator labels. */
-#define THEME_FONT_SMALL                (&lv_font_montserrat_12)
+#define THEME_FONT_SMALL                ui_theme_font(12)
 
 /** Body — custom panel text, preconfig screen, config menu text. */
-#define THEME_FONT_BODY                 (&lv_font_montserrat_14)
+#define THEME_FONT_BODY                 ui_theme_font(14)
 
 /** Medium — dialog titles, section headers, bar value readouts. */
-#define THEME_FONT_MEDIUM               (&lv_font_montserrat_16)
+#define THEME_FONT_MEDIUM               ui_theme_font(16)
 
 /** Large — popup / widget dialog titles (device-settings, wifi). */
-#define THEME_FONT_LARGE                (&lv_font_montserrat_18)
+#define THEME_FONT_LARGE                ui_theme_font(18)
 
 /** X-Large — primary screen titles (device-settings header, Screen4). */
-#define THEME_FONT_XLARGE               (&lv_font_montserrat_20)
+#define THEME_FONT_XLARGE               ui_theme_font(20)
 
 /* =========================================================================
  * FONTS — dashboard display (custom bitmap fonts)

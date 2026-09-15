@@ -109,10 +109,8 @@ static bool _id_available(const char *id)
 
 static const char *_unit(const channel_t *c)
 {
-    const char *u = c->units_display[0] ? c->units_display : c->units_native;
-    /* Barlow has no Greek; a lambda channel's name already says lambda. */
-    if (strcmp(u, "\xCE\xBB") == 0) return "";
-    return u;
+    /* λ draws now: the kit's faces fall back to a DejaVu symbol subset. */
+    return c->units_display[0] ? c->units_display : c->units_native;
 }
 
 static float _read(const char *id)

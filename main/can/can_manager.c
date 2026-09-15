@@ -1005,8 +1005,12 @@ esp_err_t can_inject_rx_frame(uint32_t id, bool extd, const uint8_t *data, uint8
 	 * on a busy bus the 64-deep queue is often full between LVGL drain cycles,
 	 * and a dropped injection would look like a silent test failure. ~50 ms
 	 * spans a few drain cycles; acceptable on the httpd task for a test path. */
-	return (xQueueSendToBack(s_can_queue, &msg, pdMS_TO_TICKS(50)) == pdPASS)
-	           ? ESP_OK : ESP_FAIL;
+	if (xQueueSendToBack(s_can_queue, &msg, pdMS_TO_TICKS(50)) != pdPASS)
+		return ESP_FAIL;
+	/* Counted like a received frame, so the "NO CAN BUS" badge and bus
+	 * health read an injected stream (can_sim) as the traffic it stands for. */
+	s_rx_frame_count++;
+	return ESP_OK;
 }
 
 void can_process_queued_frames(void) {

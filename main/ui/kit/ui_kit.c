@@ -25,8 +25,51 @@ LV_IMG_DECLARE(ui_img_RDM_Light);
 extern const uint8_t barlow_ui_ttf_start[] asm("_binary_barlow_ui_ttf_start");
 extern const uint8_t barlow_ui_ttf_end[]   asm("_binary_barlow_ui_ttf_end");
 
+/* DejaVu Sans (LVGL's own scripts/built_in_font copy), subset to the symbols
+ * the menu faces lack: λ μ Δ ± × ÷ ² ³ · – — … ≈ ≤ ≥. Neither Montserrat nor
+ * Barlow has Greek, so a lambda channel's unit drew as a box ("0.99 □"). */
+extern const uint8_t glass_symbols_ttf_start[] asm("_binary_glass_symbols_ttf_start");
+extern const uint8_t glass_symbols_ttf_end[]   asm("_binary_glass_symbols_ttf_end");
+
 static EXT_RAM_BSS_ATTR const lv_font_t *s_fonts[UK_FONT__COUNT];
 static bool s_inited = false;
+
+/* THEME_FONT_TINY…XLARGE: the built-in Montserrat faces are const, in flash,
+ * so they can't be given a fallback. These are RAM copies of them that can;
+ * until uk_init fills them in, ui_theme_font() hands out the originals. */
+static const lv_font_t *const s_sys_src[] = {
+    &lv_font_montserrat_10, &lv_font_montserrat_12, &lv_font_montserrat_14,
+    &lv_font_montserrat_16, &lv_font_montserrat_18, &lv_font_montserrat_20,
+    &lv_font_montserrat_22,
+};
+#define SYS_FONTS (sizeof(s_sys_src) / sizeof(s_sys_src[0]))
+static EXT_RAM_BSS_ATTR lv_font_t s_sys[SYS_FONTS];
+static bool s_sys_ready = false;
+
+static lv_font_t *_symbols(lv_coord_t px)
+{
+    /* A handful of glyphs, drawn rarely: a small cache is plenty. */
+    return lv_tiny_ttf_create_data_ex(glass_symbols_ttf_start,
+                                      (size_t)(glass_symbols_ttf_end - glass_symbols_ttf_start),
+                                      px, (size_t)px * (size_t)px * 8);
+}
+
+const lv_font_t *ui_theme_font(uint8_t px)
+{
+    size_t i = (px >= 10 && !(px & 1)) ? (size_t)(px - 10) / 2 : SYS_FONTS;   /* 10, 12 … 22 */
+    if (i >= SYS_FONTS) i = 2;                                                   /* 14 */
+    return s_sys_ready ? &s_sys[i] : s_sys_src[i];
+}
+
+static void _sys_fonts_init(void)
+{
+    for (size_t i = 0; i < SYS_FONTS; i++) {
+        s_sys[i] = *s_sys_src[i];
+        s_sys[i].fallback = _symbols((lv_coord_t)(10 + 2 * i));
+        if (!s_sys[i].fallback) ESP_LOGW(TAG, "symbol fallback %u px failed", (unsigned)(10 + 2 * i));
+    }
+    s_sys_ready = true;
+}
 
 /* ── Styles ───────────────────────────────────────────────────────────── */
 #define TONES 7
@@ -72,7 +115,7 @@ lv_color_t uk_tone(uk_tone_t t)
 
 const lv_font_t *uk_font(uk_font_t f)
 {
-    if ((unsigned)f >= UK_FONT__COUNT || !s_fonts[f]) return &lv_font_montserrat_14;
+    if ((unsigned)f >= UK_FONT__COUNT || !s_fonts[f]) return ui_theme_font(14);
     return s_fonts[f];
 }
 
@@ -86,6 +129,7 @@ static const lv_font_t *_ttf(lv_coord_t px, const lv_font_t *fallback)
         ESP_LOGE(TAG, "Barlow %d px failed; using Montserrat", (int)px);
         return fallback;
     }
+    f->fallback = _symbols(px);
     return f;
 }
 
@@ -329,12 +373,13 @@ void uk_styles_rebuild(void)
 void uk_init(void)
 {
     if (s_inited) return;
-    s_fonts[UK_FONT_TITLE] = _ttf(26, &lv_font_montserrat_22);
-    s_fonts[UK_FONT_HEAD]  = _ttf(21, &lv_font_montserrat_18);
-    s_fonts[UK_FONT_LABEL] = _ttf(16, &lv_font_montserrat_14);
-    s_fonts[UK_FONT_BODY]  = &lv_font_montserrat_14;
-    s_fonts[UK_FONT_SMALL] = &lv_font_montserrat_12;
-    s_fonts[UK_FONT_TINY]  = &lv_font_montserrat_10;
+    _sys_fonts_init();
+    s_fonts[UK_FONT_TITLE] = _ttf(26, ui_theme_font(22));
+    s_fonts[UK_FONT_HEAD]  = _ttf(21, ui_theme_font(18));
+    s_fonts[UK_FONT_LABEL] = _ttf(16, ui_theme_font(14));
+    s_fonts[UK_FONT_BODY]  = ui_theme_font(14);
+    s_fonts[UK_FONT_SMALL] = ui_theme_font(12);
+    s_fonts[UK_FONT_TINY]  = ui_theme_font(10);
     for (size_t i = 0; i < sizeof(s_all) / sizeof(s_all[0]); i++) lv_style_init(s_all[i]);
     for (int k = 0; k < UK_BTN__COUNT; k++) { lv_style_init(&s_btn_k[k]); lv_style_init(&s_btn_k_pr[k]); }
     for (int t = 0; t < TONES; t++) { lv_style_init(&s_icon_t[t]); lv_style_init(&s_text_t[t]); }

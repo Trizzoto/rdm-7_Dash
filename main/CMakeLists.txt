@@ -6,6 +6,7 @@ idf_component_register(
         "can/rdm_bus.c"
         "can/rdm_bus_proto.c"
         "can/can_bus_test.c"
+        "can/can_sim.c"
         "can/can_id_tracker.c"
         "can/keypad_lights.c"
         "can/obd2.c"
@@ -211,7 +212,7 @@ idf_component_register(
     # the bootloader subproject; the dash writes this into its own flash, so it
     # should be something a person chose. See main/bootloader_image/README.md.
     EMBED_FILES "embed/RDM.rdmimg" "web/favicon.ico" "bootloader_image/bootloader.bin" "${CMAKE_CURRENT_BINARY_DIR}/index.html.gz"
-                "embed/fonts/montserrat.ttf" "embed/fonts/fugaz_one.ttf" "embed/fonts/manrope_bold.ttf" "embed/fonts/barlow_ui.ttf"
+                "embed/fonts/montserrat.ttf" "embed/fonts/fugaz_one.ttf" "embed/fonts/manrope_bold.ttf" "embed/fonts/barlow_ui.ttf" "embed/fonts/glass_symbols.ttf"
 )
 
 # ─── Gzip the web editor at configure time ─────────────────────────────────
