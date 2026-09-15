@@ -268,7 +268,9 @@ static void _layout_pick_cb(lv_event_t *e)
     ui_Screen3_switch_layout(name);
 }
 
-/* Start-up screen: "None" first, then every splash layout. */
+/* Splash screen: "None" first, then every splash layout. Named for what it
+ * is — it was labelled "At start-up", which read as "the layout the dash boots
+ * into". That is always the last layout in use (layout_manager_set_active). */
 static EXT_RAM_BSS_ATTR char s_splash_names[LAYOUT_MAX_COUNT][LAYOUT_MAX_NAME];
 
 static void _splash_dd_cb(lv_event_t *e)
@@ -276,11 +278,11 @@ static void _splash_dd_cb(lv_event_t *e)
     uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
     if (sel == 0) {
         config_store_save_splash_enabled(false);
-        uk_toast("Start-up screen off: straight to the dash", UK_TONE_TEXT);
+        uk_toast("Splash screen off: straight to the dash", UK_TONE_TEXT);
     } else {
         config_store_save_splash_enabled(true);
         layout_manager_set_active_splash(s_splash_names[sel - 1]);
-        uk_toast("Start-up screen changed", UK_TONE_TEXT);
+        uk_toast("Splash screen changed", UK_TONE_TEXT);
     }
 }
 
@@ -400,10 +402,10 @@ static void _open_layouts_page(void)
     lv_obj_t *scr = uk_screen();
     lv_obj_t *bar = uk_bar(scr, "Layouts", UK_BAR_BACK, main_menu_back_cb, NULL);
 
-    /* Start-up screen lives in the bar, so the whole body is pictures. */
+    /* The splash picker lives in the bar, so the whole body is pictures. */
     lv_obj_t *status = lv_obj_get_child(bar, 2);
     lv_obj_set_style_pad_column(status, 10, 0);
-    uk_label(status, "At start-up", UK_FONT_LABEL, UK_TONE_MUTED);
+    uk_label(status, "Splash screen", UK_FONT_LABEL, UK_TONE_MUTED);
     _splash_dropdown(status);
 
     lv_obj_t *list = uk_scroll(uk_body(scr));
